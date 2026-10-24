@@ -245,8 +245,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                     :aria-label="locale.t(visibleMapCredentials.has(field.id) ? 'settings.credentialHide' : 'settings.credentialShow')"
                     @click="toggleMapCredential(field.id)"
                   >
-                    <EyeOff v-if="visibleMapCredentials.has(field.id)" :size="15" />
-                    <Eye v-else :size="15" />
+                    <Eye v-if="visibleMapCredentials.has(field.id)" :size="15" />
+                    <EyeOff v-else :size="15" />
                   </button>
                 </div>
                 <p v-for="helpKey in field.helpKeys ?? []" :key="helpKey" class="text-xs leading-5 text-muted-foreground">{{ locale.t(helpKey) }}</p>
