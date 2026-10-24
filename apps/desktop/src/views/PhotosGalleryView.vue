@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch, watchEffect } from "vue";
-import { CalendarRange, Check, ChevronDown, Download, ImageOff, Images, Info, Play, RotateCcw, X } from "@lucide/vue";
+import { CalendarRange, Check, ChevronDown, Download, ImageOff, Images, Info, LayoutGrid, List, Play, RotateCcw, X } from "@lucide/vue";
 
-import { Status } from "@/constants";
+import { Status, StorageKey } from "@/constants";
 import { downloadPhoto, photosAssetDistribution, photosList, photosTotal } from "@/lib/api";
+import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { countLabel as photoCountLabel } from "@/lib/photos/count";
@@ -13,6 +14,7 @@ import { createExactRangeLoader, createExactRangeStore, type ExactRangeResult } 
 import { mapWithConcurrency } from "@/lib/photos/concurrency";
 import { passedLowerBound, passedUpperBound } from "@/lib/photos/range";
 import { timelineSegment, timelineYearsDesc, type TimelineSelection } from "@/lib/photos/timeline";
+import { PHOTO_VIEW_MODES, galleryGridClass, gallerySkeletonClass, galleryTileClass, isPhotoViewMode, type PhotoViewMode } from "@/lib/photos/view";
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
 import PhotoDatePicker from "@/components/photos/PhotoDatePicker.vue";
@@ -25,6 +27,14 @@ const emit = defineEmits<{ logout: [] }>();
 const downloads = useDownloadsStore();
 
 const PAGE_SIZE = 60;
+
+const storedPhotoView = readStored(StorageKey.photosView);
+const photoView = ref<PhotoViewMode>(isPhotoViewMode(storedPhotoView) ? storedPhotoView : "comfortable");
+watch(photoView, (value) => writeStored(StorageKey.photosView, value));
+
+const photoGridClass = computed(() => galleryGridClass(photoView.value));
+const photoTileClass = computed(() => galleryTileClass(photoView.value));
+const photoSkeletonClass = computed(() => gallerySkeletonClass(photoView.value));
 
 const range = ref<RangeKey>("all");
 
@@ -851,6 +861,19 @@ watch(
       </div>
 
       <div class="ml-auto flex min-w-0 items-center gap-2">
+        <div class="relative shrink-0">
+          <LayoutGrid v-if="photoView !== 'list'" :size="13" class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground" />
+          <List v-else :size="13" class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground" />
+          <select
+            v-model="photoView"
+            class="h-7 appearance-none rounded-md border border-border/70 bg-background pr-7 pl-7 text-xs text-muted-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-foreground focus:border-primary"
+            title="Photo layout"
+            aria-label="Photo layout"
+          >
+            <option v-for="mode in PHOTO_VIEW_MODES" :key="mode.id" :value="mode.id" :title="mode.title">{{ mode.label }}</option>
+          </select>
+          <ChevronDown :size="12" class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground" />
+        </div>
         <button
           type="button"
           class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-sm text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
@@ -892,8 +915,8 @@ watch(
             <div class="h-6 w-32 animate-pulse rounded bg-muted" aria-hidden="true" />
             <div class="h-4 w-10 animate-pulse rounded bg-muted" aria-hidden="true" />
           </div>
-          <div class="mb-5 grid grid-cols-[repeat(auto-fill,minmax(172px,1fr))] gap-2.5">
-            <div v-for="index in skeletonCount" :key="`skeleton-empty-${index}`" data-testid="photo-skeleton" class="aspect-square animate-pulse overflow-hidden rounded-lg bg-muted" :style="{ animationDelay: `${(index % 6) * 70}ms` }" aria-hidden="true">
+          <div class="mb-5 grid" :class="photoGridClass">
+            <div v-for="index in skeletonCount" :key="`skeleton-empty-${index}`" data-testid="photo-skeleton" class="animate-pulse overflow-hidden bg-muted" :class="photoSkeletonClass" :style="{ animationDelay: `${(index % 6) * 70}ms` }" aria-hidden="true">
               <div class="size-full bg-gradient-to-br from-muted via-secondary to-muted" />
             </div>
           </div>
@@ -922,13 +945,14 @@ watch(
               <span class="h-px flex-1 bg-border/60" aria-hidden="true" />
             </div>
 
-            <div class="mb-5 grid grid-cols-[repeat(auto-fill,minmax(172px,1fr))] gap-2.5">
+            <div class="mb-5 grid" :class="photoGridClass">
               <figure
                 v-for="entry in section.items"
                 :key="entry.photo.id"
                 :data-photo-id="entry.photo.id"
                 :data-photo-index="entry.index"
-                class="group relative aspect-square cursor-zoom-in touch-pan-y overflow-hidden rounded-lg border border-border/50 bg-muted shadow-sm select-none transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md [content-visibility:auto] [contain-intrinsic-size:200px]"
+                class="group relative cursor-zoom-in touch-pan-y overflow-hidden border border-border/50 shadow-sm select-none transition-[border-color,box-shadow,transform] duration-200 hover:border-primary/30 hover:shadow-md [content-visibility:auto]"
+                :class="[photoTileClass, selectedPhotoIds.has(entry.photo.id) ? 'border-primary/40' : '']"
                 role="button"
                 tabindex="0"
                 :aria-busy="Boolean(entry.photo.thumbUrl) && !loadedThumbUrls.has(entry.photo.thumbUrl) && !failedThumbUrls.has(entry.photo.thumbUrl)"
@@ -940,60 +964,75 @@ watch(
                 @contextmenu="showPhotoContextMenu(entry, $event)"
                 @dragstart.prevent
               >
-                <div
-                  v-if="entry.photo.thumbUrl && !loadedThumbUrls.has(entry.photo.thumbUrl)"
-                  data-testid="photo-thumb-placeholder"
-                  class="absolute inset-0 grid place-items-center bg-gradient-to-br from-muted via-secondary to-muted text-muted-foreground"
-                  :class="failedThumbUrls.has(entry.photo.thumbUrl) ? '' : 'animate-pulse'"
-                  aria-hidden="true"
-                >
-                  <ImageOff v-if="failedThumbUrls.has(entry.photo.thumbUrl)" :size="20" />
+                <div class="overflow-hidden bg-muted" :class="photoView === 'list' ? 'relative h-14 w-20 shrink-0 rounded-md' : 'absolute inset-0 rounded-[inherit]'">
+                  <div
+                    v-if="entry.photo.thumbUrl && !loadedThumbUrls.has(entry.photo.thumbUrl)"
+                    data-testid="photo-thumb-placeholder"
+                    class="absolute inset-0 grid place-items-center bg-gradient-to-br from-muted via-secondary to-muted text-muted-foreground"
+                    :class="failedThumbUrls.has(entry.photo.thumbUrl) ? '' : 'animate-pulse'"
+                    aria-hidden="true"
+                  >
+                    <ImageOff v-if="failedThumbUrls.has(entry.photo.thumbUrl)" :size="20" />
+                  </div>
+
+                  <img
+                    v-if="entry.photo.thumbUrl"
+                    class="absolute inset-0 size-full object-cover transition-transform duration-300 group-hover:scale-[1.025]"
+                    :class="loadedThumbUrls.has(entry.photo.thumbUrl) ? 'opacity-100' : 'opacity-0'"
+                    :src="entry.photo.thumbUrl"
+                    :alt="entry.photo.fileName ?? 'Photo'"
+                    :loading="entry.index < 24 ? 'eager' : 'lazy'"
+                    :fetchpriority="entry.index < 12 ? 'high' : 'auto'"
+                    decoding="async"
+                    draggable="false"
+                    @load="markThumbnailLoaded(entry.photo.thumbUrl)"
+                    @error="markThumbnailFailed(entry.photo.thumbUrl)"
+                  />
+
+                  <span v-else class="grid size-full place-items-center text-muted-foreground">
+                    <ImageOff :size="20" />
+                  </span>
+
+                  <template v-if="entry.photo.thumbUrl && loadedThumbUrls.has(entry.photo.thumbUrl)">
+                    <span class="pointer-events-none absolute inset-0 bg-black/15 opacity-0 transition-opacity group-hover:opacity-100" />
+
+                    <span v-if="entry.photo.isLivePhoto && !entry.photo.isVideo" class="absolute top-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium tracking-wide text-white backdrop-blur-sm">LIVE</span>
+
+                    <span v-if="entry.photo.isVideo" class="absolute right-2 bottom-2 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs text-white backdrop-blur-sm">
+                      <Play :size="9" class="fill-current" />
+                      Video
+                    </span>
+                  </template>
                 </div>
 
-                <img
-                  v-if="entry.photo.thumbUrl"
-                  class="absolute inset-0 size-full object-cover transition-transform duration-300 group-hover:scale-[1.025]"
-                  :class="loadedThumbUrls.has(entry.photo.thumbUrl) ? 'opacity-100' : 'opacity-0'"
-                  :src="entry.photo.thumbUrl"
-                  :alt="entry.photo.fileName ?? 'Photo'"
-                  :loading="entry.index < 24 ? 'eager' : 'lazy'"
-                  :fetchpriority="entry.index < 12 ? 'high' : 'auto'"
-                  decoding="async"
-                  draggable="false"
-                  @load="markThumbnailLoaded(entry.photo.thumbUrl)"
-                  @error="markThumbnailFailed(entry.photo.thumbUrl)"
-                />
+                <div v-if="photoView === 'list'" class="min-w-0 flex-1 py-0.5 pr-8">
+                  <p class="truncate text-sm font-medium text-foreground">{{ photoFileName(entry.photo) }}</p>
+                  <p class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span class="truncate">{{ formatPhotoTime(entry.photo.takenAt) }}</span>
+                    <span aria-hidden="true">·</span>
+                    <span class="shrink-0">{{ photoType(entry.photo) }}</span>
+                    <template v-if="entry.photo.width && entry.photo.height">
+                      <span aria-hidden="true">·</span>
+                      <span class="tabular shrink-0">{{ photoDimensions(entry.photo) }}</span>
+                    </template>
+                  </p>
+                </div>
 
-                <span v-else class="grid size-full place-items-center text-muted-foreground">
-                  <ImageOff :size="20" />
-                </span>
-
-                <span v-if="selectedPhotoIds.has(entry.photo.id)" class="pointer-events-none absolute inset-0 z-[2] rounded-lg bg-primary/15 ring-2 ring-primary ring-inset" aria-hidden="true" />
+                <span v-if="selectedPhotoIds.has(entry.photo.id)" class="pointer-events-none absolute inset-0 z-[2] rounded-[inherit] bg-primary/15 ring-2 ring-primary ring-inset" aria-hidden="true" />
                 <span
-                  class="pointer-events-none absolute top-2 right-2 z-[3] grid size-5 place-items-center rounded-full border shadow-sm transition-all"
-                  :class="selectedPhotoIds.has(entry.photo.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-white/70 bg-black/45 text-white opacity-0 group-hover:opacity-100'"
+                  class="pointer-events-none absolute right-2 z-[3] grid size-5 place-items-center rounded-full border shadow-sm transition-all"
+                  :class="[selectedPhotoIds.has(entry.photo.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-white/70 bg-black/45 text-white opacity-0 group-hover:opacity-100', photoView === 'list' ? 'top-1/2 -translate-y-1/2' : 'top-2']"
                   aria-hidden="true"
                 >
                   <Check v-if="selectedPhotoIds.has(entry.photo.id)" :size="12" :stroke-width="3" />
                   <span v-else class="size-1.5 rounded-full bg-white/90" />
                 </span>
-
-                <template v-if="entry.photo.thumbUrl && loadedThumbUrls.has(entry.photo.thumbUrl)">
-                  <span class="pointer-events-none absolute inset-0 bg-black/15 opacity-0 transition-opacity group-hover:opacity-100" />
-
-                  <span v-if="entry.photo.isLivePhoto && !entry.photo.isVideo" class="absolute top-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium tracking-wide text-white backdrop-blur-sm">LIVE</span>
-
-                  <span v-if="entry.photo.isVideo" class="absolute right-2 bottom-2 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs text-white backdrop-blur-sm">
-                    <Play :size="9" class="fill-current" />
-                    Video
-                  </span>
-                </template>
               </figure>
             </div>
           </section>
 
-          <div v-if="skeletonCount > 0" class="mb-5 grid grid-cols-[repeat(auto-fill,minmax(172px,1fr))] gap-2.5">
-            <div v-for="index in skeletonCount" :key="`skeleton-more-${index}`" data-testid="photo-skeleton" class="aspect-square animate-pulse overflow-hidden rounded-lg bg-muted" :style="{ animationDelay: `${(index % 6) * 70}ms` }" aria-hidden="true">
+          <div v-if="skeletonCount > 0" class="mb-5 grid" :class="photoGridClass">
+            <div v-for="index in skeletonCount" :key="`skeleton-more-${index}`" data-testid="photo-skeleton" class="animate-pulse overflow-hidden bg-muted" :class="photoSkeletonClass" :style="{ animationDelay: `${(index % 6) * 70}ms` }" aria-hidden="true">
               <div class="size-full bg-gradient-to-br from-muted via-secondary to-muted" />
             </div>
           </div>

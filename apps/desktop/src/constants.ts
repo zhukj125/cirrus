@@ -21,6 +21,7 @@ export const StorageKey = {
   mapProvider: "cirrus.mapProvider",
   amapKey: "cirrus.amapKey",
   amapSecurityCode: "cirrus.amapSecurityCode",
+  photosView: "cirrus.photosView",
 } as const;
 
 export type View = "findmy" | "photos-login" | "photos-gallery" | "settings";
