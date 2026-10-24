@@ -887,7 +887,6 @@ watch(
         <span class="h-4 w-px shrink-0 bg-border" />
         <span class="tabular max-w-[280px] shrink-0 truncate rounded-md bg-secondary/70 px-2.5 py-1 text-xs" :title="countLabel">{{ countLabel }}</span>
 
-        <button v-if="truncated" type="button" class="shrink-0 rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-xs text-warning transition-colors hover:bg-warning/15" title="Load another batch" @click="continueLoading">Load more</button>
         <span v-if="error" class="flex min-w-0 items-center gap-2">
           <span class="truncate text-destructive" :title="error">{{ error }}</span>
           <button type="button" class="shrink-0 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="retry">Retry</button>
@@ -1037,19 +1036,13 @@ watch(
             </div>
           </div>
 
-          <div v-if="hasMore" class="pointer-events-none flex justify-center px-3 pt-2 pb-2">
-            <div class="pointer-events-auto flex min-h-8 items-center rounded-full border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur" role="status" aria-live="polite">
-              <template v-if="busy">
-                <Spinner :size="13" />
-                <span class="ml-2">Loading more photos</span>
-                <span class="ml-1 flex items-center gap-0.5" aria-hidden="true">
-                  <span v-for="index in 3" :key="`loading-dot-${index}`" class="size-1 animate-bounce rounded-full bg-current" :style="{ animationDelay: `${index * 120}ms` }" />
-                </span>
-              </template>
-              <button v-else type="button" class="group flex items-center gap-1.5 rounded-full px-1 font-medium text-foreground transition-colors hover:text-primary" @click="continueLoading">
-                Load more
-                <ChevronDown :size="13" class="transition-transform group-hover:translate-y-0.5" />
-              </button>
+          <div v-if="hasMore && busy" class="pointer-events-none flex justify-center px-3 pt-2 pb-2">
+            <div class="flex min-h-8 items-center rounded-full border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur" role="status" aria-live="polite">
+              <Spinner :size="13" />
+              <span class="ml-2">Loading more photos</span>
+              <span class="ml-1 flex items-center gap-0.5" aria-hidden="true">
+                <span v-for="index in 3" :key="`loading-dot-${index}`" class="size-1 animate-bounce rounded-full bg-current" :style="{ animationDelay: `${index * 120}ms` }" />
+              </span>
             </div>
           </div>
 
