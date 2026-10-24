@@ -1,0 +1,26 @@
+# Dependencies and build output
+node_modules/
+.pnpm-store/
+.tmp/
+.agents/
+openspec/
+dist/
+target/
+apps/desktop/dist/
+src-tauri/gen/schemas/
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local configuration and secrets
+.env
+.env.local
+.env.*.local
+
+# Logs and temporary files
+*.log
+*.tsbuildinfo

@@ -1,0 +1,28 @@
+[package]
+name = "cirrus"
+description = "Cirrus · Find My devices and iCloud Photos (Rust + Tauri 2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "cirrus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+
+cirrus-core = { path = "../crates/cirrus-core" }

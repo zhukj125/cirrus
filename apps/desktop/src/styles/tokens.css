@@ -1,0 +1,158 @@
+
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+
+  --color-success-solid: var(--success-solid);
+  --color-warning-solid: var(--warning-solid);
+  --color-danger-solid: var(--danger-solid);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+
+  --color-elevated: var(--elevated);
+  --color-elevated-foreground: var(--elevated-foreground);
+
+
+  --text-2xs: 10px;
+  --text-2xs--line-height: 14px;
+  --text-xs: 11px;
+  --text-xs--line-height: 15px;
+  --text-sm: 12px;
+  --text-sm--line-height: 17px;
+  --text-base: 13px;
+  --text-base--line-height: 19px;
+  --text-md: 14px;
+  --text-md--line-height: 20px;
+  --text-lg: 16px;
+  --text-lg--line-height: 22px;
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+}
+
+:root {
+  --radius: 0.5rem;
+
+  --background: #f6f6f7;
+  --foreground: #1c1c1e;
+
+  --card: #ffffff;
+  --card-foreground: #1c1c1e;
+  --popover: #ffffff;
+  --popover-foreground: #1c1c1e;
+
+  --primary: #0071e3;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f0f0f2;
+  --secondary-foreground: #1c1c1e;
+
+  --muted: #f0f0f2;
+  --muted-foreground: #6b6b73;
+
+
+  --accent: color-mix(in srgb, #000000 5%, transparent);
+  --accent-foreground: #1c1c1e;
+
+  --destructive: #d70015;
+  --success: #1f8f4e;
+  --warning: #a15c00;
+
+  --border: color-mix(in srgb, #000000 9%, transparent);
+  --input: color-mix(in srgb, #000000 12%, transparent);
+  --ring: color-mix(in srgb, #0071e3 45%, transparent);
+
+  --elevated: #ffffff;
+  --elevated-foreground: #1c1c1e;
+
+  --sidebar: #fbfbfc;
+  --sidebar-foreground: #1c1c1e;
+  --sidebar-accent: color-mix(in srgb, #000000 6%, transparent);
+  --sidebar-accent-foreground: #1c1c1e;
+  --sidebar-border: color-mix(in srgb, #000000 7%, transparent);
+
+
+  --success-solid: #34c759;
+  --warning-solid: #ff9500;
+  --danger-solid: #ff3b30;
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #1b1b1d;
+  --foreground: #f2f2f5;
+
+  --card: #232326;
+  --card-foreground: #f2f2f5;
+  --popover: #2a2a2e;
+  --popover-foreground: #f2f2f5;
+
+  --primary: #0a84ff;
+  --primary-foreground: #ffffff;
+
+  --secondary: #2a2a2e;
+  --secondary-foreground: #f2f2f5;
+
+  --muted: #2a2a2e;
+  --muted-foreground: #a0a0a8;
+
+  --accent: color-mix(in srgb, #ffffff 7%, transparent);
+  --accent-foreground: #f2f2f5;
+
+  --destructive: #ff7b72;
+  --success: #4ade80;
+  --warning: #fbbf24;
+
+  --border: color-mix(in srgb, #ffffff 11%, transparent);
+  --input: color-mix(in srgb, #ffffff 16%, transparent);
+  --ring: color-mix(in srgb, #0a84ff 55%, transparent);
+
+  --elevated: #2a2a2e;
+  --elevated-foreground: #f2f2f5;
+
+  --sidebar: #202023;
+  --sidebar-foreground: #f2f2f5;
+  --sidebar-accent: color-mix(in srgb, #ffffff 8%, transparent);
+  --sidebar-accent-foreground: #f2f2f5;
+  --sidebar-border: color-mix(in srgb, #ffffff 8%, transparent);
+
+  --success-solid: #34c759;
+  --warning-solid: #ff9500;
+  --danger-solid: #ff453a;
+
+  color-scheme: dark;
+}

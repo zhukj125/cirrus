@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cirrus</title>
+    <!-- Preconnect to Apple image CDN origins. -->
+    <link rel="preconnect" href="https://cvws.icloud-content.com" crossorigin />
+    <link rel="preconnect" href="https://cvws.icloud-content.com.cn" crossorigin />
+    <link rel="dns-prefetch" href="//cvws.icloud-content.com" />
+    <link rel="dns-prefetch" href="//cvws.icloud-content.com.cn" />
+    <script>
+      // Apply the stored theme before first paint.
+      (function () {
+        try {
+          var stored = localStorage.getItem("cirrus.theme");
+          var dark = stored === "dark" || ((!stored || stored === "system") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (error) {
+          /* Use light mode when storage is unavailable. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
