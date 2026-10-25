@@ -94,6 +94,21 @@ const NAV_ITEMS = computed<Array<{ value: ShellView; label: string; icon: typeof
   { value: "photos-gallery", label: locale.t("nav.photos"), icon: Images },
 ]);
 
+const completedDownloadCount = computed(() => downloads.tasks.filter((task) => task.status === "done").length);
+const downloadEntryTitle = computed(() => {
+  const summary = downloads.summary;
+  return summary ? locale.t("sidebar.tasks", { count: summary.tasks, finished: summary.finished, total: summary.total ?? locale.t("sidebar.unknown") }) : locale.t("sidebar.openDownloads");
+});
+const downloadEntryAria = computed(() => {
+  const summary = downloads.summary;
+  return summary ? locale.t("sidebar.downloadsAria", { progress: summary.percent === null ? locale.t("sidebar.progressUnknown") : `${summary.percent}%` }) : locale.t("sidebar.openDownloads");
+});
+const downloadStatusText = computed(() => {
+  const summary = downloads.summary;
+  if (summary) return summary.running > 0 ? locale.t("sidebar.active", { count: summary.running }) : locale.t("sidebar.paused");
+  return completedDownloadCount.value > 0 ? locale.t("sidebar.completedCount", { count: completedDownloadCount.value }) : locale.t("sidebar.noTasks");
+});
+
 function accountName(account: KnownAccount): string {
   const full = [account.firstName, account.lastName].filter(Boolean).join(" ");
   return full || account.appleId.split("@")[0] || account.appleId;
@@ -149,21 +164,20 @@ function accountStatusClass(account: KnownAccount): string {
     <div class="flex-1" />
 
     <button
-      v-if="downloads.summary"
       type="button"
       class="relative mb-2 border border-sidebar-border bg-card/60 text-left shadow-sm transition-colors hover:bg-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       :class="collapsed ? 'mx-1.5 grid size-10 place-items-center rounded-lg p-0' : 'mx-2 rounded-lg px-2.5 py-2'"
-      :title="locale.t('sidebar.tasks', { count: downloads.summary.tasks, finished: downloads.summary.finished, total: downloads.summary.total ?? locale.t('sidebar.unknown') })"
-      :aria-label="collapsed ? locale.t('sidebar.downloadsAria', { progress: downloads.summary.percent === null ? locale.t('sidebar.progressUnknown') : `${downloads.summary.percent}%` }) : undefined"
+      :title="downloadEntryTitle"
+      :aria-label="collapsed ? downloadEntryAria : undefined"
       @click="downloads.openDialog()"
     >
       <template v-if="collapsed">
         <span class="relative grid size-5 place-items-center rounded-md bg-primary/10 text-primary">
           <Download :size="13" />
-          <span v-if="downloads.summary.running > 0" class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-success-solid ring-2 ring-card" />
+          <span v-if="downloads.summary?.running" class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-success-solid ring-2 ring-card" />
         </span>
         <span class="absolute right-1.5 bottom-1 left-1.5 h-0.5 overflow-hidden rounded-full bg-sidebar-accent">
-          <span class="block h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${downloads.summary.percent ?? 0}%` }" />
+          <span class="block h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${downloads.summary?.percent ?? 0}%` }" />
         </span>
       </template>
       <template v-else>
@@ -171,14 +185,14 @@ function accountStatusClass(account: KnownAccount): string {
           <span class="grid size-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Download :size="12" /></span>
           <span class="truncate">{{ locale.t("sidebar.downloads") }}</span>
           <span v-if="downloads.downloadSpeed > 0" class="tabular ml-auto shrink-0 text-2xs text-primary">{{ formatSpeed(downloads.downloadSpeed) }}</span>
-          <span class="tabular shrink-0 text-xs text-muted-foreground" :class="downloads.downloadSpeed > 0 ? '' : 'ml-auto'">{{ downloads.summary.percent === null ? "—" : `${downloads.summary.percent}%` }}</span>
+          <span class="tabular shrink-0 text-xs text-muted-foreground" :class="downloads.downloadSpeed > 0 ? '' : 'ml-auto'">{{ downloads.summary?.percent == null ? "—" : `${downloads.summary.percent}%` }}</span>
         </span>
         <span class="mt-1.5 flex items-center justify-between gap-2 text-2xs text-muted-foreground">
-          <span>{{ downloads.summary.running > 0 ? locale.t("sidebar.active", { count: downloads.summary.running }) : locale.t("sidebar.paused") }}</span>
-          <span class="tabular">{{ downloads.summary.finished }} / {{ downloads.summary.total ?? locale.t("sidebar.unknown") }}</span>
+          <span>{{ downloadStatusText }}</span>
+          <span v-if="downloads.summary" class="tabular">{{ downloads.summary.finished }} / {{ downloads.summary.total ?? locale.t("sidebar.unknown") }}</span>
         </span>
         <span class="mt-2 block h-1.5 w-full overflow-hidden rounded-full bg-sidebar-accent">
-          <span class="block h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${downloads.summary.percent ?? 0}%` }" />
+          <span class="block h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${downloads.summary?.percent ?? 0}%` }" />
         </span>
       </template>
     </button>

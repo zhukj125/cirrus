@@ -11,7 +11,7 @@ import type { DateBounds } from "@/lib/photos/dates";
 import { useLocaleStore } from "@/stores/locale";
 import type { DownloadProgressEvent, PhotoItem } from "@/types";
 
-export type TaskStatus = "running" | "paused" | "done" | "cancelled";
+export type TaskStatus = "running" | "queued" | "paused" | "done" | "cancelled";
 
 export interface SnapshotSource {
   kind: "snapshot";
@@ -106,8 +106,8 @@ export interface DownloadTask {
   error: string | null;
 }
 
-export const CONCURRENCY_OPTIONS = [2, 4, 6, 8] as const;
-const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_CONCURRENCY = 8;
+const DEFAULT_CONCURRENT_TASKS = 5;
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return "—";
@@ -130,6 +130,24 @@ function normalizeSpeedLimit(value: number): number {
 
 function storedSpeedLimit(): number {
   return normalizeSpeedLimit(Number(readStored(StorageKey.downloadSpeedLimit)));
+}
+
+function normalizeConcurrentTasks(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(10, Math.floor(value))) : DEFAULT_CONCURRENT_TASKS;
+}
+
+function storedConcurrentTasks(): number {
+  const stored = readStored(StorageKey.downloadTaskConcurrency);
+  return stored === null ? DEFAULT_CONCURRENT_TASKS : normalizeConcurrentTasks(Number(stored));
+}
+
+export function normalizePhotoConcurrency(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(16, Math.floor(value))) : DEFAULT_CONCURRENCY;
+}
+
+function storedPhotoConcurrency(): number {
+  const stored = readStored(StorageKey.downloadConcurrency);
+  return stored === null ? DEFAULT_CONCURRENCY : normalizePhotoConcurrency(Number(stored));
 }
 
 const RANGE_PAGE_SIZE = 60;
@@ -314,6 +332,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
 
   const downloadSpeed = ref(0);
   const speedLimitBytesPerSec = ref(storedSpeedLimit());
+  const maxConcurrentTasks = ref(storedConcurrentTasks());
+  const photoConcurrency = ref(storedPhotoConcurrency());
+  const defaultDirectory = ref(readStored(StorageKey.downloadDirectory) ?? "");
   const activeTransfers = new Map<string, { taskId: string; lastBytes: number; lastAt: number; speedBytesPerSec: number; item: PhotoItem; snapshotIndex: number | null }>();
   const cancelledTransfers = new Set<string>();
   const pumpFlights = new Map<string, Promise<void>>();
@@ -391,6 +412,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     if (accountKey) {
       tasksByAccount.set(accountKey, tasks.value);
       applySession(accountKey, sessionId);
+      promoteQueuedTasks();
     }
   }
 
@@ -438,6 +460,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     if (activeAccountKey.value === accountKey) {
       tasks.value = normalized;
       applySession(accountKey, activeSessionId.value);
+      promoteQueuedTasks();
     }
   }
 
@@ -731,6 +754,65 @@ export const useDownloadsStore = defineStore("downloads", () => {
     });
   }
 
+  function runningTaskCount(): number {
+    const seen = new Set<string>();
+    let count = 0;
+    const visit = (list: DownloadTask[]): void => {
+      for (const task of list) {
+        if (seen.has(task.id)) continue;
+        seen.add(task.id);
+        if (task.status === "running") count += 1;
+      }
+    };
+    for (const list of tasksByAccount.values()) visit(list);
+    visit(tasks.value);
+    return count;
+  }
+
+  function promoteQueuedTasks(): void {
+    if (!activeSessionId.value) return;
+    const queued = tasks.value.filter((task) => task.status === "queued").sort((a, b) => a.createdAt - b.createdAt);
+    for (const task of queued) {
+      if (runningTaskCount() >= maxConcurrentTasks.value) break;
+      task.status = "running";
+      task.error = null;
+      schedulePersist(task.accountKey, true);
+      void pump(task);
+    }
+  }
+
+  function startOrQueueTask(task: DownloadTask): void {
+    if (task.status === "running") return;
+    task.error = null;
+    if (!activeSessionId.value || runningTaskCount() >= maxConcurrentTasks.value) {
+      task.status = "queued";
+      schedulePersist(task.accountKey, true);
+      return;
+    }
+    task.status = "running";
+    schedulePersist(task.accountKey, true);
+    void pump(task);
+  }
+
+  function setMaxConcurrentTasks(value: number): void {
+    const next = normalizeConcurrentTasks(value);
+    maxConcurrentTasks.value = next;
+    writeStored(StorageKey.downloadTaskConcurrency, String(next));
+    promoteQueuedTasks();
+  }
+
+  function setPhotoConcurrency(value: number): void {
+    const next = normalizePhotoConcurrency(value);
+    photoConcurrency.value = next;
+    writeStored(StorageKey.downloadConcurrency, String(next));
+  }
+
+  function setDefaultDirectory(value: string): void {
+    const next = value.trim();
+    defaultDirectory.value = next;
+    writeStored(StorageKey.downloadDirectory, next || null);
+  }
+
   async function initDownloadTracking(): Promise<void> {
     await setDownloadSpeedLimit(speedLimitBytesPerSec.value).catch(() => undefined);
     if (unlistenProgress) return;
@@ -816,7 +898,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
   }
 
   const running = computed(() => tasks.value.filter((task) => task.status === "running"));
-  const active = computed(() => tasks.value.filter((task) => task.status === "running" || task.status === "paused"));
+  const active = computed(() => tasks.value.filter((task) => task.status === "running" || task.status === "queued" || task.status === "paused"));
 
   const summary = computed(() => {
     const list = active.value;
@@ -1098,6 +1180,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
         if (pumpFlights.get(task.id) === run) pumpFlights.delete(task.id);
         const restart = pumpRestartRequests.delete(task.id);
         if (task.status === "running" && (restart || runTokens.get(task.id) !== token)) void pump(task);
+        else promoteQueuedTasks();
       });
     pumpFlights.set(task.id, run);
     return run;
@@ -1113,7 +1196,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       toast.error(t("downloads.chooseFolder"));
       return null;
     }
-    const concurrency = Math.max(1, Math.min(16, Math.floor(input.concurrency ?? DEFAULT_CONCURRENCY)));
+    const concurrency = normalizePhotoConcurrency(input.concurrency ?? photoConcurrency.value);
     const sourcePhotos = input.photos ? uniquePhotosById(input.photos) : null;
     const range = input.range;
     const source: DownloadSource | null =
@@ -1150,7 +1233,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       id,
       title: input.title,
       directory,
-      status: "running",
+      status: "queued",
       source,
       nextIndex: 0,
       done: 0,
@@ -1175,13 +1258,16 @@ export const useDownloadsStore = defineStore("downloads", () => {
 
     const tracked = tasks.value[0] ?? task;
     toast.success(t("downloads.taskCreated", { title: task.title }));
-    void pump(tracked);
+    startOrQueueTask(tracked);
     return tracked;
   }
 
   function pause(id: string): void {
     const task = tasks.value.find((item) => item.id === id);
-    if (task?.status === "running") {
+    if (task?.status === "queued") {
+      task.status = "paused";
+      schedulePersist(task.accountKey, true);
+    } else if (task?.status === "running") {
       const transitionItems = uniquePhotosById(task.transitionItems ?? []);
       const transitionIds = new Set(transitionItems.map((item) => item.id));
       for (const item of transitionItems) {
@@ -1203,6 +1289,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       cancelTransfersForTask(task.id);
       syncSpeedDisplayWithRunningTransfers();
       schedulePersist(task.accountKey, true);
+      promoteQueuedTasks();
     }
   }
 
@@ -1224,11 +1311,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
       task.transitionOrder = resumedItems.map((item) => item.id);
     }
     task.pausedItems = [];
-    task.status = "running";
     task.error = null;
     if (hadError && task.source.kind === "range") task.source.exhausted = false;
-    schedulePersist(task.accountKey, true);
-    void pump(task);
+    startOrQueueTask(task);
   }
 
   function pauseItem(taskId: string, photoId: string): void {
@@ -1262,11 +1347,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
     if (!Array.isArray(task.source.pending)) task.source.pending = [];
     if (!task.source.pending.some((pending) => pending.id === photoId)) task.source.pending.unshift(item);
     if (task.status !== "running") {
-      task.status = "running";
       task.error = null;
     }
-    schedulePersist(task.accountKey, true);
-    void pump(task);
+    startOrQueueTask(task);
   }
 
   function retryFailed(id: string): void {
@@ -1284,9 +1367,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     task.failed = [];
     task.failedItems = [];
     task.error = null;
-    task.status = "running";
-    schedulePersist(task.accountKey, true);
-    void pump(task);
+    startOrQueueTask(task);
   }
 
   function cancel(id: string): void {
@@ -1298,6 +1379,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       cancelTransfersForTask(task.id);
       syncSpeedDisplayWithRunningTransfers();
       schedulePersist(task.accountKey, true);
+      promoteQueuedTasks();
     }
   }
 
@@ -1314,10 +1396,11 @@ export const useDownloadsStore = defineStore("downloads", () => {
     tasks.value = tasks.value.filter((item) => item.id !== id);
     if (activeAccountKey.value) tasksByAccount.set(activeAccountKey.value, tasks.value);
     schedulePersist(accountKey, true);
+    promoteQueuedTasks();
   }
 
   function clearFinished(): void {
-    tasks.value = tasks.value.filter((task) => task.status === "running" || task.status === "paused");
+    tasks.value = tasks.value.filter((task) => task.status === "running" || task.status === "queued" || task.status === "paused");
     if (activeAccountKey.value) tasksByAccount.set(activeAccountKey.value, tasks.value);
     schedulePersist(activeAccountKey.value, true);
   }
@@ -1331,6 +1414,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
     persistenceEnabled,
     downloadSpeed,
     speedLimitBytesPerSec,
+    maxConcurrentTasks,
+    photoConcurrency,
+    defaultDirectory,
     running,
     active,
     summary,
@@ -1352,6 +1438,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
     initDownloadTracking,
     disposeDownloadTracking,
     setSpeedLimit,
+    setMaxConcurrentTasks,
+    setPhotoConcurrency,
+    setDefaultDirectory,
     ingestDownloadProgress,
     create,
     pause,

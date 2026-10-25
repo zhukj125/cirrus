@@ -4,11 +4,11 @@ import { AlertTriangle, ArrowLeft, Check, Download, FolderOpen, ListChecks, Paus
 
 import { Status, StorageKey } from "@/constants";
 import { openDownloadFolder, photosAssetDistribution, photosList, photosTotal, pickDownloadDirectory } from "@/lib/api";
-import { readStored, writeStored } from "@/lib/common/storage";
+import { readStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useAppStore } from "@/stores/app";
-import { CONCURRENCY_OPTIONS, formatBytes, formatSpeed, percentOf, queueView, totalOf, useDownloadsStore, type DownloadTask } from "@/stores/downloads";
+import { formatBytes, formatSpeed, percentOf, queueView, totalOf, useDownloadsStore, type DownloadTask } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import { RANGE_OPTIONS, UNBOUNDED, addDays, formatDateInput, presetRange, type DateBounds, type RangeKey } from "@/lib/photos/dates";
 import { segmentLanding, type SegmentLanding } from "@/lib/photos/distribution";
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import Spinner from "@/components/ui/Spinner.vue";
 import DownloadEmptyState from "@/components/photos/DownloadEmptyState.vue";
 import DownloadFileList from "@/components/photos/DownloadFileList.vue";
+import DownloadSettingsPanel from "@/components/photos/DownloadSettingsPanel.vue";
 import type { DownloadFileRow } from "@/lib/downloads/file-row";
 import type { AssetDistribution, LibraryTotal, PhotoItem } from "@/types";
 
@@ -30,36 +31,25 @@ const t = locale.t;
 const canResumeTasks = computed(() => Boolean(app.photosSession && app.activeAccountKey && downloads.activeAccountKey === app.activeAccountKey));
 
 const settingsOpen = ref(false);
-const speedLimitMb = ref("");
-const downloadDirectory = ref(readStored(StorageKey.downloadDirectory) ?? "");
+const downloadDirectory = computed(() => downloads.defaultDirectory);
 const headerTitle = computed(() => t(settingsOpen.value ? "downloads.settingsTitle" : "downloads.title"));
 const headerSubtitle = computed(() => t(settingsOpen.value ? "downloads.settingsSubtitle" : "downloads.subtitle"));
 const taskOverview = computed(() => {
   let running = 0;
+  let queued = 0;
   let paused = 0;
   let completed = 0;
   for (const task of downloads.tasks) {
     if (task.status === "running") running += 1;
+    else if (task.status === "queued") queued += 1;
     else if (task.status === "paused") paused += 1;
     else if (task.status === "done") completed += 1;
   }
-  return { running, paused, completed };
+  return { running, queued, paused, completed };
 });
 
 function openSettings(): void {
-  speedLimitMb.value = downloads.speedLimitBytesPerSec > 0 ? String(Number((downloads.speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))) : "";
   settingsOpen.value = true;
-}
-
-function saveSettings(): void {
-  const mb = speedLimitMb.value.trim() === "" ? 0 : Number(speedLimitMb.value);
-  if (!Number.isFinite(mb) || mb < 0) {
-    toast.error(t("downloads.speedInvalid"));
-    return;
-  }
-  downloads.setSpeedLimit(Math.round(mb * 1024 * 1024));
-  toast.success(mb > 0 ? t("downloads.speedSet", { speed: mb }) : t("downloads.speedRemoved"));
-  settingsOpen.value = false;
 }
 
 const PAGE_SIZE = 60;
@@ -157,12 +147,18 @@ function formatTaskCreatedAt(createdAt: number): string {
 
 function taskStatusLabel(task: DownloadTask): string {
   if (task.status === "running") return t("downloads.statusDownloading");
+  if (task.status === "queued") return t("downloads.statusQueued");
   if (task.status === "paused") return t("downloads.statusPaused");
   if (task.status === "done") {
     if (task.error) return t("downloads.statusFailed");
     return t(task.failed.length > 0 ? "downloads.statusCompletedErrors" : "downloads.statusCompleted");
   }
   return t(task.error ? "downloads.statusFailed" : "downloads.statusCancelled");
+}
+
+function taskTitleLabel(title: string): string {
+  const legacySelection = /^(\d+) selected photos$/i.exec(title);
+  return legacySelection ? t("downloads.selectedTaskTitle", { count: Number(legacySelection[1]) }) : title;
 }
 
 watch(totalPages, (pages) => {
@@ -208,17 +204,13 @@ async function chooseDownloadDirectory(): Promise<string | null> {
   try {
     const picked = await pickDownloadDirectory(t("downloads.chooseSaveFolder"));
     if (!picked) return null;
-    downloadDirectory.value = picked;
-    writeStored(StorageKey.downloadDirectory, picked);
+    downloads.setDefaultDirectory(picked);
     return picked;
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : t("downloads.folderPickFailed"));
     return null;
   }
 }
-
-const storedConcurrency = Number(readStored(StorageKey.downloadConcurrency));
-const concurrency = CONCURRENCY_OPTIONS.includes(storedConcurrency as (typeof CONCURRENCY_OPTIONS)[number]) ? storedConcurrency : 4;
 
 const found = ref<PhotoItem[]>([]);
 const searching = ref(false);
@@ -513,9 +505,9 @@ async function createTask(): Promise<void> {
   if (selectionMode.value) {
     downloads.create({
       accountKey,
-      title: `${items.length} selected photos`,
+      title: t("downloads.selectedTaskTitle", { count: items.length }),
       directory: targetDirectory,
-      concurrency,
+      concurrency: downloads.photoConcurrency,
       photos: items,
       subfolder,
     });
@@ -538,7 +530,7 @@ async function createTask(): Promise<void> {
         accountKey,
         title: taskTitle.value,
         directory: targetDirectory,
-        concurrency,
+        concurrency: downloads.photoConcurrency,
         photos: scannedItems,
         subfolder,
       });
@@ -553,7 +545,7 @@ async function createTask(): Promise<void> {
         },
         title: taskTitle.value,
         directory: targetDirectory,
-        concurrency,
+        concurrency: downloads.photoConcurrency,
         subfolder,
       });
     }
@@ -571,7 +563,7 @@ async function createTask(): Promise<void> {
     range: { sessionId, bounds: UNBOUNDED, total: total.value?.assets ?? null },
     title: taskTitle.value,
     directory: targetDirectory,
-    concurrency,
+    concurrency: downloads.photoConcurrency,
     subfolder,
   });
 }
@@ -724,6 +716,7 @@ watch(
             <div class="ml-auto flex items-center gap-3 text-2xs">
               <template v-if="queueTab === 'active'">
                 <span v-if="taskOverview.running" class="font-medium text-primary">{{ t("downloads.running", { count: taskOverview.running }) }}</span>
+                <span v-if="taskOverview.queued" class="font-medium text-muted-foreground">{{ t("downloads.queuedCount", { count: taskOverview.queued }) }}</span>
                 <span v-if="taskOverview.paused" class="font-medium text-warning">{{ t("downloads.pausedCount", { count: taskOverview.paused }) }}</span>
               </template>
               <button v-else-if="completedTasks.length" type="button" class="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">{{ t("downloads.clearFinished") }}</button>
@@ -747,28 +740,42 @@ watch(
                 v-for="task in pagedTasks"
                 :key="task.id"
                 class="group relative cursor-pointer overflow-hidden rounded-xl border border-border/80 bg-card transition-all hover:border-primary/40 hover:shadow-sm"
-                :title="`${task.title} · ${t('downloads.viewDetails')}`"
+                :title="`${taskTitleLabel(task.title)} · ${t('downloads.viewDetails')}`"
                 @click="openTaskDetails(task)"
               >
-                <span class="absolute inset-y-3 left-0 w-0.5 rounded-r-full" :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary'" />
+                <span
+                  class="absolute inset-y-3 left-0 w-0.5 rounded-r-full"
+                  :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success' : task.status === 'queued' ? 'bg-muted-foreground/35' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary'"
+                />
                 <div class="p-3.5 pl-4">
                   <div class="flex min-w-0 items-start gap-3">
                     <span
                       class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full"
-                      :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'"
+                      :class="
+                        task.status === 'done' && !task.error && task.failed.length === 0
+                          ? 'bg-success/10 text-success'
+                          : task.status === 'queued'
+                            ? 'bg-secondary text-muted-foreground'
+                            : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0
+                              ? 'bg-warning/10 text-warning'
+                              : 'bg-primary/10 text-primary'
+                      "
                     >
                       <Check v-if="task.status === 'done' && !task.error && task.failed.length === 0" :size="14" :stroke-width="3" />
                       <AlertTriangle v-else-if="task.status === 'cancelled' || task.error || task.failed.length > 0" :size="14" />
                       <Pause v-else-if="task.status === 'paused'" :size="14" />
+                      <span v-else-if="task.status === 'queued'" class="size-2 rounded-full bg-muted-foreground/55" />
                       <span v-else class="size-2 animate-pulse rounded-full bg-primary" />
                     </span>
 
                     <div class="min-w-0 flex-1">
                       <div class="flex min-w-0 items-center gap-2">
-                        <h4 class="truncate text-sm font-semibold">{{ task.title }}</h4>
-                        <span class="shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium" :class="task.status === 'running' ? 'bg-primary/10 text-primary' : task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{
-                          taskStatusLabel(task)
-                        }}</span>
+                        <h4 class="truncate text-sm font-semibold">{{ taskTitleLabel(task.title) }}</h4>
+                        <span
+                          class="shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium"
+                          :class="task.status === 'running' ? 'bg-primary/10 text-primary' : task.status === 'queued' ? 'bg-secondary text-muted-foreground' : task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'"
+                          >{{ taskStatusLabel(task) }}</span
+                        >
                         <span v-if="task.speedBytesPerSec" class="tabular shrink-0 text-2xs font-medium text-primary">{{ formatSpeed(task.speedBytesPerSec) }}</span>
                       </div>
                       <p class="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
@@ -790,7 +797,7 @@ watch(
                       <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="ghost" size="icon" class="size-7 rounded-full" :title="t('downloads.retryFailed')" :aria-label="t('downloads.retryFailed')" @click="downloads.retryFailed(task.id)">
                         <RotateCcw :size="13" />
                       </Button>
-                      <Button v-if="task.status === 'running'" variant="ghost" size="icon" class="size-7 rounded-full" :title="t('downloads.pauseTask')" :aria-label="t('downloads.pauseTask')" @click="downloads.pause(task.id)">
+                      <Button v-if="task.status === 'running' || task.status === 'queued'" variant="ghost" size="icon" class="size-7 rounded-full" :title="t('downloads.pauseTask')" :aria-label="t('downloads.pauseTask')" @click="downloads.pause(task.id)">
                         <Pause :size="14" />
                       </Button>
                       <Button
@@ -842,29 +849,7 @@ watch(
       </template>
 
       <div v-else class="min-h-0 flex-1 overflow-y-auto p-6">
-        <div class="mx-auto max-w-xl">
-          <h3 class="text-base font-semibold tracking-tight">{{ t("downloads.speedSettingsTitle") }}</h3>
-          <p class="mt-1 text-sm leading-6 text-muted-foreground">{{ t("downloads.speedSettingsDesc") }}</p>
-          <label class="mt-5 block text-sm font-medium" for="download-speed-limit">{{ t("downloads.speedLabel") }}</label>
-          <div class="mt-2 flex items-center gap-2">
-            <input
-              id="download-speed-limit"
-              v-model="speedLimitMb"
-              type="number"
-              min="0"
-              step="0.5"
-              inputmode="decimal"
-              placeholder="0 (unlimited)"
-              class="h-9 w-52 rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-ring/25"
-            />
-            <span class="text-sm text-muted-foreground">MB/s</span>
-          </div>
-          <p class="mt-2 text-xs text-muted-foreground">{{ t("downloads.speedHelp") }}</p>
-          <div class="mt-6 flex items-center gap-2">
-            <Button class="h-8 px-4" @click="saveSettings">{{ t("downloads.save") }}</Button>
-            <Button variant="outline" class="h-8 px-4" @click="settingsOpen = false">{{ t("downloads.cancel") }}</Button>
-          </div>
-        </div>
+        <DownloadSettingsPanel class="mx-auto max-w-2xl" />
       </div>
     </div>
 
@@ -873,9 +858,19 @@ watch(
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <ListChecks :size="16" class="text-primary" />
           <h2 id="task-details-title" class="text-sm font-semibold">{{ t("downloads.taskDetails") }}</h2>
-          <span class="rounded-full px-2 py-0.5 text-2xs font-medium" :class="detailsTask.status === 'running' ? 'bg-primary/10 text-primary' : detailsTask.status === 'done' && !detailsTask.error && detailsTask.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{
-            taskStatusLabel(detailsTask)
-          }}</span>
+          <span
+            class="rounded-full px-2 py-0.5 text-2xs font-medium"
+            :class="
+              detailsTask.status === 'running'
+                ? 'bg-primary/10 text-primary'
+                : detailsTask.status === 'queued'
+                  ? 'bg-secondary text-muted-foreground'
+                  : detailsTask.status === 'done' && !detailsTask.error && detailsTask.failed.length === 0
+                    ? 'bg-success/10 text-success'
+                    : 'bg-warning/10 text-warning'
+            "
+            >{{ taskStatusLabel(detailsTask) }}</span
+          >
           <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('downloads.closeDetails')" @click="detailsTaskId = null">
             <X :size="16" />
           </button>
@@ -885,7 +880,7 @@ watch(
           <section class="shrink-0 border-b border-border p-4">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
-                <h3 class="break-words text-base font-semibold">{{ detailsTask.title }}</h3>
+                <h3 class="break-words text-base font-semibold">{{ taskTitleLabel(detailsTask.title) }}</h3>
                 <p class="mt-1 text-xs text-muted-foreground">{{ t("downloads.created", { time: formatTaskCreatedAt(detailsTask.createdAt) }) }}</p>
                 <p class="mt-1 truncate text-xs text-muted-foreground" :title="detailsTask.directory">{{ detailsTask.directory }}</p>
               </div>

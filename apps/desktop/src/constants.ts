@@ -14,6 +14,7 @@ export const StorageKey = {
   view: "cirrus.view",
   theme: "cirrus.theme",
   downloadConcurrency: "cirrus.downloadConcurrency",
+  downloadTaskConcurrency: "cirrus.downloadTaskConcurrency",
   downloadSpeedLimit: "cirrus.downloadSpeedLimit",
   downloadSubfolder: "cirrus.downloadSubfolder",
   downloadDirectory: "cirrus.downloadDirectory",

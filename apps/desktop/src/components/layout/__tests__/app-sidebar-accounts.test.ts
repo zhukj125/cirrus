@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 
 import AppSidebar from "@/components/layout/AppSidebar.vue";
 import { StorageKey } from "@/constants";
+import { useDownloadsStore } from "@/stores/downloads";
 import type { KnownAccount } from "@/types";
 
 function account(key: string, appleId: string, status: KnownAccount["lastKnownStatus"], lastUsedAt = Date.now()): KnownAccount {
@@ -102,5 +103,15 @@ describe("侧栏账号切换器", () => {
     expect(wrapper.find('button[aria-label="Photos"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("Browse");
     expect(localStorage.getItem(StorageKey.sidebarCollapsed)).toBe("true");
+  });
+
+  it("没有下载任务时仍显示下载入口并能打开空任务管理", async () => {
+    const { wrapper } = mountSidebar();
+    const downloadButton = wrapper.findAll("button").find((button) => button.text().includes("Downloads"));
+    expect(downloadButton).toBeDefined();
+    expect(downloadButton!.text()).toContain("No downloads");
+
+    await downloadButton!.trigger("click");
+    expect(useDownloadsStore().dialogOpen).toBe(true);
   });
 });

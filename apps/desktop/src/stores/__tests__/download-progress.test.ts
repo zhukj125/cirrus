@@ -187,6 +187,23 @@ describe("下载文件与速度进度", () => {
     expect(setDownloadSpeedLimit).toHaveBeenCalledWith(limit);
   });
 
+  it("同时任务数默认持久化并限制在有效范围", () => {
+    const store = useDownloadsStore();
+    expect(store.maxConcurrentTasks).toBe(5);
+    store.setMaxConcurrentTasks(3);
+    expect(store.maxConcurrentTasks).toBe(3);
+    expect(readStored(StorageKey.downloadTaskConcurrency)).toBe("3");
+    store.setMaxConcurrentTasks(99);
+    expect(store.maxConcurrentTasks).toBe(10);
+  });
+
+  it("每个任务的照片并发默认是 8", () => {
+    const store = useDownloadsStore();
+    store.activateAccount("dsid:a", "session-a");
+    const task = store.create({ accountKey: "dsid:a", title: "默认并发", directory: "C:\\out", photos: [photo()] });
+    expect(task?.concurrency).toBe(8);
+  });
+
   it("速度格式化使用桌面下载工具习惯", () => {
     expect(formatSpeed(0)).toBe("0 B/s");
     expect(formatSpeed(1024)).toBe("1 KB/s");

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { computed } from "vue";
 
+import { StorageKey } from "@/constants";
+import { readStored } from "@/lib/common/storage";
 import { fallbackMediaName, formatBytes, queueView, totalOf, useDownloadsStore } from "@/stores/downloads";
 import { UNBOUNDED } from "@/lib/photos/dates";
 import type { PhotoItem } from "@/types";
@@ -137,6 +139,7 @@ async function driveUntilDone(task: { status: string; done: number; failed: stri
 
 describe("下载任务", () => {
   beforeEach(() => {
+    localStorage.clear();
     saved.length = 0;
     saveAttempts.length = 0;
     failedSaveUrls.clear();
@@ -311,6 +314,31 @@ describe("下载任务", () => {
     await vi.waitFor(() => expect(first.status).toBe("done"));
     await vi.waitFor(() => expect(second.status).toBe("done"));
     expect(saved).toEqual(["C:\\out\\same.jpeg", "C:\\out\\same.jpeg"]);
+  });
+
+  it("超过同时任务上限后自动排队，并在前一个任务结束后启动", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    store.setMaxConcurrentTasks(1);
+
+    const first = store.create({ accountKey: "dsid:test", photos: [photo("first")], title: "第一个任务", directory: "C:\\out", concurrency: 1 });
+    const second = store.create({ accountKey: "dsid:test", photos: [photo("second")], title: "第二个任务", directory: "C:\\out", concurrency: 1 });
+    if (!first || !second) throw new Error("任务创建失败");
+
+    expect(first.status).toBe("running");
+    expect(second.status).toBe("queued");
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+
+    gates[0]?.();
+    gates = [];
+    await vi.waitFor(() => expect(first.status).toBe("done"));
+    await vi.waitFor(() => expect(second.status).toBe("running"));
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+
+    gates[0]?.();
+    await vi.waitFor(() => expect(second.status).toBe("done"));
+    expect(store.maxConcurrentTasks).toBe(1);
+    expect(readStored(StorageKey.downloadTaskConcurrency)).toBe("1");
   });
 
   it("非法文件名和路径分隔符不会逃出下载目录", async () => {

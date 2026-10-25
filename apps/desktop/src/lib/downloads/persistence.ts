@@ -2,7 +2,7 @@ import type { DateBounds } from "@/lib/photos/dates";
 import type { CompletedFile, DownloadSource, DownloadTask, TaskStatus } from "@/stores/downloads";
 import type { PhotoItem } from "@/types";
 
-const STATUSES: readonly TaskStatus[] = ["running", "paused", "done", "cancelled"];
+const STATUSES: readonly TaskStatus[] = ["running", "queued", "paused", "done", "cancelled"];
 
 export interface PersistedDownloadTask {
   accountKey: string;
@@ -173,7 +173,7 @@ export function parseDownloadTask(value: unknown, fallbackAccountKey: string): D
   const source = parseSource(raw.source);
   if (!id || !title || !directory || !source) return null;
   const status = STATUSES.includes(raw.status as TaskStatus) ? (raw.status as TaskStatus) : "paused";
-  const concurrency = Math.max(1, Math.min(16, nonNegativeInteger(raw.concurrency, 4)));
+  const concurrency = Math.max(1, Math.min(16, nonNegativeInteger(raw.concurrency, 8)));
   const parsedPaused = Array.isArray(raw.pausedItems) ? uniquePhotos(raw.pausedItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null)) : [];
   const pausedItems = parsedPaused.slice(-concurrency);
   const inFlightItems = Array.isArray(raw.inFlightItems) ? uniquePhotos(raw.inFlightItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null)) : [];

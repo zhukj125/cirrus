@@ -4,15 +4,14 @@ import { ArrowLeft, ChevronDown, Clock3, Download as DownloadIcon, ExternalLink,
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
+import DownloadSettingsPanel from "@/components/photos/DownloadSettingsPanel.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { StorageKey, type ThemeMode } from "@/constants";
 import { openExternal } from "@/lib/api";
 import { DEFAULT_MAP_PROVIDER_ID, MAP_PROVIDERS, getMapProvider } from "@/lib/maps/providers";
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
-import { CONCURRENCY_OPTIONS } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 
@@ -57,17 +56,6 @@ const filteredCategories = computed(() => {
 watch(filteredCategories, (items) => {
   if (items.length > 0 && !items.some((item) => item.id === active.value)) active.value = items[0]?.id ?? "appearance";
 });
-
-function defaultConcurrency(): number {
-  const stored = Number(readStored(StorageKey.downloadConcurrency));
-  return CONCURRENCY_OPTIONS.includes(stored as (typeof CONCURRENCY_OPTIONS)[number]) ? stored : 4;
-}
-
-const concurrency = ref(defaultConcurrency());
-watch(concurrency, (value) => writeStored(StorageKey.downloadConcurrency, String(value)));
-
-const downloadSubfolder = ref(readStored(StorageKey.downloadSubfolder) === "true");
-watch(downloadSubfolder, (value) => writeStored(StorageKey.downloadSubfolder, String(value)));
 
 const selectedMapProviderId = ref(getMapProvider(readStored(StorageKey.mapProvider) ?? DEFAULT_MAP_PROVIDER_ID).id);
 const mapProvider = computed(() => getMapProvider(selectedMapProviderId.value));
@@ -279,30 +267,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <h2 class="mb-2 text-lg font-semibold tracking-tight">{{ locale.t("settings.downloads") }}</h2>
             <p class="text-sm text-muted-foreground">{{ locale.t("settings.downloadDesc") }}</p>
           </div>
-          <div>
-            <p class="mb-2 text-sm font-medium">{{ locale.t("settings.concurrency") }}</p>
-            <div class="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2.5">
-              <button
-                v-for="option in CONCURRENCY_OPTIONS"
-                :key="option"
-                type="button"
-                class="rounded-lg border px-4 py-3 text-sm transition-colors"
-                :class="concurrency === option ? 'border-primary bg-accent font-medium text-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'"
-                :aria-pressed="concurrency === option"
-                @click="concurrency = option"
-              >
-                {{ locale.t("settings.concurrentItems", { count: option }) }}
-              </button>
-            </div>
-            <p class="mt-2 text-xs text-muted-foreground">{{ locale.t("settings.concurrencyTip") }}</p>
-          </div>
-          <div class="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-4">
-            <div class="min-w-0">
-              <p class="text-sm font-medium">{{ locale.t("settings.downloadSubfolder") }}</p>
-              <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.downloadSubfolderTip") }}</p>
-            </div>
-            <Switch id="download-subfolder-setting" v-model="downloadSubfolder" class="mt-0.5 shrink-0" :aria-label="locale.t('settings.separateTaskFolders')" />
-          </div>
+          <DownloadSettingsPanel />
         </section>
 
         <section v-else-if="active === 'about'" class="flex flex-col gap-5">
