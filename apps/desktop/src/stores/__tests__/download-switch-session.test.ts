@@ -40,7 +40,7 @@ vi.mock("@/lib/api", () => ({
       nextCursor: null,
     };
   }),
-  savePhotoTo: vi.fn(async (_url: string, _name: string, targetPath: string) => targetPath),
+  savePhotoTo: vi.fn(async (_url: string, _name: string, targetPath: string) => ({ path: targetPath, sizeBytes: 1024 })),
   loadDownloadTasks: vi.fn(async () => ({ tasks: [], persistenceEnabled: true, writable: true, warning: null })),
   saveDownloadTasks: vi.fn(async () => undefined),
   rekeyDownloadTasks: vi.fn(async () => undefined),
@@ -109,6 +109,7 @@ describe("下载任务切换账号后的会话归属", () => {
         nextIndex: 0,
         done: 0,
         failed: [],
+        failedItems: [],
         usedNames: [],
         concurrency: 1,
         createdAt: 1,

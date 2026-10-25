@@ -41,6 +41,8 @@ function rangeTask(): DownloadTask {
     nextIndex: 0,
     done: 1,
     failed: ["bad.jpeg"],
+    failedItems: [photo("bad")],
+    completedFiles: [{ name: "a.jpeg", sizeBytes: 2048 }],
     usedNames: ["a.jpeg", "bad.jpeg"],
     concurrency: 4,
     createdAt: 123,
@@ -64,6 +66,7 @@ describe("下载任务持久化 DTO", () => {
       expect(parsed.source.nextRank).toBe(99);
     }
     expect(parsed?.usedNames).toEqual(["a.jpeg", "bad.jpeg"]);
+    expect(parsed?.completedFiles).toEqual([{ name: "a.jpeg", sizeBytes: 2048 }]);
   });
 
   it("快照任务往返时保留下一个下标与剩余照片", () => {
@@ -73,10 +76,11 @@ describe("下载任务持久化 DTO", () => {
       title: "选中的 2 张",
       directory: "C:/out",
       status: "paused",
-      source: { kind: "snapshot", items: [photo("a"), photo("b")] },
+      source: { kind: "snapshot", items: [photo("a"), photo("b")], pending: [] },
       nextIndex: 1,
       done: 1,
       failed: [],
+      failedItems: [],
       usedNames: ["a.jpeg"],
       concurrency: 2,
       createdAt: 456,

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { AlertTriangle, ArrowLeft, Check, Download, FolderOpen, ListChecks, Pause, Play, Settings2, Trash, X } from "@lucide/vue";
+import { AlertTriangle, ArrowLeft, Check, Download, FolderOpen, ListChecks, Pause, Play, RotateCcw, Settings2, Trash, X } from "@lucide/vue";
 
 import { Status, StorageKey } from "@/constants";
 import { openDownloadFolder, photosAssetDistribution, photosList, photosTotal, pickDownloadDirectory } from "@/lib/api";
-import { readStored } from "@/lib/common/storage";
+import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useAppStore } from "@/stores/app";
-import { CONCURRENCY_OPTIONS, formatSpeed, percentOf, queueView, totalOf, useDownloadsStore, type DownloadTask } from "@/stores/downloads";
+import { CONCURRENCY_OPTIONS, formatBytes, formatSpeed, percentOf, queueView, totalOf, useDownloadsStore, type DownloadTask } from "@/stores/downloads";
 import { RANGE_OPTIONS, UNBOUNDED, addDays, formatDateInput, presetRange, type DateBounds, type RangeKey } from "@/lib/photos/dates";
 import { segmentLanding, type SegmentLanding } from "@/lib/photos/distribution";
 import { createExactRangeLoader, createExactRangeStore, type ExactRangeResult } from "@/lib/photos/exact";
@@ -17,6 +17,8 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Button } from "@/components/ui/button";
 import Spinner from "@/components/ui/Spinner.vue";
 import DownloadEmptyState from "@/components/photos/DownloadEmptyState.vue";
+import DownloadFileList from "@/components/photos/DownloadFileList.vue";
+import type { DownloadFileRow } from "@/lib/downloads/file-row";
 import type { AssetDistribution, LibraryTotal, PhotoItem } from "@/types";
 
 const downloads = useDownloadsStore();
@@ -26,6 +28,7 @@ const canResumeTasks = computed(() => Boolean(app.photosSession && app.activeAcc
 
 const settingsOpen = ref(false);
 const speedLimitMb = ref("");
+const downloadDirectory = ref(readStored(StorageKey.downloadDirectory) ?? "");
 const headerTitle = computed(() => (settingsOpen.value ? "Download Settings" : "Download Photos"));
 
 function openSettings(): void {
@@ -52,19 +55,76 @@ const SLOW_SEARCH_MS = 5000;
 
 const TASK_PAGE_SIZE = 10;
 const taskPage = ref(1);
-const QUEUE_PREVIEW_LIMIT = 200;
+
 const detailsTaskId = ref<string | null>(null);
+const detailsTab = ref<"downloading" | "queued" | "completed">("downloading");
 
 const totalPages = computed(() => Math.max(1, Math.ceil(downloads.tasks.length / TASK_PAGE_SIZE)));
 
 const pagedTasks = computed(() => downloads.tasks.slice((taskPage.value - 1) * TASK_PAGE_SIZE, taskPage.value * TASK_PAGE_SIZE));
 const detailsTask = computed(() => downloads.tasks.find((task) => task.id === detailsTaskId.value) ?? null);
-const detailsQueue = computed(() => (detailsTask.value ? queueView(detailsTask.value, QUEUE_PREVIEW_LIMIT) : null));
-const detailsPendingPreview = computed(() => detailsQueue.value?.pending ?? []);
-const detailsPendingHidden = computed(() => Math.max(0, (detailsQueue.value?.pendingTotal ?? 0) - detailsPendingPreview.value.length));
+const detailsQueue = computed(() => (detailsTask.value ? queueView(detailsTask.value, Number.MAX_SAFE_INTEGER) : null));
+
+const detailsActiveRows = computed<DownloadFileRow[]>(() =>
+  (detailsQueue.value?.active ?? []).map((item) => ({
+    key: item.key,
+    name: item.name,
+    sizeBytes: item.sizeBytes,
+    downloadedBytes: item.downloadedBytes,
+    totalBytes: item.totalBytes,
+    status: "active",
+    photoId: item.photoId ?? undefined,
+  })),
+);
+const detailsPausedRows = computed<DownloadFileRow[]>(() =>
+  (detailsQueue.value?.paused ?? []).map((item, index) => ({
+    key: item.key,
+    name: item.name,
+    sizeBytes: item.sizeBytes,
+    downloadedBytes: item.downloadedBytes,
+    totalBytes: item.totalBytes,
+    status: "paused",
+    ordinal: index + 1,
+    photoId: item.photoId,
+  })),
+);
+const detailsDownloadingRows = computed<DownloadFileRow[]>(() => [...detailsActiveRows.value, ...detailsPausedRows.value]);
+const detailsPendingRows = computed<DownloadFileRow[]>(() => (detailsQueue.value?.pending ?? []).map((item, index) => ({ key: item.key, name: item.name, sizeBytes: item.sizeBytes, status: "pending", ordinal: index + 1, photoId: item.photoId })));
+const detailsCompletedFiles = computed(() => {
+  const task = detailsTask.value;
+  if (!task) return [];
+  const recorded = task.completedFiles ?? [];
+  if (recorded.length > 0) return recorded;
+  return task.failed.length === 0 ? task.usedNames.slice(0, task.done).map((name) => ({ name, sizeBytes: null })) : [];
+});
+const detailsCompletedRows = computed<DownloadFileRow[]>(() => detailsCompletedFiles.value.map((file, index) => ({ key: `completed:${index}:${file.name}`, name: file.name, sizeBytes: file.sizeBytes, status: "completed" })));
+const detailsFailedRows = computed<DownloadFileRow[]>(() => (detailsQueue.value?.failed ?? []).map((name, index) => ({ key: `failed:${index}:${name}`, name, sizeBytes: null, status: "failed" })));
+const detailsCompletedBytes = computed<number | null>(() => {
+  const sizes = detailsCompletedFiles.value.flatMap((file) => (file.sizeBytes === null ? [] : [file.sizeBytes]));
+  return sizes.length > 0 ? sizes.reduce((sum, size) => sum + size, 0) : null;
+});
+const detailsTransferredBytes = computed<number | null>(() => {
+  const activeBytes = detailsActiveRows.value.reduce((sum, row) => sum + (row.downloadedBytes ?? 0), 0);
+  if (detailsCompletedBytes.value === null && activeBytes === 0) return null;
+  return (detailsCompletedBytes.value ?? 0) + activeBytes;
+});
 
 function openTaskDetails(task: DownloadTask): void {
   detailsTaskId.value = task.id;
+  const queue = queueView(task, Number.MAX_SAFE_INTEGER);
+  if (queue.active.length > 0 || queue.paused.length > 0 || task.status === "running") detailsTab.value = "downloading";
+  else if (queue.pendingTotal > 0 || queue.paused.length > 0 || (queue.unfetched ?? 0) > 0) detailsTab.value = "queued";
+  else detailsTab.value = "completed";
+}
+
+function formatTaskCreatedAt(createdAt: number): string {
+  return new Date(createdAt).toLocaleString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function taskStatusLabel(task: DownloadTask): string {
@@ -98,6 +158,19 @@ const customBounds = ref<DateBounds>(requestedBounds ? { ...requestedBounds } : 
 const bounds = ref<DateBounds>(requestedBounds ? { ...requestedBounds } : UNBOUNDED);
 const hasCustomRange = computed(() => range.value === "custom" && customBounds.value.after !== null && customBounds.value.before !== null);
 const showFoundStatus = computed(() => range.value !== "custom" || hasCustomRange.value || searching.value);
+
+async function chooseDownloadDirectory(): Promise<string | null> {
+  try {
+    const picked = await pickDownloadDirectory();
+    if (!picked) return null;
+    downloadDirectory.value = picked;
+    writeStored(StorageKey.downloadDirectory, picked);
+    return picked;
+  } catch (caught) {
+    toast.error(caught instanceof Error ? caught.message : "Could not select a folder");
+    return null;
+  }
+}
 
 const storedConcurrency = Number(readStored(StorageKey.downloadConcurrency));
 const concurrency = CONCURRENCY_OPTIONS.includes(storedConcurrency as (typeof CONCURRENCY_OPTIONS)[number]) ? storedConcurrency : 4;
@@ -144,6 +217,11 @@ const rangeExact = computed(() => (range.value === "all" ? null : exactRanges.ca
 
 const exactPending = computed(() => range.value !== "all" && exactRanges.isPending(bounds.value));
 
+const rangeStartRank = computed<number | null>(() => {
+  if (range.value === "all") return null;
+  return rangeExact.value?.oldestRank ?? rangeLanding.value?.startRank ?? segmentLanding(distribution.value, bounds.value)?.startRank ?? null;
+});
+
 let searchEpoch = 0;
 let slowTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -170,7 +248,7 @@ const plannedTotal = computed<number | null>(() => {
 
 const plannedLabel = computed(() => (plannedTotal.value === null ? null : `${plannedTotal.value} photos`));
 const taskTitle = computed(() => (plannedLabel.value === null ? scopeLabel.value : `${scopeLabel.value} · ${plannedLabel.value}`));
-const createLabel = computed(() => (selectionMode.value ? "Download Selected" : "Create Task"));
+const createLabel = computed(() => (selectionMode.value ? "Download selected" : "Download"));
 
 const foundLabel = computed(() => {
   if (selectionMode.value) return `${selectedItems.value.length} photos selected and ready to download`;
@@ -348,11 +426,13 @@ async function fetchRange(): Promise<void> {
 }
 
 const canCreate = computed(() => {
+  if (!app.photosSession) return false;
   if (selectionMode.value) return selectedItems.value.length > 0;
-  if (range.value === "all") return Boolean(app.photosSession);
-  if (rangeExact.value !== null) return Boolean(app.photosSession) && rangeExact.value.count > 0;
-  if (!searching.value && !handedToTask.value && !truncated.value) return true;
-  return searching.value && searchSlow.value;
+  if (range.value === "all") return true;
+  if (range.value === "custom" && !hasCustomRange.value) return false;
+  if (rangeExact.value !== null) return rangeExact.value.count > 0;
+  if (rangeStartRank.value !== null) return true;
+  return !searching.value && !handedToTask.value && found.value.length > 0;
 });
 
 async function createTask(): Promise<void> {
@@ -379,13 +459,8 @@ async function createTask(): Promise<void> {
     }
   }
 
-  let targetDirectory: string | null = null;
-  try {
-    targetDirectory = await pickDownloadDirectory();
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : "Could not select a folder");
-    return;
-  }
+  let targetDirectory = downloadDirectory.value.trim();
+  if (!targetDirectory) targetDirectory = (await chooseDownloadDirectory()) ?? "";
   if (!targetDirectory) return;
 
   const subfolder = readStored(StorageKey.downloadSubfolder) === "true";
@@ -405,19 +480,37 @@ async function createTask(): Promise<void> {
 
   if (range.value !== "all") {
     const exactTotal = rangeExact.value?.count ?? (!searching.value && !truncated.value && !handedToTask.value ? found.value.length : null);
-    downloads.create({
-      accountKey,
-      range: {
-        sessionId,
-        bounds: { ...bounds.value },
-        total: exactTotal,
-        startRank: rangeExact.value?.oldestRank ?? rangeLanding.value?.startRank ?? null,
-      },
-      title: taskTitle.value,
-      directory: targetDirectory,
-      concurrency,
-      subfolder,
-    });
+    const startRank = rangeStartRank.value;
+
+    if (startRank === null) {
+      const scannedItems = found.value.slice();
+      if (scannedItems.length === 0) {
+        toast.error("No photos in this date range");
+        return;
+      }
+      downloads.create({
+        accountKey,
+        title: taskTitle.value,
+        directory: targetDirectory,
+        concurrency,
+        photos: scannedItems,
+        subfolder,
+      });
+    } else {
+      downloads.create({
+        accountKey,
+        range: {
+          sessionId,
+          bounds: { ...bounds.value },
+          total: exactTotal,
+          startRank,
+        },
+        title: taskTitle.value,
+        directory: targetDirectory,
+        concurrency,
+        subfolder,
+      });
+    }
 
     searchEpoch += 1;
     searching.value = false;
@@ -500,32 +593,55 @@ watch(
 
       <template v-if="!settingsOpen">
         <div class="shrink-0 border-b border-border bg-muted/20 px-4 py-3">
-          <div v-if="selectionMode" class="flex items-center gap-3">
-            <div class="flex min-w-0 flex-1 items-center gap-3">
+          <div v-if="selectionMode" class="rounded-xl border border-border bg-background/70 p-3">
+            <div class="flex min-w-0 items-center gap-3">
               <span class="flex shrink-0 items-center gap-1.5 text-sm font-medium"><Check :size="14" class="text-primary" />{{ selectedItems.length }} selected</span>
               <div class="flex min-w-0 items-center gap-1 overflow-hidden">
-                <img v-for="item in selectedItems.slice(0, 6)" :key="item.id" :src="item.thumbUrl" alt="" class="size-7 shrink-0 rounded object-cover" draggable="false" />
-                <span v-if="selectedItems.length > 6" class="shrink-0 text-xs text-muted-foreground">+{{ selectedItems.length - 6 }}</span>
+                <img v-for="item in selectedItems.slice(0, 8)" :key="item.id" :src="item.thumbUrl" alt="" class="size-8 shrink-0 rounded-md object-cover" draggable="false" />
+                <span v-if="selectedItems.length > 8" class="shrink-0 text-xs text-muted-foreground">+{{ selectedItems.length - 8 }}</span>
               </div>
             </div>
-            <Button class="h-8 shrink-0 px-4" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
+            <div class="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
+              <button
+                type="button"
+                class="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                :title="downloadDirectory || 'Choose download folder'"
+                @click="chooseDownloadDirectory"
+              >
+                <FolderOpen :size="13" class="shrink-0" />
+                <span class="truncate">{{ downloadDirectory || "Choose download folder" }}</span>
+              </button>
+              <Button class="h-8 shrink-0 px-5" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
+            </div>
           </div>
 
-          <div v-else class="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span class="shrink-0 text-xs text-muted-foreground">Range</span>
-            <div class="flex shrink-0 items-center gap-0.5 rounded-md bg-secondary p-0.5">
-              <button v-for="option in RANGE_OPTIONS" :key="option.key" type="button" class="h-7 rounded-[5px] px-2.5 text-sm transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
-                {{ option.label }}
-              </button>
+          <div v-else class="rounded-xl border border-border bg-background/70 p-3">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span class="shrink-0 text-sm text-muted-foreground">Range</span>
+              <div class="flex shrink-0 items-center gap-0.5 rounded-lg bg-secondary/75 p-1">
+                <button v-for="option in RANGE_OPTIONS" :key="option.key" type="button" class="h-8 rounded-md px-3 text-sm transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
+                  {{ option.label }}
+                </button>
+              </div>
+              <DateRangePicker v-if="range === 'custom'" :model-value="customBounds" :show-clear="false" @update:model-value="onCustomChange" />
             </div>
-            <DateRangePicker v-if="range === 'custom'" :model-value="customBounds" :show-clear="false" @update:model-value="onCustomChange" />
-            <div class="ml-auto flex shrink-0 items-center gap-3">
-              <span v-if="showFoundStatus" class="flex items-center gap-1.5 text-xs text-muted-foreground">
+
+            <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
+              <span v-if="showFoundStatus" class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <Spinner v-if="searching" :size="12" />
-                {{ foundLabel }}
-                <AlertTriangle v-if="searchSlow || truncated" :size="12" class="text-warning" :title="searchSlow ? 'Search is slow; the task will continue while downloading' : 'Only recent photos were scanned'" />
+                <span class="truncate">{{ foundLabel }}</span>
+                <AlertTriangle v-if="searchSlow || truncated" :size="12" class="shrink-0 text-warning" :title="searchSlow ? 'Search is slow; the task will continue while downloading' : 'Only recent photos were scanned'" />
               </span>
-              <Button class="h-8 px-4" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
+              <button
+                type="button"
+                class="ml-auto flex h-8 min-w-0 max-w-72 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                :title="downloadDirectory || 'Choose download folder'"
+                @click="chooseDownloadDirectory"
+              >
+                <FolderOpen :size="13" class="shrink-0" />
+                <span class="truncate">{{ downloadDirectory || "Choose download folder" }}</span>
+              </button>
+              <Button class="h-8 shrink-0 px-5" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
             </div>
           </div>
 
@@ -534,10 +650,9 @@ watch(
             <span>{{ downloads.persistenceWarning }}</span>
           </div>
         </div>
-
-        <div class="min-h-0 flex-1 overflow-y-auto">
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div class="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card/95 px-4 py-2.5 backdrop-blur">
-            <h3 class="text-sm font-medium">Download history</h3>
+            <h3 class="text-sm font-medium">Download queue</h3>
             <span class="rounded-full bg-secondary px-2 py-0.5 text-2xs tabular text-muted-foreground">{{ downloads.tasks.length }} tasks</span>
             <button v-if="downloads.tasks.some((task) => task.status === 'done' || task.status === 'cancelled')" type="button" class="ml-auto rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">
               Clear completed
@@ -546,7 +661,7 @@ watch(
 
           <DownloadEmptyState v-if="downloads.tasks.length === 0" />
           <div v-else class="flex flex-col gap-2 p-3">
-            <article v-for="task in pagedTasks" :key="task.id" class="rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-colors hover:border-border">
+            <article v-for="task in pagedTasks" :key="task.id" class="cursor-pointer rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/20" @click="openTaskDetails(task)">
               <div class="flex items-start gap-3">
                 <span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full" :class="task.status === 'done' && !task.error ? 'bg-success/10 text-success' : task.status === 'cancelled' || task.error ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'">
                   <Check v-if="task.status === 'done' && !task.error" :size="14" :stroke-width="3" />
@@ -558,17 +673,22 @@ watch(
                   <div class="flex items-start gap-2">
                     <div class="min-w-0 flex-1">
                       <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                        <button type="button" class="min-w-0 truncate text-left text-sm font-medium transition-colors hover:text-primary" :title="`${task.title} · View task details`" @click="openTaskDetails(task)">{{ task.title }}</button>
+                        <button type="button" class="min-w-0 truncate text-left text-sm font-medium transition-colors hover:text-primary" :title="`${task.title} · View task details`" @click.stop="openTaskDetails(task)">{{ task.title }}</button>
                         <span v-if="task.speedBytesPerSec" class="tabular text-2xs font-medium text-primary">{{ formatSpeed(task.speedBytesPerSec) }}</span>
                         <span v-if="task.failed.length" class="flex items-center gap-1 text-2xs text-warning" :title="task.failed.join('\n')"><AlertTriangle :size="11" />{{ task.failed.length }} failed</span>
                       </div>
                     </div>
 
                     <div class="flex shrink-0 items-center gap-1">
-                      <Button size="icon" variant="outline" class="size-7" title="View task details" aria-label="View task details" @click="openTaskDetails(task)">
-                        <ListChecks :size="14" />
+                      <Button variant="outline" class="h-7 gap-1 px-2 text-xs" title="View task details" aria-label="View task details" @click.stop="openTaskDetails(task)">
+                        <ListChecks :size="13" />
+                        Details
                       </Button>
-                      <Button v-if="task.status === 'running'" size="icon" variant="outline" class="size-7" title="Pause task" aria-label="Pause task" @click="downloads.pause(task.id)">
+                      <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="outline" class="h-7 gap-1 px-2 text-xs" title="Retry failed files" aria-label="Retry failed files" @click.stop="downloads.retryFailed(task.id)">
+                        <RotateCcw :size="12" />
+                        Retry failed
+                      </Button>
+                      <Button v-if="task.status === 'running'" size="icon" variant="outline" class="size-7" title="Pause task" aria-label="Pause task" @click.stop="downloads.pause(task.id)">
                         <Pause :size="14" />
                       </Button>
                       <Button
@@ -579,11 +699,11 @@ watch(
                         :disabled="!canResumeTasks"
                         :title="canResumeTasks ? (task.status === 'cancelled' ? 'Restore task' : 'Resume task') : 'Sign in again to resume'"
                         :aria-label="task.status === 'cancelled' ? 'Restore task' : 'Resume task'"
-                        @click="downloads.resume(task.id)"
+                        @click.stop="downloads.resume(task.id)"
                       >
                         <Play :size="14" />
                       </Button>
-                      <Button size="icon" variant="outline" class="size-7 hover:text-destructive" title="Remove from list (keeps files)" aria-label="Remove from list" @click="downloads.remove(task.id)">
+                      <Button size="icon" variant="outline" class="size-7 hover:text-destructive" title="Remove from list (keeps files)" aria-label="Remove from list" @click.stop="downloads.remove(task.id)">
                         <Trash :size="14" />
                       </Button>
                     </div>
@@ -609,9 +729,10 @@ watch(
                         <span class="shrink-0">Recent files</span>
                         <span class="truncate" :title="task.lastFile">{{ task.lastFile }}</span>
                       </p>
+                      <p class="mt-0.5 text-2xs text-muted-foreground">Created {{ formatTaskCreatedAt(task.createdAt) }}</p>
                       <p class="mt-0.5 truncate text-2xs text-muted-foreground" :title="task.directory">{{ task.directory }}</p>
                     </div>
-                    <button type="button" class="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" :title="task.directory" @click="openTaskFolder(task.directory)">
+                    <button type="button" class="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" :title="task.directory" @click.stop="openTaskFolder(task.directory)">
                       <FolderOpen :size="12" />
                       Open folder
                     </button>
@@ -659,7 +780,7 @@ watch(
     </div>
 
     <div v-if="detailsTask && detailsQueue" class="fixed inset-0 z-[2100] grid place-items-center bg-black/40 p-6 backdrop-blur-[1px]" @click.self="detailsTaskId = null">
-      <div class="flex max-h-[min(780px,calc(100vh-48px))] w-[min(760px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="task-details-title">
+      <div class="flex h-[min(680px,calc(100vh-48px))] w-[min(760px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="task-details-title">
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <ListChecks :size="16" class="text-primary" />
           <h2 id="task-details-title" class="text-sm font-semibold">Task Details</h2>
@@ -669,17 +790,28 @@ watch(
           </button>
         </header>
 
-        <div class="min-h-0 flex-1 overflow-y-auto">
-          <section class="border-b border-border p-4">
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <section class="shrink-0 border-b border-border p-4">
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <h3 class="break-words text-base font-semibold">{{ detailsTask.title }}</h3>
+                <p class="mt-1 text-xs text-muted-foreground">Created {{ formatTaskCreatedAt(detailsTask.createdAt) }}</p>
                 <p class="mt-1 truncate text-xs text-muted-foreground" :title="detailsTask.directory">{{ detailsTask.directory }}</p>
               </div>
-              <button type="button" class="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" @click="openTaskFolder(detailsTask.directory)">
-                <FolderOpen :size="13" />
-                Open folder
-              </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <Button v-if="detailsTask.status === 'running'" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" @click="downloads.pause(detailsTask.id)">
+                  <Pause :size="12" />
+                  Pause
+                </Button>
+                <Button v-else-if="detailsTask.status === 'paused' || detailsTask.status === 'cancelled'" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" :disabled="!canResumeTasks" @click="downloads.resume(detailsTask.id)">
+                  <Play :size="12" />
+                  Resume
+                </Button>
+                <button type="button" class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" @click="openTaskFolder(detailsTask.directory)">
+                  <FolderOpen :size="13" />
+                  Open folder
+                </button>
+              </div>
             </div>
 
             <div class="mt-4 flex items-center gap-3">
@@ -689,6 +821,7 @@ watch(
               <span class="tabular shrink-0 text-xs text-muted-foreground"
                 >{{ detailsTask.done + detailsTask.failed.length }}<template v-if="totalOf(detailsTask) !== null"> / {{ totalOf(detailsTask) }}</template></span
               >
+              <span class="tabular shrink-0 text-xs text-muted-foreground">Transferred {{ detailsTransferredBytes === null ? "—" : formatBytes(detailsTransferredBytes) }}</span>
               <span v-if="detailsTask.speedBytesPerSec" class="tabular shrink-0 text-xs font-medium text-primary">{{ formatSpeed(detailsTask.speedBytesPerSec) }}</span>
             </div>
 
@@ -708,50 +841,84 @@ watch(
             </dl>
           </section>
 
-          <section class="p-4">
-            <div class="flex items-center gap-2">
-              <h3 class="text-sm font-semibold">Download Queue</h3>
-              <span class="rounded-full bg-secondary px-2 py-0.5 text-2xs tabular text-muted-foreground">{{ detailsQueue.active.length + detailsQueue.pendingTotal }} items retrieved</span>
+          <section class="flex min-h-0 flex-1 flex-col p-4">
+            <div class="grid grid-cols-3 rounded-lg bg-secondary p-1" role="tablist" aria-label="Download task details">
+              <button
+                type="button"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
+                :class="detailsTab === 'downloading' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                role="tab"
+                :aria-selected="detailsTab === 'downloading'"
+                @click="detailsTab = 'downloading'"
+              >
+                Downloading <span class="tabular text-2xs">{{ detailsDownloadingRows.length }}</span>
+              </button>
+              <button
+                type="button"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
+                :class="detailsTab === 'queued' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                role="tab"
+                :aria-selected="detailsTab === 'queued'"
+                @click="detailsTab = 'queued'"
+              >
+                Queued <span class="tabular text-2xs">{{ detailsQueue.pendingTotal + (detailsQueue.unfetched ?? 0) }}</span>
+              </button>
+              <button
+                type="button"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
+                :class="detailsTab === 'completed' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                role="tab"
+                :aria-selected="detailsTab === 'completed'"
+                @click="detailsTab = 'completed'"
+              >
+                Completed <span class="tabular text-2xs">{{ detailsCompletedFiles.length + detailsQueue.failed.length }}</span>
+              </button>
             </div>
 
-            <div v-if="detailsQueue.active.length" class="mt-4">
-              <h4 class="flex items-center gap-1.5 text-xs font-medium text-primary"><span class="size-1.5 rounded-full bg-primary" />Downloading</h4>
-              <ul class="mt-2 divide-y divide-border rounded-md border border-border bg-background">
-                <li v-for="item in detailsQueue.active" :key="item.key" class="flex min-w-0 items-center gap-2 px-3 py-2 text-xs">
-                  <Spinner :size="12" class="shrink-0 text-primary" />
-                  <span class="truncate" :title="item.name">{{ item.name }}</span>
-                </li>
-              </ul>
+            <div v-if="detailsTab === 'downloading'" class="mt-4 flex min-h-0 flex-1 flex-col">
+              <DownloadFileList v-if="detailsDownloadingRows.length" :rows="detailsDownloadingRows" fill @pause="downloads.pauseItem(detailsTask.id, $event)" @resume="downloads.resumeItem(detailsTask.id, $event)" class="mt-2" />
+              <div v-else class="mt-2 flex min-h-0 flex-1 items-center justify-center gap-2 rounded-md border border-dashed border-border text-xs text-muted-foreground">
+                <Spinner v-if="detailsTask.status === 'running'" :size="13" />
+                {{ detailsTask.status === "running" ? "Preparing the next file…" : "No active downloads" }}
+              </div>
             </div>
 
-            <div v-if="detailsQueue.pendingTotal > 0" class="mt-4">
-              <h4 class="text-xs font-medium text-muted-foreground">
-                Pending <span class="tabular">{{ detailsQueue.pendingTotal }}</span>
-              </h4>
-              <ol class="mt-2 max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border bg-background">
-                <li v-for="(item, index) in detailsPendingPreview" :key="item.key" class="flex min-w-0 items-center gap-2 px-3 py-2 text-xs">
-                  <span class="tabular w-7 shrink-0 text-right text-2xs text-muted-foreground">{{ index + 1 }}</span>
-                  <span class="truncate" :title="item.name">{{ item.name }}</span>
-                </li>
-              </ol>
-              <p v-if="detailsPendingHidden > 0" class="mt-1.5 text-2xs text-muted-foreground">Showing the first {{ QUEUE_PREVIEW_LIMIT }} items; {{ detailsPendingHidden }} more are queued.</p>
+            <div v-else-if="detailsTab === 'queued'" class="mt-4 flex min-h-0 flex-1 flex-col">
+              <div v-if="detailsQueue.pendingTotal > 0" class="flex min-h-0 flex-1 flex-col">
+                <h4 class="text-xs font-medium text-muted-foreground">
+                  Pending <span class="tabular">{{ detailsQueue.pendingTotal }}</span>
+                </h4>
+                <DownloadFileList :rows="detailsPendingRows" fill empty-label="No pending files" class="mt-2" @pause="downloads.pauseItem(detailsTask.id, $event)" />
+              </div>
+              <p v-if="detailsQueue.unfetched !== null && detailsQueue.unfetched > 0" class="mt-3 rounded-md border border-border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
+                <span class="tabular font-medium text-foreground">{{ detailsQueue.unfetched }}</span> more waiting to be retrieved from iCloud.
+              </p>
+              <div v-if="detailsQueue.pendingTotal === 0 && (detailsQueue.unfetched ?? 0) === 0" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">No queued files</div>
             </div>
 
-            <p v-if="detailsQueue.unfetched !== null && detailsQueue.unfetched > 0" class="mt-3 rounded-md border border-border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
-              <span class="tabular font-medium text-foreground">{{ detailsQueue.unfetched }}</span> more waiting to be retrieved from iCloud.
-            </p>
-
-            <div v-if="detailsQueue.failed.length" class="mt-4">
-              <h4 class="flex items-center gap-1.5 text-xs font-medium text-warning">
-                <AlertTriangle :size="12" />Failed files <span class="tabular">{{ detailsQueue.failed.length }}</span>
-              </h4>
-              <ul class="mt-2 max-h-40 divide-y divide-border overflow-y-auto rounded-md border border-warning/20 bg-warning/5">
-                <li v-for="(name, index) in detailsQueue.failed" :key="`${name}:${index}`" class="truncate px-3 py-2 text-xs text-warning" :title="name">{{ name }}</li>
-              </ul>
-            </div>
-
-            <div v-if="detailsQueue.active.length === 0 && detailsQueue.pendingTotal === 0 && (detailsQueue.unfetched ?? 0) === 0" class="mt-4 rounded-md border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
-              {{ detailsQueue.failed.length ? "No pending items. Review failed files above." : detailsTask.status === "running" ? "Retrieving the next queue…" : "Queue is empty" }}
+            <div v-else class="mt-4 flex min-h-0 flex-1 flex-col">
+              <div v-if="detailsCompletedFiles.length" class="flex min-h-0 flex-1 flex-col">
+                <div class="flex items-center gap-2">
+                  <h4 class="flex items-center gap-1.5 text-xs font-medium text-success">
+                    <Check :size="12" />Downloaded files <span class="tabular">{{ detailsCompletedFiles.length }}</span>
+                  </h4>
+                  <span class="tabular ml-auto text-2xs text-muted-foreground">{{ detailsCompletedBytes === null ? "Size unavailable" : formatBytes(detailsCompletedBytes) }}</span>
+                </div>
+                <DownloadFileList :rows="detailsCompletedRows" fill empty-label="No completed files" class="mt-2" />
+              </div>
+              <div v-if="detailsQueue.failed.length" class="mt-4">
+                <div class="flex items-center gap-2">
+                  <h4 class="flex items-center gap-1.5 text-xs font-medium text-warning">
+                    <AlertTriangle :size="12" />Failed files <span class="tabular">{{ detailsQueue.failed.length }}</span>
+                  </h4>
+                  <Button v-if="(detailsTask.failedItems?.length ?? 0) > 0 && detailsTask.status !== 'running'" variant="outline" size="sm" class="ml-auto h-7 gap-1 px-2 text-xs" @click="downloads.retryFailed(detailsTask.id)">
+                    <RotateCcw :size="12" />
+                    Retry failed
+                  </Button>
+                </div>
+                <DownloadFileList :rows="detailsFailedRows" :height="180" empty-label="No failed files" class="mt-2" />
+              </div>
+              <div v-if="!detailsCompletedFiles.length && !detailsQueue.failed.length" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">Nothing completed yet</div>
             </div>
           </section>
         </div>

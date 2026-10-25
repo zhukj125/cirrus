@@ -2,15 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { computed } from "vue";
 
-import { totalOf, useDownloadsStore } from "@/stores/downloads";
+import { fallbackMediaName, formatBytes, queueView, totalOf, useDownloadsStore } from "@/stores/downloads";
 import { UNBOUNDED } from "@/lib/photos/dates";
 import type { PhotoItem } from "@/types";
 
 const saved: string[] = [];
+const saveAttempts: string[] = [];
+const failedSaveUrls = new Set<string>();
 let inFlight = 0;
 let maxInFlight = 0;
 
 let gates: Array<() => void> = [];
+const transferCancellations = new Map<string, () => void>();
+let deferCancellation = false;
+let deferredCancellations: Array<() => void> = [];
 let hold = false;
 
 let listPages: Record<string, { photos: PhotoItem[]; nextCursor: string | null }> = {};
@@ -57,24 +62,32 @@ vi.mock("@/lib/api", () => ({
     if (!page) return { status: "ERROR", message: `没有这一页: ${cursor}`, photos: [], nextCursor: null };
     return { status: "OK", message: null, photos: page.photos, nextCursor: page.nextCursor };
   }),
-  savePhotoTo: vi.fn(async (_url: string, name: string, targetPath: string) => {
-    saved.push(targetPath);
+  savePhotoTo: vi.fn(async (_url: string, name: string, targetPath: string, transferId?: string) => {
+    saveAttempts.push(_url);
     inFlight += 1;
     maxInFlight = Math.max(maxInFlight, inFlight);
     try {
       if (hold) {
-        await new Promise<void>((resolve) => {
-          gates.push(() => {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const settle = (error?: Error) => {
+            if (settled) return;
+            settled = true;
             inFlight -= 1;
-            resolve();
-          });
+            if (transferId) transferCancellations.delete(transferId);
+            if (error) reject(error);
+            else resolve();
+          };
+          gates.push(() => settle());
+          if (transferId) transferCancellations.set(transferId, () => settle(new Error("cancelled")));
         });
       } else {
         inFlight -= 1;
       }
 
-      if (name.startsWith("bad")) throw new Error("403 Forbidden");
-      return targetPath;
+      if (failedSaveUrls.has(_url) || name.startsWith("bad")) throw new Error("403 Forbidden");
+      saved.push(targetPath);
+      return { path: targetPath, sizeBytes: 1024 };
     } finally {
       if (!hold) inFlight = Math.max(0, inFlight);
     }
@@ -85,7 +98,12 @@ vi.mock("@/lib/api", () => ({
   deleteDownloadTasks: vi.fn(async () => undefined),
   setDownloadSpeedLimit: vi.fn(async () => undefined),
   listenDownloadProgress: vi.fn(async () => () => undefined),
-  cancelDownloadTransfer: vi.fn(async () => undefined),
+  cancelDownloadTransfer: vi.fn(async (transferId: string) => {
+    const cancel = transferCancellations.get(transferId);
+    if (!cancel) return;
+    if (deferCancellation) deferredCancellations.push(cancel);
+    else cancel();
+  }),
 }));
 
 function photo(id: string, fileName?: string, takenAt = 1_700_000_000_000): PhotoItem {
@@ -99,6 +117,7 @@ function photo(id: string, fileName?: string, takenAt = 1_700_000_000_000): Phot
     originalUrl: `https://example.com/${id}-original.jpeg`,
     videoUrl: null,
     isLivePhoto: false,
+    sizeBytes: 1024,
   };
 }
 
@@ -109,9 +128,14 @@ function savedNames(): string[] {
 describe("下载任务", () => {
   beforeEach(() => {
     saved.length = 0;
+    saveAttempts.length = 0;
+    failedSaveUrls.clear();
     inFlight = 0;
     maxInFlight = 0;
     gates = [];
+    transferCancellations.clear();
+    deferCancellation = false;
+    deferredCancellations = [];
     hold = false;
     setLibrary([]);
     setRankLibrary([]);
@@ -142,6 +166,7 @@ describe("下载任务", () => {
     while (gates.length > 0) {
       const batch = gates;
       gates = [];
+      transferCancellations.clear();
       batch.forEach((release) => release());
       await Promise.resolve();
       await Promise.resolve();
@@ -178,15 +203,18 @@ describe("下载任务", () => {
 
     gates.forEach((release) => release());
     gates = [];
+    transferCancellations.clear();
 
-    await vi.waitFor(() => expect(task.done).toBe(2));
+    await vi.waitFor(() => {
+      expect(inFlight).toBe(0);
+      expect(task.pausedItems?.length ?? 0).toBe(2);
+    });
 
-    const doneWhilePaused = task.done;
-    expect(doneWhilePaused).toBe(2);
+    expect(task.done).toBe(0);
     expect(task.nextIndex).toBe(2);
 
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(task.done).toBe(2);
+    expect(task.done).toBe(0);
     expect(gates).toHaveLength(0);
 
     store.resume(task.id);
@@ -194,6 +222,7 @@ describe("下载任务", () => {
     while (task.status === "running") {
       const batch = gates;
       gates = [];
+      transferCancellations.clear();
       batch.forEach((release) => release());
       await Promise.resolve();
       await Promise.resolve();
@@ -228,9 +257,14 @@ describe("下载任务", () => {
 describe("下载任务 · 区间来源", () => {
   beforeEach(() => {
     saved.length = 0;
+    saveAttempts.length = 0;
+    failedSaveUrls.clear();
     inFlight = 0;
     maxInFlight = 0;
     gates = [];
+    transferCancellations.clear();
+    deferCancellation = false;
+    deferredCancellations = [];
     hold = false;
     setLibrary([]);
     setRankLibrary([]);
@@ -296,6 +330,7 @@ describe("下载任务 · 区间来源", () => {
     for (let guard = 0; guard < 500 && task.status === "running"; guard += 1) {
       const batch = gates;
       gates = [];
+      transferCancellations.clear();
       batch.forEach((release) => release());
       await Promise.resolve();
       await Promise.resolve();
@@ -322,18 +357,20 @@ describe("下载任务 · 区间来源", () => {
     store.pause(task.id);
     gates.forEach((release) => release());
     gates = [];
-    await vi.waitFor(() => expect(task.done).toBe(2));
+    transferCancellations.clear();
+    await vi.waitFor(() => expect(inFlight).toBe(0));
 
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(task.done).toBe(2);
+    expect(task.done).toBe(0);
     expect(gates).toHaveLength(0);
-    expect(listCalls).toEqual([null]);
+    expect(listCalls).toEqual([null, "c1"]);
 
     hold = false;
     store.resume(task.id);
     for (let guard = 0; guard < 200 && task.done + task.failed.length < 4; guard += 1) {
       const batch = gates;
       gates = [];
+      transferCancellations.clear();
       batch.forEach((release) => release());
       await Promise.resolve();
       await Promise.resolve();
@@ -386,5 +423,255 @@ describe("下载任务 · 区间来源", () => {
     expect(task.error).toBeNull();
 
     expect(task.source.kind === "range" ? task.source.startRank : "not-range").toBeNull();
+  });
+  it("名次页为空时自动退回游标扫描，不会生成空队列", async () => {
+    setRankLibrary([{ startRank: 5, photos: [] }]);
+    setLibrary([{ photos: [photo("c", undefined, 19)], nextCursor: null }]);
+
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", range: { sessionId: "s1", bounds: { after: 10, before: 20 }, total: 1, startRank: 5 }, title: "区间 · 1 张", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(rankCalls).toEqual([5]);
+    expect(listCalls).toEqual([null]);
+    expect(task.done).toBe(1);
+    expect(task.failed).toEqual([]);
+    expect(savedNames()).toEqual(["c.jpeg"]);
+  });
+
+  it("原始下载链接失败时自动尝试备用链接", async () => {
+    const item = photo("fallback");
+    failedSaveUrls.add(item.originalUrl ?? "");
+
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [item], title: "备用链接", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(saveAttempts).toEqual([item.originalUrl, item.displayUrl]);
+    expect(task.done).toBe(1);
+    expect(task.failed).toEqual([]);
+    expect(savedNames()).toEqual(["fallback.jpeg"]);
+  });
+  it("区间队列会提前预取下一页，下载时不会短暂清空", async () => {
+    hold = true;
+    setLibrary([
+      { photos: [photo("a", undefined, 19)], nextCursor: "c1" },
+      { photos: [photo("b", undefined, 18)], nextCursor: null },
+    ]);
+
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", range: { sessionId: "s1", bounds: { after: 10, before: 20 }, total: 2 }, title: "预取 · 2 张", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => {
+      expect(gates).toHaveLength(1);
+      expect(listCalls).toEqual([null, "c1"]);
+    });
+
+    hold = false;
+    gates.forEach((release) => release());
+    gates = [];
+    transferCancellations.clear();
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(2);
+    expect(savedNames()).toEqual(["a.jpeg", "b.jpeg"]);
+  });
+  it("快速继续时过渡帧保持四个下载项和原顺序", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const photos = Array.from({ length: 8 }, (_, index) => photo(`stable-${index}`));
+    const task = store.create({ accountKey: "dsid:test", photos, title: "稳定过渡", directory: "C:\\out", concurrency: 4 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(4));
+    const originalOrder = [...(task.activeFiles ?? [])];
+    deferCancellation = true;
+    store.pause(task.id);
+    expect(queueView(task).paused.map((item) => item.name)).toEqual(originalOrder);
+
+    store.resume(task.id);
+    expect(queueView(task).active.map((item) => item.name)).toEqual(originalOrder);
+
+    deferredCancellations.splice(0, 2).forEach((cancel) => cancel());
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(2));
+    expect(queueView(task).active.map((item) => item.name)).toEqual(originalOrder);
+
+    deferredCancellations.splice(0).forEach((cancel) => cancel());
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(4));
+    expect(queueView(task).active.map((item) => item.name)).toEqual(originalOrder);
+
+    hold = false;
+    for (let guard = 0; guard < 500 && task.status !== "done"; guard += 1) {
+      const batch = gates;
+      gates = [];
+      batch.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(8);
+    expect(task.failed).toEqual([]);
+  });
+  it("快速暂停和恢复不会把取消中的下载记为失败", async () => {
+    hold = true;
+    setLibrary([{ photos: [photo("a", undefined, 19), photo("b", undefined, 18), photo("c", undefined, 17), photo("d", undefined, 16)], nextCursor: null }]);
+
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", range: { sessionId: "s1", bounds: { after: 10, before: 20 }, total: 4 }, title: "快速切换", directory: "C:\\out", concurrency: 4 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(gates.length).toBeGreaterThan(0));
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      store.pause(task.id);
+      store.resume(task.id);
+      await Promise.resolve();
+    }
+
+    store.pause(task.id);
+    await vi.waitFor(() => {
+      const queue = queueView(task, Number.MAX_SAFE_INTEGER);
+      expect(queue.active).toHaveLength(0);
+      expect(queue.paused.length).toBe(4);
+      expect(queue.paused.length + queue.pendingTotal).toBe(queue.remaining);
+    });
+    const queue = queueView(task, Number.MAX_SAFE_INTEGER);
+    const remainingIds = [...queue.paused.map((item) => item.photoId), ...queue.pending.map((item) => item.photoId)];
+    expect(new Set(remainingIds).size).toBe(remainingIds.length);
+
+    store.resume(task.id);
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(4));
+    expect(gates.length).toBeGreaterThanOrEqual(4);
+
+    hold = false;
+    for (let guard = 0; guard < 500 && task.status !== "done"; guard += 1) {
+      const batch = gates;
+      gates = [];
+      batch.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.failed).toEqual([]);
+    expect(task.done).toBe(4);
+    expect(inFlight).toBe(0);
+  });
+  it("暂停时已完成的项目不会因为其它项取消而重复下载", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [photo("a"), photo("b")], title: "已完成不回退", directory: "C:\\out", concurrency: 2 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    gates[1]?.();
+    await vi.waitFor(() => expect(task.done).toBe(1));
+
+    store.pause(task.id);
+    await vi.waitFor(() => {
+      expect(inFlight).toBe(0);
+      expect(task.pausedItems?.length ?? 0).toBe(1);
+    });
+    expect(task.nextIndex).toBe(2);
+    expect(task.pausedItems?.map((item) => item.id)).toHaveLength(1);
+
+    hold = false;
+    store.resume(task.id);
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(2);
+    expect(task.failed).toEqual([]);
+    expect(saved).toHaveLength(2);
+    expect(new Set(savedNames()).size).toBe(2);
+  });
+  it("只对真实失败的文件执行重试", async () => {
+    const item = photo("retry-me");
+    failedSaveUrls.add(item.originalUrl ?? "");
+    failedSaveUrls.add(item.displayUrl ?? "");
+    failedSaveUrls.add(item.thumbUrl);
+
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [item], title: "真实失败", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(0);
+    expect(task.failed).toEqual(["retry-me.jpeg"]);
+    expect(task.failedItems.map((failed) => failed.id)).toEqual(["retry-me"]);
+
+    failedSaveUrls.clear();
+    store.retryFailed(task.id);
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(1);
+    expect(task.failed).toEqual([]);
+    expect(task.failedItems).toEqual([]);
+    expect(task.completedFiles).toEqual([{ name: "retry-me.jpeg", sizeBytes: 1024 }]);
+  });
+
+  it("文件大小按可读单位显示", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1024)).toBe("1 KB");
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+  });
+  it("没有真实文件名时使用时间命名，不显示 UUID", () => {
+    const item = { ...photo("UUID-1234"), fileName: null, takenAt: 1_711_339_140_000 };
+    expect(fallbackMediaName(item, 1)).toBe("20240325_115900_0001.jpeg");
+  });
+  it("快速暂停和继续单个文件不会减少并发 worker", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const photos = Array.from({ length: 8 }, (_, index) => photo(`item-${index}`));
+    const task = store.create({ accountKey: "dsid:test", photos, title: "单项快速切换", directory: "C:\\out", concurrency: 4 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(4));
+    for (let iteration = 0; iteration < 6; iteration += 1) {
+      const target = task.activeItems?.[0];
+      if (!target) throw new Error("没有活动文件");
+      store.pauseItem(task.id, target.id);
+      await Promise.resolve();
+      store.resumeItem(task.id, target.id);
+      await vi.waitFor(() => {
+        expect(task.activeFiles).toHaveLength(4);
+        expect(task.pausedItems).toEqual([]);
+      });
+    }
+    expect(task.failed).toEqual([]);
+
+    hold = false;
+    for (let guard = 0; guard < 500 && task.status !== "done"; guard += 1) {
+      const batch = gates;
+      gates = [];
+      batch.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(8);
+    expect(inFlight).toBe(0);
+    expect(new Set(savedNames()).size).toBe(8);
+  });
+  it("可以单独暂停和恢复某个文件", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [photo("a"), photo("b")], title: "单项暂停", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    store.pauseItem(task.id, "a");
+    await vi.waitFor(() => {
+      expect(task.pausedItems?.map((item) => item.id)).toEqual(["a"]);
+      expect(task.activeFiles).not.toContain("a.jpeg");
+    });
+    expect(task.failed).toEqual([]);
+
+    hold = false;
+    const batch = gates;
+    gates = [];
+    batch.forEach((release) => release());
+    store.resumeItem(task.id, "a");
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(2);
+    expect(task.pausedItems).toEqual([]);
+    expect(savedNames()).toEqual(["a.jpeg", "b.jpeg"]);
   });
 });

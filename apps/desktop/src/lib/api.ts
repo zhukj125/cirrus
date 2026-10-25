@@ -3,7 +3,24 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-import type { AccountAvatar, AccountStoreSnapshot, DeviceInfoResult, DownloadProgressEvent, LibraryTotal, LoadedDownloadTasks, Photos2faOptions, PhotosListRequest, PhotosLoginResult, PhotosPage, PhotosStatus, PhotosTimeline, PlaySoundResult, RuntimeInfo, SessionStateResponse } from "@/types";
+import type {
+  AccountAvatar,
+  AccountStoreSnapshot,
+  DeviceInfoResult,
+  DownloadProgressEvent,
+  LibraryTotal,
+  LoadedDownloadTasks,
+  Photos2faOptions,
+  PhotosListRequest,
+  PhotosLoginResult,
+  PhotosPage,
+  PhotosStatus,
+  PhotosTimeline,
+  PlaySoundResult,
+  RuntimeInfo,
+  SavedPhotoResult,
+  SessionStateResponse,
+} from "@/types";
 
 function describeError(error: unknown): string {
   if (typeof error === "string") return error;
@@ -93,7 +110,8 @@ export function photosStatus(sessionId: string): Promise<PhotosStatus> {
 export async function downloadPhoto(url: string, name: string): Promise<string | null> {
   const targetPath = await save({ title: "Save to", defaultPath: name });
   if (!targetPath) return null;
-  return call<string>("save_photo", { url, name, targetPath });
+  const result = await call<SavedPhotoResult>("save_photo", { url, name, targetPath });
+  return result.path;
 }
 
 export async function pickDownloadDirectory(): Promise<string | null> {
@@ -101,8 +119,8 @@ export async function pickDownloadDirectory(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-export function savePhotoTo(url: string, name: string, targetPath: string, transferId?: string): Promise<string> {
-  return call<string>("save_photo", { url, name, targetPath, transferId });
+export function savePhotoTo(url: string, name: string, targetPath: string, transferId?: string): Promise<SavedPhotoResult> {
+  return call<SavedPhotoResult>("save_photo", { url, name, targetPath, transferId });
 }
 
 export function setDownloadSpeedLimit(bytesPerSec: number): Promise<void> {

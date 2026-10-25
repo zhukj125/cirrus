@@ -27,7 +27,7 @@ vi.mock("@/lib/api", () => ({
     await new Promise<void>((resolve) => {
       releases.push(resolve);
     });
-    return targetPath;
+    return { path: targetPath, sizeBytes: 1024 };
   }),
   rekeyDownloadTasks: vi.fn(async () => undefined),
   deleteDownloadTasks: vi.fn(async () => undefined),
@@ -44,6 +44,7 @@ function photo(): PhotoItem {
     isVideo: false,
     thumbUrl: "https://example.com/p1.jpeg",
     originalUrl: "https://example.com/p1-original.heic",
+    sizeBytes: 1024,
   };
 }
 
@@ -104,13 +105,14 @@ describe("下载文件与速度进度", () => {
     expect(view.active.map((item) => item.name)).toEqual(["IMG_0001.HEIC"]);
     expect(view.pending.map((item) => item.name)).toEqual(["IMG_0002.HEIC", "IMG_0003.HEIC"]);
     expect(view.pendingTotal).toBe(2);
+    expect(view.pending.map((item) => item.sizeBytes)).toEqual([1024, 1024]);
     expect(view.remaining).toBe(3);
   });
   it("暂停会取消在飞传输并把快照文件放回断点", async () => {
     let rejectTransfer: ((error: Error) => void) | null = null;
     vi.mocked(savePhotoTo).mockImplementationOnce(
       (_url: string, _name: string, _targetPath: string, id?: string) =>
-        new Promise<string>((_resolve, reject) => {
+        new Promise<{ path: string; sizeBytes: number }>((_resolve, reject) => {
           transferId = id ?? "";
           rejectTransfer = reject;
         }),
@@ -120,10 +122,12 @@ describe("下载文件与速度进度", () => {
     const task = store.create({ accountKey: "dsid:a", title: "一张", directory: "C:\\out", photos: [photo()], concurrency: 1 });
     if (!task) throw new Error("任务创建失败");
     await vi.waitFor(() => expect(transferId).not.toBe(""));
+    store.ingestDownloadProgress({ transferId, fileName: "IMG_0001.HEIC", downloadedBytes: 512 * 1024, totalBytes: 4 * 1024 * 1024 });
     task.speedBytesPerSec = 12 * 1024 * 1024;
     store.downloadSpeed = 12 * 1024 * 1024;
 
     store.pause(task.id);
+    store.ingestDownloadProgress({ transferId, fileName: "IMG_0001.HEIC", downloadedBytes: 700 * 1024, totalBytes: 4 * 1024 * 1024 });
     expect(task.status).toBe("paused");
     expect(task.speedBytesPerSec).toBe(0);
     expect(store.downloadSpeed).toBe(0);
@@ -132,7 +136,9 @@ describe("下载文件与速度进度", () => {
     rejectTransfer?.(new Error("下载已暂停"));
     await vi.waitFor(() => expect(task.activeFiles).toEqual([]));
     expect(task.status).toBe("paused");
-    expect(task.nextIndex).toBe(0);
+    expect(task.nextIndex).toBe(1);
+    expect(task.pausedItems?.map((item) => item.id)).toEqual(["p1"]);
+    expect(task.pausedProgress?.[0]).toMatchObject({ photoId: "p1", downloadedBytes: 700 * 1024, totalBytes: 4 * 1024 * 1024 });
     expect(task.failed).toEqual([]);
   });
   it("进度事件更新任务速度与全局速度，空闲后归零", async () => {
@@ -144,6 +150,7 @@ describe("下载文件与速度进度", () => {
     await vi.waitFor(() => expect(transferId).not.toBe(""));
 
     store.ingestDownloadProgress({ transferId, fileName: "IMG_0001.HEIC", downloadedBytes: 2 * 1024 * 1024, totalBytes: 4 * 1024 * 1024 });
+    expect(task.activeProgress?.[0]).toMatchObject({ downloadedBytes: 2 * 1024 * 1024, totalBytes: 4 * 1024 * 1024 });
     await vi.advanceTimersByTimeAsync(500);
     expect(task.speedBytesPerSec).toBeGreaterThan(0);
     expect(store.downloadSpeed).toBeGreaterThan(0);

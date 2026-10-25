@@ -130,6 +130,13 @@ export interface PhotoItem {
   width?: number | null;
 
   height?: number | null;
+
+  sizeBytes?: number | null;
+}
+
+export interface SavedPhotoResult {
+  path: string;
+  sizeBytes: number;
 }
 
 export interface PhotosPage {

@@ -15,6 +15,7 @@ export type TaskStatus = "running" | "paused" | "done" | "cancelled";
 export interface SnapshotSource {
   kind: "snapshot";
   items: PhotoItem[];
+  pending: PhotoItem[];
 }
 
 export interface RangeSource {
@@ -40,6 +41,11 @@ export interface RangeSource {
 }
 
 export type DownloadSource = SnapshotSource | RangeSource;
+
+export interface CompletedFile {
+  name: string;
+  sizeBytes: number | null;
+}
 
 export interface CreateDownloadInput {
   accountKey: string;
@@ -73,8 +79,20 @@ export interface DownloadTask {
   nextIndex: number;
   done: number;
   failed: string[];
+  failedItems: PhotoItem[];
+  completedFiles?: CompletedFile[];
+  pausedItems?: PhotoItem[];
+  pausedProgress?: Array<{ photoId: string; downloadedBytes: number; totalBytes: number | null }>;
 
   activeFiles?: string[];
+
+  activeItems?: PhotoItem[];
+
+  activeProgress?: Array<{ transferId: string; downloadedBytes: number; totalBytes: number | null }>;
+
+  transitionItems?: PhotoItem[];
+
+  transitionOrder?: string[];
 
   lastFile?: string | null;
 
@@ -89,6 +107,14 @@ export interface DownloadTask {
 
 export const CONCURRENCY_OPTIONS = [2, 4, 6, 8] as const;
 const DEFAULT_CONCURRENCY = 4;
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${Math.round(bytes)} B`;
+}
 
 export function formatSpeed(bytesPerSec: number): string {
   if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "0 B/s";
@@ -106,6 +132,7 @@ function storedSpeedLimit(): number {
 }
 
 const RANGE_PAGE_SIZE = 60;
+const RANGE_PREFETCH_THRESHOLD = RANGE_PAGE_SIZE;
 
 export function taskFinished(task: DownloadTask): number {
   return task.done + task.failed.length;
@@ -116,8 +143,9 @@ export function totalOf(task: DownloadTask): number | null {
 }
 
 export interface DownloadQueueView {
-  active: Array<{ key: string; name: string }>;
-  pending: Array<{ key: string; name: string; photoId: string }>;
+  active: Array<{ key: string; name: string; photoId: string | null; sizeBytes: number | null; downloadedBytes: number; totalBytes: number | null }>;
+  pending: Array<{ key: string; name: string; photoId: string; sizeBytes: number | null }>;
+  paused: Array<{ key: string; name: string; photoId: string; sizeBytes: number | null; downloadedBytes: number; totalBytes: number | null }>;
   pendingTotal: number;
 
   unfetched: number | null;
@@ -126,19 +154,85 @@ export interface DownloadQueueView {
   failed: string[];
 }
 
+function uniquePhotosById(items: PhotoItem[]): PhotoItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 export function queueView(task: DownloadTask, previewLimit = 200): DownloadQueueView {
-  const active = (task.activeFiles ?? []).map((name, index) => ({ key: `${task.id}:active:${index}`, name }));
-  const pendingTotal = task.source.kind === "snapshot" ? Math.max(0, task.source.items.length - task.nextIndex) : task.source.pending.length;
-  const pendingItems = task.source.kind === "snapshot" ? task.source.items.slice(task.nextIndex, task.nextIndex + previewLimit) : task.source.pending.slice(0, previewLimit);
+  const pausedItems = uniquePhotosById(Array.isArray(task.pausedItems) ? task.pausedItems : []);
+  const pausedIds = new Set(pausedItems.map((item) => item.id));
+  const transitionItems = uniquePhotosById(Array.isArray(task.transitionItems) ? task.transitionItems : []);
+  const transitionIds = new Set(transitionItems.map((item) => item.id));
+  const activeIds = new Set<string>();
+  const active = (task.activeFiles ?? [])
+    .map((name, index) => {
+      const progress = task.activeProgress?.[index];
+      const photo = task.activeItems?.[index];
+      return {
+        key: `${task.id}:active:${index}`,
+        name,
+        photoId: photo?.id ?? null,
+        sizeBytes: photo?.sizeBytes ?? progress?.totalBytes ?? null,
+        downloadedBytes: progress?.downloadedBytes ?? 0,
+        totalBytes: progress?.totalBytes ?? photo?.sizeBytes ?? null,
+      };
+    })
+    .filter((item) => {
+      if (item.photoId !== null && (pausedIds.has(item.photoId) || activeIds.has(item.photoId))) return false;
+      if (item.photoId !== null) activeIds.add(item.photoId);
+      return true;
+    });
+  for (const item of transitionItems) {
+    if (pausedIds.has(item.id) || activeIds.has(item.id)) continue;
+    const progress = task.pausedProgress?.find((entry) => entry.photoId === item.id);
+    active.push({
+      key: `${task.id}:transition:${item.id}`,
+      name: item.fileName || fallbackMediaName(item, task.done + active.length + 1),
+      photoId: item.id,
+      sizeBytes: item.sizeBytes ?? progress?.totalBytes ?? null,
+      downloadedBytes: progress?.downloadedBytes ?? 0,
+      totalBytes: progress?.totalBytes ?? item.sizeBytes ?? null,
+    });
+    activeIds.add(item.id);
+  }
+  const transitionOrder = new Map((task.transitionOrder ?? []).map((id, index) => [id, index]));
+  if (transitionOrder.size > 0) {
+    active.sort((left, right) => {
+      const leftRank = left.photoId === null ? Number.MAX_SAFE_INTEGER : (transitionOrder.get(left.photoId) ?? Number.MAX_SAFE_INTEGER);
+      const rightRank = right.photoId === null ? Number.MAX_SAFE_INTEGER : (transitionOrder.get(right.photoId) ?? Number.MAX_SAFE_INTEGER);
+      return leftRank - rightRank;
+    });
+  }
+  const queuedSnapshotItems = task.source.kind === "snapshot" && Array.isArray(task.source.pending) ? task.source.pending : [];
+  const pendingCandidates = task.source.kind === "snapshot" ? uniquePhotosById([...queuedSnapshotItems, ...task.source.items.slice(task.nextIndex)]) : uniquePhotosById(task.source.pending);
+  const pendingItems = pendingCandidates.filter((item) => !pausedIds.has(item.id) && !transitionIds.has(item.id)).slice(0, previewLimit);
+  const pendingTotal = pendingCandidates.filter((item) => !pausedIds.has(item.id) && !transitionIds.has(item.id)).length;
+  const paused = pausedItems.map((item, index) => {
+    const progress = task.pausedProgress?.find((entry) => entry.photoId === item.id);
+    return {
+      key: `${task.id}:paused:${item.id}:${index}`,
+      name: item.fileName || fallbackMediaName(item, task.done + index + 1),
+      photoId: item.id,
+      sizeBytes: item.sizeBytes ?? null,
+      downloadedBytes: progress?.downloadedBytes ?? 0,
+      totalBytes: progress?.totalBytes ?? item.sizeBytes ?? null,
+    };
+  });
   const pending = pendingItems.map((item, index) => ({
     key: `${task.id}:pending:${item.id}:${index}`,
-    name: item.fileName ?? item.id,
+    name: item.fileName || fallbackMediaName(item, task.done + index + 1),
     photoId: item.id,
+    sizeBytes: item.sizeBytes ?? null,
   }));
   const total = totalOf(task);
   const remaining = total === null ? null : Math.max(0, total - taskFinished(task));
   const unfetched = task.source.kind === "range" && total !== null ? Math.max(0, total - taskFinished(task) - active.length - pendingTotal) : 0;
-  return { active, pending, pendingTotal, unfetched, remaining, failed: [...task.failed] };
+  return { active, pending, paused, pendingTotal, unfetched, remaining, failed: [...task.failed] };
 }
 
 export function percentOf(task: DownloadTask): number | null {
@@ -167,7 +261,7 @@ function taskFolderName(title: string, createdAt: number): string {
   return `Cirrus_${stamp}_${safeTitle}`;
 }
 
-function fallbackMediaName(item: PhotoItem, sequence: number): string {
+export function fallbackMediaName(item: PhotoItem, sequence: number): string {
   const extension = item.isVideo ? ".mp4" : ".jpeg";
   if (!item.takenAt) return `Cirrus_${String(sequence).padStart(4, "0")}${extension}`;
   const date = new Date(item.takenAt);
@@ -178,6 +272,11 @@ function fallbackMediaName(item: PhotoItem, sequence: number): string {
 
 function separatorOf(directory: string): string {
   return directory.includes("\\") ? "\\" : "/";
+}
+
+function downloadUrls(item: PhotoItem): string[] {
+  const candidates = item.isVideo ? [item.originalUrl, item.videoUrl, item.displayUrl, item.thumbUrl] : [item.originalUrl, item.displayUrl, item.thumbUrl];
+  return [...new Set(candidates.map((url) => url?.trim()).filter((url): url is string => Boolean(url)))];
 }
 
 const refills = new Map<string, Promise<void>>();
@@ -200,6 +299,10 @@ export const useDownloadsStore = defineStore("downloads", () => {
   const downloadSpeed = ref(0);
   const speedLimitBytesPerSec = ref(storedSpeedLimit());
   const activeTransfers = new Map<string, { taskId: string; lastBytes: number; lastAt: number; speedBytesPerSec: number; item: PhotoItem; snapshotIndex: number | null }>();
+  const cancelledTransfers = new Set<string>();
+  const pumpFlights = new Map<string, Promise<void>>();
+  const runTokens = new Map<string, number>();
+  const pumpRestartRequests = new Set<string>();
   let speedTimer: ReturnType<typeof setInterval> | null = null;
   let unlistenProgress: (() => void) | null = null;
 
@@ -376,10 +479,11 @@ export const useDownloadsStore = defineStore("downloads", () => {
     if (!transfer) return;
     const task = findTaskById(transfer.taskId);
     if (!task) return;
+    const paused = isItemPaused(task, transfer.item.id);
     const now = performance.now();
     const delta = Math.max(0, progress.downloadedBytes - transfer.lastBytes);
     const elapsed = Math.max(0.001, (now - transfer.lastAt) / 1000);
-    if (delta > 0) {
+    if (delta > 0 && !paused) {
       const instant = delta / elapsed;
       transfer.speedBytesPerSec = transfer.speedBytesPerSec * 0.65 + instant * 0.35;
       transfer.lastAt = now;
@@ -387,6 +491,17 @@ export const useDownloadsStore = defineStore("downloads", () => {
       syncDownloadSpeed();
     }
     transfer.lastBytes = Math.max(transfer.lastBytes, progress.downloadedBytes);
+    const taskProgress = task.activeProgress?.find((item) => item.transferId === progress.transferId);
+    if (taskProgress) {
+      taskProgress.downloadedBytes = Math.max(taskProgress.downloadedBytes, progress.downloadedBytes);
+      taskProgress.totalBytes = progress.totalBytes ?? taskProgress.totalBytes;
+    }
+    if (paused) {
+      transfer.speedBytesPerSec = 0;
+      syncTaskSpeed(task.id);
+      syncDownloadSpeed();
+      addPausedItem(task, transfer.item, progress.downloadedBytes, progress.totalBytes ?? taskProgress?.totalBytes ?? transfer.item.sizeBytes ?? null);
+    }
     ensureSpeedTimer();
   }
 
@@ -404,22 +519,96 @@ export const useDownloadsStore = defineStore("downloads", () => {
   }
   function cancelTransfersForTask(taskId: string): void {
     for (const [transferId, transfer] of activeTransfers) {
-      if (transfer.taskId === taskId) void cancelDownloadTransfer(transferId).catch(() => undefined);
+      if (transfer.taskId !== taskId) continue;
+      cancelledTransfers.add(transferId);
+      void cancelDownloadTransfer(transferId).catch(() => undefined);
     }
   }
 
-  function requeueCancelledItem(task: DownloadTask, item: PhotoItem, snapshotIndex: number | null): void {
-    if (task.source.kind === "snapshot") {
-      if (snapshotIndex !== null) task.nextIndex = Math.min(task.nextIndex, snapshotIndex);
+  function isItemPaused(task: DownloadTask, photoId: string): boolean {
+    return (task.pausedItems ?? []).some((item) => item.id === photoId);
+  }
+
+  function clearTransition(task: DownloadTask): void {
+    task.transitionItems = [];
+    task.transitionOrder = [];
+  }
+
+  function removeTransitionItem(task: DownloadTask, photoId: string): void {
+    task.transitionItems = (task.transitionItems ?? []).filter((item) => item.id !== photoId);
+    task.transitionOrder = (task.transitionOrder ?? []).filter((id) => id !== photoId);
+    syncTransition(task);
+  }
+
+  function syncTransition(task: DownloadTask): void {
+    if (!task.transitionItems?.length) {
+      clearTransition(task);
       return;
     }
+    const activeIds = new Set((task.activeItems ?? []).map((item) => item.id));
+    if (task.transitionItems.every((item) => activeIds.has(item.id))) clearTransition(task);
+  }
+
+  function removeQueuedItem(task: DownloadTask, photoId: string): void {
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
+    task.source.pending = task.source.pending.filter((item) => item.id !== photoId);
+  }
+
+  function findActiveTransfer(taskId: string, photoId: string): { transferId: string; item: PhotoItem } | null {
+    for (const [transferId, transfer] of activeTransfers) {
+      if (transfer.taskId === taskId && transfer.item.id === photoId) return { transferId, item: transfer.item };
+    }
+    return null;
+  }
+
+  function hasActiveTransfer(taskId: string, photoId: string): boolean {
+    return findActiveTransfer(taskId, photoId) !== null;
+  }
+
+  function addPausedItem(task: DownloadTask, item: PhotoItem, downloadedBytes = 0, totalBytes: number | null = item.sizeBytes ?? null): void {
+    if (!Array.isArray(task.pausedItems)) task.pausedItems = [];
+    if (!Array.isArray(task.pausedProgress)) task.pausedProgress = [];
+    if (!isItemPaused(task, item.id)) task.pausedItems.push({ ...item });
+    const existing = task.pausedProgress.find((entry) => entry.photoId === item.id);
+    if (existing) {
+      existing.downloadedBytes = Math.max(existing.downloadedBytes, downloadedBytes);
+      existing.totalBytes = totalBytes ?? existing.totalBytes;
+    } else {
+      task.pausedProgress.push({ photoId: item.id, downloadedBytes, totalBytes });
+    }
+  }
+
+  function removePausedItem(task: DownloadTask, photoId: string): void {
+    if (!Array.isArray(task.pausedItems)) return;
+    task.pausedItems = task.pausedItems.filter((item) => item.id !== photoId);
+  }
+
+  function pausedProgressFor(task: DownloadTask, photoId: string): { downloadedBytes: number; totalBytes: number | null } | null {
+    return task.pausedProgress?.find((entry) => entry.photoId === photoId) ?? null;
+  }
+
+  function cancelTransferForItem(taskId: string, photoId: string): void {
+    for (const [transferId, transfer] of activeTransfers) {
+      if (transfer.taskId === taskId && transfer.item.id === photoId) {
+        cancelledTransfers.add(transferId);
+        void cancelDownloadTransfer(transferId).catch(() => undefined);
+      }
+    }
+  }
+
+  function requeueCancelledItem(task: DownloadTask, item: PhotoItem, _snapshotIndex: number | null): void {
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
     if (!task.source.pending.some((pending) => pending.id === item.id)) task.source.pending.unshift(item);
   }
   function beginTransfer(task: DownloadTask, fileName: string, item: PhotoItem, snapshotIndex: number | null): string {
     const transferId = `${task.id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
     activeTransfers.set(transferId, { taskId: task.id, lastBytes: 0, lastAt: performance.now(), speedBytesPerSec: 0, item, snapshotIndex });
     task.activeFiles = [...(task.activeFiles ?? []), fileName];
+    task.activeItems = [...(task.activeItems ?? []), item];
+    const pausedProgress = pausedProgressFor(task, item.id);
+    task.activeProgress = [...(task.activeProgress ?? []), { transferId, downloadedBytes: pausedProgress?.downloadedBytes ?? 0, totalBytes: pausedProgress?.totalBytes ?? item.sizeBytes ?? null }];
     task.speedBytesPerSec = task.speedBytesPerSec ?? 0;
+    syncTransition(task);
     ensureSpeedTimer();
     return transferId;
   }
@@ -427,13 +616,18 @@ export const useDownloadsStore = defineStore("downloads", () => {
   function endTransfer(transferId: string, fileName: string): void {
     const transfer = activeTransfers.get(transferId);
     activeTransfers.delete(transferId);
+    cancelledTransfers.delete(transferId);
     const task = transfer ? findTaskById(transfer.taskId) : null;
     if (task) {
       syncTaskSpeed(task.id);
       syncDownloadSpeed();
       task.lastFile = fileName;
-      const index = task.activeFiles?.indexOf(fileName) ?? -1;
-      if (index >= 0 && task.activeFiles) task.activeFiles.splice(index, 1);
+      const index = task.activeProgress?.findIndex((progress) => progress.transferId === transferId) ?? -1;
+      if (index >= 0) {
+        task.activeFiles?.splice(index, 1);
+        task.activeItems?.splice(index, 1);
+        task.activeProgress?.splice(index, 1);
+      }
       if (!task.activeFiles?.length) {
         setTimeout(() => {
           if (!task.activeFiles?.length) task.speedBytesPerSec = 0;
@@ -572,6 +766,19 @@ export const useDownloadsStore = defineStore("downloads", () => {
     return candidate;
   }
 
+  function recordFailedItem(task: DownloadTask, item: PhotoItem, rawName: string): void {
+    if (!Array.isArray(task.failedItems)) task.failedItems = [];
+    if (task.failedItems.some((failed) => failed.id === item.id)) return;
+    task.failedItems.push({ ...item });
+    task.failed.push(rawName);
+    removeTransitionItem(task, item.id);
+  }
+
+  function releaseName(task: DownloadTask, name: string): void {
+    const index = task.usedNames.lastIndexOf(name.toLowerCase());
+    if (index >= 0) task.usedNames.splice(index, 1);
+  }
+
   async function refillPage(task: DownloadTask, source: RangeSource): Promise<void> {
     const cursorBefore = source.cursor;
     const rankBefore = source.nextRank;
@@ -584,12 +791,20 @@ export const useDownloadsStore = defineStore("downloads", () => {
       if (usingRank) {
         source.startRank = null;
         source.nextRank = null;
+        schedulePersist(task.accountKey);
         return;
       }
 
       source.exhausted = true;
       task.error = page.message ?? "Could not load the photo list";
       toast.error(task.error);
+      return;
+    }
+
+    if (usingRank && page.photos.length === 0) {
+      source.startRank = null;
+      source.nextRank = null;
+      schedulePersist(task.accountKey);
       return;
     }
 
@@ -636,71 +851,136 @@ export const useDownloadsStore = defineStore("downloads", () => {
     return promise;
   }
 
-  async function takeFromRange(task: DownloadTask, source: RangeSource): Promise<PhotoItem | null> {
-    while (source.pending.length === 0) {
-      if (source.exhausted) return null;
-      await refill(task, source);
-
-      if (task.status !== "running") return null;
-    }
-    return source.pending.shift() ?? null;
+  function isCurrentRun(task: DownloadTask, token: number): boolean {
+    return task.status === "running" && runTokens.get(task.id) === token;
   }
 
-  async function worker(task: DownloadTask): Promise<void> {
-    while (task.status === "running") {
+  function invalidateRun(task: DownloadTask): void {
+    runTokens.set(task.id, (runTokens.get(task.id) ?? 0) + 1);
+  }
+
+  async function takeFromRange(task: DownloadTask, source: RangeSource, token: number): Promise<PhotoItem | null> {
+    while (isCurrentRun(task, token) && source.pending.length === 0) {
+      if (source.exhausted) return null;
+      await refill(task, source);
+      if (!isCurrentRun(task, token)) return null;
+    }
+    if (!isCurrentRun(task, token)) return null;
+
+    const item = source.pending.shift() ?? null;
+    if (item && !source.exhausted && source.pending.length <= RANGE_PREFETCH_THRESHOLD) void refill(task, source);
+    return item;
+  }
+
+  async function worker(task: DownloadTask, token: number): Promise<void> {
+    while (isCurrentRun(task, token)) {
       let item: PhotoItem | null;
       let snapshotIndex: number | null = null;
       if (task.source.kind === "snapshot") {
-        const index = task.nextIndex;
-        if (index >= task.source.items.length) return;
-        task.nextIndex = index + 1;
-        snapshotIndex = index;
-        item = task.source.items[index] ?? null;
+        if (!Array.isArray(task.source.pending)) task.source.pending = [];
+        const queued = task.source.pending.shift();
+        if (queued) {
+          item = queued;
+        } else {
+          const index = task.nextIndex;
+          if (index >= task.source.items.length) return;
+          task.nextIndex = index + 1;
+          snapshotIndex = index;
+          item = task.source.items[index] ?? null;
+        }
       } else {
-        item = await takeFromRange(task, task.source);
+        item = await takeFromRange(task, task.source, token);
       }
       if (item === null) return;
+      if (!isCurrentRun(task, token)) {
+        if (!isItemPaused(task, item.id)) requeueCancelledItem(task, item, snapshotIndex);
+        return;
+      }
+      if (isItemPaused(task, item.id) || hasActiveTransfer(task.id, item.id)) continue;
 
-      const url = item.originalUrl || item.displayUrl || item.thumbUrl;
+      const urls = downloadUrls(item);
       const rawName = item.fileName || fallbackMediaName(item, task.done + task.failed.length + 1);
 
-      if (!url) {
-        task.failed.push(rawName);
+      if (urls.length === 0) {
+        recordFailedItem(task, item, rawName);
         task.lastFile = rawName;
         schedulePersist(task.accountKey);
         continue;
       }
 
-      const transferId = beginTransfer(task, rawName, item, snapshotIndex);
-      try {
-        await savePhotoTo(url, rawName, `${task.directory}${separatorOf(task.directory)}${uniqueName(task, rawName)}`, transferId);
-        task.done += 1;
-      } catch {
-        const currentStatus = String(task.status);
-        if (currentStatus === "paused" || currentStatus === "cancelled") {
-          requeueCancelledItem(task, item, snapshotIndex);
-        } else {
-          task.failed.push(rawName);
+      const savedName = uniqueName(task, rawName);
+      const targetPath = `${task.directory}${separatorOf(task.directory)}${savedName}`;
+      let completed = false;
+      let interrupted = false;
+      for (const url of urls) {
+        const transferId = beginTransfer(task, rawName, item, snapshotIndex);
+        try {
+          const saved = await savePhotoTo(url, rawName, targetPath, transferId);
+          if (!Array.isArray(task.completedFiles)) task.completedFiles = [];
+          task.completedFiles.push({ name: savedName, sizeBytes: saved.sizeBytes });
+          removeQueuedItem(task, item.id);
+          removePausedItem(task, item.id);
+          removeTransitionItem(task, item.id);
+          task.pausedProgress = (task.pausedProgress ?? []).filter((entry) => entry.photoId !== item.id);
+          task.done += 1;
+          completed = true;
+          break;
+        } catch {
+          const currentStatus = String(task.status);
+          const itemPaused = isItemPaused(task, item.id);
+          if (!isCurrentRun(task, token) || currentStatus === "paused" || currentStatus === "cancelled") {
+            if (!itemPaused) requeueCancelledItem(task, item, snapshotIndex);
+            interrupted = true;
+            break;
+          }
+          if (cancelledTransfers.has(transferId) || itemPaused) {
+            interrupted = true;
+            break;
+          }
+        } finally {
+          endTransfer(transferId, rawName);
         }
-      } finally {
-        endTransfer(transferId, rawName);
+      }
+      if (!completed && !interrupted) {
+        releaseName(task, savedName);
+        recordFailedItem(task, item, rawName);
+      } else if (interrupted) {
+        releaseName(task, savedName);
       }
       schedulePersist(task.accountKey);
     }
   }
 
   function drained(task: DownloadTask): boolean {
-    if (task.source.kind === "snapshot") return task.nextIndex >= task.source.items.length;
+    if ((task.pausedItems?.length ?? 0) > 0) return false;
+    if (task.source.kind === "snapshot") return task.nextIndex >= task.source.items.length && (task.source.pending?.length ?? 0) === 0;
     return task.source.exhausted && task.source.pending.length === 0;
   }
 
-  async function pump(task: DownloadTask): Promise<void> {
-    if (task.status !== "running") return;
-    await Promise.all(Array.from({ length: task.concurrency }, () => worker(task)));
+  function pump(task: DownloadTask): Promise<void> {
+    const existing = pumpFlights.get(task.id);
+    if (existing) {
+      pumpRestartRequests.add(task.id);
+      return existing;
+    }
+    if (task.status !== "running") return Promise.resolve();
 
-    if (task.status !== "running") return;
-    task.status = drained(task) ? "done" : "paused";
-    schedulePersist(task.accountKey, true);
+    const token = (runTokens.get(task.id) ?? 0) + 1;
+    runTokens.set(task.id, token);
+    let run: Promise<void>;
+    run = Promise.all(Array.from({ length: task.concurrency }, () => worker(task, token)))
+      .then(() => {
+        if (!isCurrentRun(task, token)) return;
+        task.status = drained(task) ? "done" : "paused";
+        schedulePersist(task.accountKey, true);
+      })
+      .finally(() => {
+        if (pumpFlights.get(task.id) === run) pumpFlights.delete(task.id);
+        const restart = pumpRestartRequests.delete(task.id);
+        if (task.status === "running" && (restart || runTokens.get(task.id) !== token)) void pump(task);
+      });
+    pumpFlights.set(task.id, run);
+    return run;
   }
 
   function create(input: CreateDownloadInput): DownloadTask | null {
@@ -727,7 +1007,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
             seen: new Set<string>(),
           }
         : input.photos && input.photos.length > 0
-          ? { kind: "snapshot", items: [...input.photos] }
+          ? { kind: "snapshot", items: [...input.photos], pending: [] }
           : null;
 
     if (!source) {
@@ -748,7 +1028,13 @@ export const useDownloadsStore = defineStore("downloads", () => {
       nextIndex: 0,
       done: 0,
       failed: [],
+      failedItems: [],
+      completedFiles: [],
+      pausedItems: [],
+      pausedProgress: [],
       activeFiles: [],
+      activeItems: [],
+      activeProgress: [],
       lastFile: null,
       speedBytesPerSec: 0,
       usedNames: [],
@@ -769,6 +1055,29 @@ export const useDownloadsStore = defineStore("downloads", () => {
   function pause(id: string): void {
     const task = tasks.value.find((item) => item.id === id);
     if (task?.status === "running") {
+      const transitionItems = uniquePhotosById(task.transitionItems ?? []);
+      const transitionIds = new Set(transitionItems.map((item) => item.id));
+      for (const item of transitionItems) {
+        const transferId = findActiveTransfer(task.id, item.id)?.transferId;
+        const progress = transferId ? task.activeProgress?.find((entry) => entry.transferId === transferId) : undefined;
+        addPausedItem(task, item, progress?.downloadedBytes ?? 0, progress?.totalBytes ?? item.sizeBytes ?? null);
+        removeQueuedItem(task, item.id);
+      }
+      for (const [transferId, transfer] of activeTransfers) {
+        if (transfer.taskId !== task.id || transitionIds.has(transfer.item.id)) continue;
+        const progress = task.activeProgress?.find((entry) => entry.transferId === transferId);
+        addPausedItem(task, transfer.item, progress?.downloadedBytes ?? 0, progress?.totalBytes ?? transfer.item.sizeBytes ?? null);
+        removeQueuedItem(task, transfer.item.id);
+      }
+      clearTransition(task);
+      let pausedCount = uniquePhotosById(task.pausedItems ?? []).length;
+      while (pausedCount < task.concurrency && task.source.pending.length > 0) {
+        const item = task.source.pending.shift();
+        if (!item || isItemPaused(task, item.id)) continue;
+        addPausedItem(task, item);
+        pausedCount += 1;
+      }
+      invalidateRun(task);
       task.status = "paused";
       task.speedBytesPerSec = 0;
       cancelTransfersForTask(task.id);
@@ -784,8 +1093,77 @@ export const useDownloadsStore = defineStore("downloads", () => {
       toast.error("This account session is unavailable. Sign in again to continue.");
       return;
     }
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
+    const resumedItems = uniquePhotosById(task.pausedItems ?? []);
+    const resumedIds = new Set(resumedItems.map((item) => item.id));
+    task.source.pending = task.source.pending.filter((item) => !resumedIds.has(item.id));
+    if (resumedItems.length > 0) {
+      task.source.pending.unshift(...resumedItems);
+      task.transitionItems = resumedItems.map((item) => ({ ...item }));
+      task.transitionOrder = resumedItems.map((item) => item.id);
+    }
+    task.pausedItems = [];
     task.status = "running";
     task.error = null;
+    schedulePersist(task.accountKey, true);
+    void pump(task);
+  }
+
+  function pauseItem(taskId: string, photoId: string): void {
+    const task = tasks.value.find((item) => item.id === taskId);
+    if (!task || isItemPaused(task, photoId)) return;
+    const activeTransfer = findActiveTransfer(taskId, photoId);
+    const activeItem = activeTransfer?.item;
+    const activeProgress = activeTransfer ? task.activeProgress?.find((entry) => entry.transferId === activeTransfer.transferId) : undefined;
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
+    const pendingIndex = task.source.pending.findIndex((item) => item.id === photoId);
+    const snapshotItem = task.source.kind === "snapshot" ? task.source.items.slice(task.nextIndex).find((candidate) => candidate.id === photoId) : null;
+    const item = activeItem ?? (pendingIndex >= 0 ? task.source.pending[pendingIndex] : null) ?? snapshotItem ?? null;
+    if (!item) return;
+    removeQueuedItem(task, photoId);
+    removeTransitionItem(task, photoId);
+    addPausedItem(task, item, activeProgress?.downloadedBytes ?? 0, activeProgress?.totalBytes ?? item.sizeBytes ?? null);
+    if (activeTransfer) cancelTransferForItem(taskId, photoId);
+    schedulePersist(task.accountKey, true);
+  }
+
+  function resumeItem(taskId: string, photoId: string): void {
+    const task = tasks.value.find((item) => item.id === taskId);
+    if (!task || !isItemPaused(task, photoId)) return;
+    if (!activeSessionId.value) {
+      toast.error("This account session is unavailable. Sign in again to continue.");
+      return;
+    }
+    const item = task.pausedItems?.find((paused) => paused.id === photoId);
+    if (!item) return;
+    removePausedItem(task, photoId);
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
+    if (!task.source.pending.some((pending) => pending.id === photoId)) task.source.pending.unshift(item);
+    if (task.status !== "running") {
+      task.status = "running";
+      task.error = null;
+    }
+    schedulePersist(task.accountKey, true);
+    void pump(task);
+  }
+
+  function retryFailed(id: string): void {
+    const task = tasks.value.find((item) => item.id === id);
+    if (!task || task.status === "running") return;
+    if (!activeSessionId.value) {
+      toast.error("This account session is unavailable. Sign in again to continue.");
+      return;
+    }
+    const failedItems = Array.isArray(task.failedItems) ? task.failedItems : [];
+    if (failedItems.length === 0) return;
+    if (!Array.isArray(task.source.pending)) task.source.pending = [];
+    for (const item of failedItems) {
+      if (!task.source.pending.some((pending) => pending.id === item.id)) task.source.pending.unshift({ ...item });
+    }
+    task.failed = [];
+    task.failedItems = [];
+    task.error = null;
+    task.status = "running";
     schedulePersist(task.accountKey, true);
     void pump(task);
   }
@@ -793,6 +1171,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
   function cancel(id: string): void {
     const task = tasks.value.find((item) => item.id === id);
     if (task) {
+      invalidateRun(task);
       task.status = "cancelled";
       task.speedBytesPerSec = 0;
       cancelTransfersForTask(task.id);
@@ -805,6 +1184,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const task = tasks.value.find((item) => item.id === id);
     const accountKey = task?.accountKey ?? activeAccountKey.value;
     if (task) {
+      invalidateRun(task);
       task.status = "cancelled";
       task.speedBytesPerSec = 0;
       cancelTransfersForTask(task.id);
@@ -855,6 +1235,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
     create,
     pause,
     resume,
+    pauseItem,
+    resumeItem,
+    retryFailed,
     cancel,
     remove,
     clearFinished,

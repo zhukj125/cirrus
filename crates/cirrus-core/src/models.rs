@@ -332,6 +332,8 @@ pub struct PhotoItem {
     pub width: Option<i64>,
 
     pub height: Option<i64>,
+
+    pub size_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

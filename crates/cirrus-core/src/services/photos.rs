@@ -88,6 +88,7 @@ pub mod cloud_kit_schema {
     pub const FIELD_ASSET_DATE: &str = "assetDate";
     pub const FIELD_MASTER_REF: &str = "masterRef";
     pub const FIELD_FILENAME: &str = "filename";
+    pub const FIELD_ITEM_NAME: &str = "itemName";
     pub const FIELD_DURATION: &str = "duration";
     pub const FIELD_DURATION_ENC: &str = "durationEnc";
     pub const FIELD_VIDEO_COMPLEMENT_DURATION: &str = "vidComplDurValue";
@@ -96,6 +97,7 @@ pub mod cloud_kit_schema {
     pub const WRAPPER_VALUE: &str = "value";
     pub const ASSET_DOWNLOAD_URL: &str = "downloadURL";
     pub const ASSET_LEGACY_URL: &str = "url";
+    pub const FILE_SIZE: &str = "size";
 
     pub const THUMB_FIELDS: &[&str] = &["resJPEGThumbRes", "resJpegSmallThumb", "resJPEGMedRes"];
 
@@ -1783,7 +1785,10 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
             asset_field_names.extend(map.keys().cloned());
         }
 
-        let file_name = text(master, ck::FIELD_FILENAME);
+        let file_name = text(master, ck::FIELD_FILENAME)
+            .or_else(|| text(fields, ck::FIELD_FILENAME))
+            .or_else(|| text(master, ck::FIELD_ITEM_NAME))
+            .or_else(|| text(fields, ck::FIELD_ITEM_NAME));
 
         let duration = number_value(fields, master, &[ck::FIELD_DURATION, ck::FIELD_DURATION_ENC]);
         let live_photo = number_value(fields, master, &[ck::FIELD_VIDEO_COMPLEMENT_DURATION]) > 0.0;
@@ -1833,6 +1838,14 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
             if is_video || live_photo { ck::VIDEO_SIZE_FIELDS } else { ck::THUMB_SIZE_FIELDS },
         )
         .map_or((None, None), |(width, height)| (Some(width), Some(height)));
+        let size_bytes = if is_video {
+            first_file_size(master, fields, &[ck::ORIGINAL_RES])
+                .or_else(|| first_file_size(master, fields, ck::VIDEO_FIELDS))
+        } else {
+            first_file_size(master, fields, ck::ORIGINAL_FIELDS)
+        }
+        .or_else(|| first_file_size(master, fields, ck::DISPLAY_FIELDS))
+        .or_else(|| first_file_size(master, fields, ck::THUMB_FIELDS));
         photos.push(PhotoItem {
             id: record_name(record).unwrap_or_default(),
             file_name,
@@ -1846,6 +1859,7 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
             is_live_photo: Some(live_photo),
             width,
             height,
+            size_bytes,
         });
     }
 
@@ -1869,6 +1883,25 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
         if next_cursor.is_none() { "none" } else { "yes" }
     );
     PhotosPage { status: statuses::OK.to_string(), message: None, photos, next_cursor }
+}
+
+fn first_file_size(master: &Value, asset: &Value, candidates: &[&str]) -> Option<i64> {
+    for key in candidates {
+        if let Some(size) = asset_size(field(master, key)) {
+            return Some(size);
+        }
+        if !std::ptr::eq(master, asset) {
+            if let Some(size) = asset_size(field(asset, key)) {
+                return Some(size);
+            }
+        }
+    }
+    None
+}
+
+fn asset_size(asset_field: &Value) -> Option<i64> {
+    let value = field(asset_field, ck::WRAPPER_VALUE);
+    as_long(field(value, ck::FILE_SIZE)).filter(|size| *size > 0)
 }
 
 fn first_url(master: &Value, asset: &Value, candidates: &[&str], substitution: &str) -> Option<String> {
@@ -2294,6 +2327,7 @@ mod tests {
         assert_eq!(photo.original_url.as_deref(), Some("https://cvws.icloud-content.com.cn/B/CCC/unknown.jpeg?o=1"));
         assert_eq!(photo.video_url, None);
         assert_eq!((photo.width, photo.height), (Some(600), Some(800)));
+        assert_eq!(photo.size_bytes, Some(83_985));
 
         let video = &page.photos[1];
         assert_eq!(video.id, "ASSET-VIDEO");

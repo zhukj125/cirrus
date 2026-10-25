@@ -16,6 +16,7 @@ export const StorageKey = {
   downloadConcurrency: "cirrus.downloadConcurrency",
   downloadSpeedLimit: "cirrus.downloadSpeedLimit",
   downloadSubfolder: "cirrus.downloadSubfolder",
+  downloadDirectory: "cirrus.downloadDirectory",
   locale: "cirrus.locale",
   sidebarCollapsed: "cirrus.sidebarCollapsed",
   mapProvider: "cirrus.mapProvider",

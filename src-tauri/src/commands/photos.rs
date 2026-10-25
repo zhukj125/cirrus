@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
@@ -57,6 +57,13 @@ pub struct DownloadSpeedLimitRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadCancelRequest {
     pub transfer_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedPhotoResult {
+    pub path: String,
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -183,7 +190,11 @@ pub async fn download_cancel_transfer(state: SharedState<'_>, payload: DownloadC
 }
 
 #[tauri::command]
-pub async fn save_photo(state: SharedState<'_>, app: AppHandle, payload: SavePhotoRequest) -> AppResult<String> {
+pub async fn save_photo(
+    state: SharedState<'_>,
+    app: AppHandle,
+    payload: SavePhotoRequest,
+) -> AppResult<SavedPhotoResult> {
     let file_name = payload.name.clone().unwrap_or_default();
     let transfer_id = payload.transfer_id.clone();
     let cancel_flag = match transfer_id.as_ref() {
@@ -191,9 +202,12 @@ pub async fn save_photo(state: SharedState<'_>, app: AppHandle, payload: SavePho
         None => None,
     };
     let limiter = &state.inner().download_limiter;
-    let fetch_result = media::fetch_media_with_progress(
+    let target = PathBuf::from(payload.target_path.trim());
+    let absolute_target = if target.is_absolute() { target } else { std::env::current_dir()?.join(target) };
+    let fetch_result = media::fetch_media_to_file_with_progress(
         &payload.url,
         payload.name.as_deref(),
+        &absolute_target,
         Some(limiter),
         cancel_flag.as_deref(),
         |downloaded_bytes, total_bytes| {
@@ -216,7 +230,8 @@ pub async fn save_photo(state: SharedState<'_>, app: AppHandle, payload: SavePho
         state.inner().download_transfers.finish(id).await;
     }
     let downloaded = fetch_result?;
-    let saved = media::save_media_bytes(&downloaded.bytes, Path::new(&payload.target_path)).await?;
+    std::fs::rename(&downloaded.path, &absolute_target)?;
+    let saved = absolute_target.to_string_lossy().to_string();
     log::info!(
         "[MEDIA] saved {} ({} bytes, {}) -> {}",
         downloaded.file_name,
@@ -224,7 +239,7 @@ pub async fn save_photo(state: SharedState<'_>, app: AppHandle, payload: SavePho
         downloaded.content_type,
         saved
     );
-    Ok(saved)
+    Ok(SavedPhotoResult { path: saved, size_bytes: downloaded.size })
 }
 #[cfg(test)]
 mod tests {
