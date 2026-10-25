@@ -24,6 +24,17 @@ vi.mock("@/lib/api", () => ({
   cancelDownloadTransfer: vi.fn(async () => undefined),
 }));
 
+function photo(id: string) {
+  return {
+    id,
+    fileName: `${id}.jpeg`,
+    takenAt: 1,
+    isVideo: false,
+    thumbUrl: `https://example.com/${id}.jpeg`,
+    originalUrl: `https://example.com/${id}-original.jpeg`,
+  };
+}
+
 function persisted(id: string, status: DownloadTask["status"], withPending: boolean): DownloadTask {
   return {
     accountKey: "dsid:a",
@@ -86,6 +97,32 @@ describe("下载任务跨启动恢复", () => {
     expect(store.tasks.map((task) => task.status)).toEqual(["paused", "done", "cancelled"]);
     expect(photosList).not.toHaveBeenCalled();
     expect(loadDownloadTasks).toHaveBeenCalledWith("dsid:a");
+  });
+
+  it("关闭时正在下载的项目会恢复为暂停项而不是丢失", async () => {
+    const task = persisted("inflight", "running", false);
+    task.activeItems = [photo("active")];
+    task.activeFiles = ["active.jpeg"];
+    task.activeProgress = [{ transferId: "t1", downloadedBytes: 700, totalBytes: 1400 }];
+    vi.mocked(loadDownloadTasks).mockResolvedValue({
+      tasks: [serializeDownloadTask(task)],
+      persistenceEnabled: true,
+      writable: true,
+      warning: null,
+    });
+    const store = useDownloadsStore();
+    await store.loadAccountTasks("dsid:a", "new-session");
+    const restored = store.tasks[0];
+    if (!restored) throw new Error("任务未恢复");
+
+    expect(restored.status).toBe("paused");
+    expect(restored.activeItems).toEqual([]);
+    expect(restored.pausedItems?.map((item) => item.id)).toEqual(["active"]);
+    expect(restored.pausedProgress?.[0]).toMatchObject({ photoId: "active", downloadedBytes: 700, totalBytes: 1400 });
+
+    store.resume(restored.id);
+    await vi.waitFor(() => expect(restored.status).toBe("done"));
+    expect(savePhotoTo).toHaveBeenCalledTimes(1);
   });
 
   it("用户继续恢复任务时使用当前账号的新会话", async () => {

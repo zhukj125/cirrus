@@ -105,8 +105,9 @@ const detailsCompletedBytes = computed<number | null>(() => {
 });
 const detailsTransferredBytes = computed<number | null>(() => {
   const activeBytes = detailsActiveRows.value.reduce((sum, row) => sum + (row.downloadedBytes ?? 0), 0);
-  if (detailsCompletedBytes.value === null && activeBytes === 0) return null;
-  return (detailsCompletedBytes.value ?? 0) + activeBytes;
+  const pausedBytes = detailsPausedRows.value.reduce((sum, row) => sum + (row.downloadedBytes ?? 0), 0);
+  if (detailsCompletedBytes.value === null && activeBytes + pausedBytes === 0) return null;
+  return (detailsCompletedBytes.value ?? 0) + activeBytes + pausedBytes;
 });
 
 function openTaskDetails(task: DownloadTask): void {
@@ -130,7 +131,10 @@ function formatTaskCreatedAt(createdAt: number): string {
 function taskStatusLabel(task: DownloadTask): string {
   if (task.status === "running") return "Downloading";
   if (task.status === "paused") return "Paused";
-  if (task.status === "done") return "Completed";
+  if (task.status === "done") {
+    if (task.error) return "Failed";
+    return task.failed.length > 0 ? "Completed with errors" : "Completed";
+  }
   return task.error ? "Failed" : "Cancelled";
 }
 
@@ -663,9 +667,12 @@ watch(
           <div v-else class="flex flex-col gap-2 p-3">
             <article v-for="task in pagedTasks" :key="task.id" class="cursor-pointer rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/20" @click="openTaskDetails(task)">
               <div class="flex items-start gap-3">
-                <span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full" :class="task.status === 'done' && !task.error ? 'bg-success/10 text-success' : task.status === 'cancelled' || task.error ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'">
-                  <Check v-if="task.status === 'done' && !task.error" :size="14" :stroke-width="3" />
-                  <AlertTriangle v-else-if="task.status === 'cancelled' || task.error" :size="14" />
+                <span
+                  class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full"
+                  :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'"
+                >
+                  <Check v-if="task.status === 'done' && !task.error && task.failed.length === 0" :size="14" :stroke-width="3" />
+                  <AlertTriangle v-else-if="task.status === 'cancelled' || task.error || task.failed.length > 0" :size="14" />
                   <span v-else class="size-2 rounded-full bg-primary" :class="task.status === 'running' ? 'animate-pulse' : ''" />
                 </span>
 
@@ -692,13 +699,13 @@ watch(
                         <Pause :size="14" />
                       </Button>
                       <Button
-                        v-else-if="task.status === 'paused' || task.status === 'cancelled'"
+                        v-else-if="task.status === 'paused' || task.status === 'cancelled' || task.error"
                         size="icon"
                         variant="outline"
                         class="size-7"
                         :disabled="!canResumeTasks"
-                        :title="canResumeTasks ? (task.status === 'cancelled' ? 'Restore task' : 'Resume task') : 'Sign in again to resume'"
-                        :aria-label="task.status === 'cancelled' ? 'Restore task' : 'Resume task'"
+                        :title="canResumeTasks ? (task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task') : 'Sign in again to resume'"
+                        :aria-label="task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task'"
                         @click.stop="downloads.resume(task.id)"
                       >
                         <Play :size="14" />
@@ -711,7 +718,7 @@ watch(
 
                   <div class="mt-2 flex items-center gap-3">
                     <div class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
-                      <div class="h-full rounded-full transition-[width] duration-200" :class="[task.status === 'cancelled' || task.error ? 'bg-warning' : 'bg-primary', totalOf(task) === null ? 'animate-pulse' : '']" :style="{ width: `${percentOf(task) ?? 0}%` }" />
+                      <div class="h-full rounded-full transition-[width] duration-200" :class="[task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary', totalOf(task) === null ? 'animate-pulse' : '']" :style="{ width: `${percentOf(task) ?? 0}%` }" />
                     </div>
                     <span class="tabular min-w-[72px] shrink-0 text-right text-xs text-muted-foreground">
                       {{ task.done + task.failed.length }}<template v-if="totalOf(task) !== null"> / {{ totalOf(task) }}</template>
@@ -784,7 +791,9 @@ watch(
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <ListChecks :size="16" class="text-primary" />
           <h2 id="task-details-title" class="text-sm font-semibold">Task Details</h2>
-          <span class="rounded-full px-2 py-0.5 text-2xs font-medium" :class="detailsTask.status === 'running' ? 'bg-primary/10 text-primary' : detailsTask.status === 'done' && !detailsTask.error ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{ taskStatusLabel(detailsTask) }}</span>
+          <span class="rounded-full px-2 py-0.5 text-2xs font-medium" :class="detailsTask.status === 'running' ? 'bg-primary/10 text-primary' : detailsTask.status === 'done' && !detailsTask.error && detailsTask.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{
+            taskStatusLabel(detailsTask)
+          }}</span>
           <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Close task details" @click="detailsTaskId = null">
             <X :size="16" />
           </button>
@@ -803,9 +812,9 @@ watch(
                   <Pause :size="12" />
                   Pause
                 </Button>
-                <Button v-else-if="detailsTask.status === 'paused' || detailsTask.status === 'cancelled'" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" :disabled="!canResumeTasks" @click="downloads.resume(detailsTask.id)">
+                <Button v-else-if="detailsTask.status === 'paused' || detailsTask.status === 'cancelled' || detailsTask.error" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" :disabled="!canResumeTasks" @click="downloads.resume(detailsTask.id)">
                   <Play :size="12" />
-                  Resume
+                  Restore
                 </Button>
                 <button type="button" class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" @click="openTaskFolder(detailsTask.directory)">
                   <FolderOpen :size="13" />

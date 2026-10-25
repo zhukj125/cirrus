@@ -119,8 +119,8 @@ export async function pickDownloadDirectory(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-export function savePhotoTo(url: string, name: string, targetPath: string, transferId?: string): Promise<SavedPhotoResult> {
-  return call<SavedPhotoResult>("save_photo", { url, name, targetPath, transferId });
+export function savePhotoTo(url: string, name: string, targetPath: string, transferId?: string, partialKey?: string): Promise<SavedPhotoResult> {
+  return call<SavedPhotoResult>("save_photo", { url, name, targetPath, transferId, partialKey });
 }
 
 export function setDownloadSpeedLimit(bytesPerSec: number): Promise<void> {

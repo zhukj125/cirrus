@@ -18,6 +18,8 @@ export interface PersistedDownloadTask {
   completedFiles: CompletedFile[];
   pausedItems: PhotoItem[];
   pausedProgress: Array<{ photoId: string; downloadedBytes: number; totalBytes: number | null }>;
+  inFlightItems: PhotoItem[];
+  inFlightProgress: Array<{ downloadedBytes: number; totalBytes: number | null }>;
   usedNames: string[];
   concurrency: number;
   createdAt: number;
@@ -40,6 +42,15 @@ function nonNegativeInteger(value: unknown, fallback: number): number {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function uniquePhotos(items: PhotoItem[]): PhotoItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function parsePhoto(value: unknown): PhotoItem | null {
@@ -140,6 +151,8 @@ export function serializeDownloadTask(task: DownloadTask): PersistedDownloadTask
     completedFiles: (task.completedFiles ?? []).map((file) => ({ ...file })),
     pausedItems: (task.pausedItems ?? []).map((item) => ({ ...item })),
     pausedProgress: (task.pausedProgress ?? []).map((entry) => ({ ...entry })),
+    inFlightItems: (task.activeItems ?? []).map((item) => ({ ...item })),
+    inFlightProgress: (task.activeProgress ?? []).map((entry) => ({ downloadedBytes: entry.downloadedBytes, totalBytes: entry.totalBytes })),
     usedNames: [...task.usedNames],
     concurrency: task.concurrency,
     createdAt: task.createdAt,
@@ -160,6 +173,17 @@ export function parseDownloadTask(value: unknown, fallbackAccountKey: string): D
   const source = parseSource(raw.source);
   if (!id || !title || !directory || !source) return null;
   const status = STATUSES.includes(raw.status as TaskStatus) ? (raw.status as TaskStatus) : "paused";
+  const concurrency = Math.max(1, Math.min(16, nonNegativeInteger(raw.concurrency, 4)));
+  const parsedPaused = Array.isArray(raw.pausedItems) ? uniquePhotos(raw.pausedItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null)) : [];
+  const pausedItems = parsedPaused.slice(-concurrency);
+  const inFlightItems = Array.isArray(raw.inFlightItems) ? uniquePhotos(raw.inFlightItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null)) : [];
+  const rawInFlightProgress = Array.isArray(raw.inFlightProgress) ? raw.inFlightProgress : [];
+  const pausedIds = new Set(pausedItems.map((item) => item.id));
+  const overflowPaused = parsedPaused.filter((item) => !pausedIds.has(item.id));
+  if (overflowPaused.length > 0) {
+    const queuedIds = new Set(source.pending.map((item) => item.id));
+    source.pending.unshift(...overflowPaused.filter((item) => !queuedIds.has(item.id)));
+  }
   return {
     accountKey: optionalString(raw.accountKey) ?? fallbackAccountKey,
     id,
@@ -172,7 +196,14 @@ export function parseDownloadTask(value: unknown, fallbackAccountKey: string): D
     failed: stringArray(raw.failed),
     failedItems: Array.isArray(raw.failedItems) ? raw.failedItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null) : [],
     completedFiles: parseCompletedFiles(raw.completedFiles),
-    pausedItems: Array.isArray(raw.pausedItems) ? raw.pausedItems.map(parsePhoto).filter((item): item is PhotoItem => item !== null) : [],
+    pausedItems,
+    activeFiles: inFlightItems.map((item) => item.fileName || "pending"),
+    activeItems: inFlightItems,
+    activeProgress: inFlightItems.map((_, index) => {
+      const progress = rawInFlightProgress[index];
+      const rawProgress = progress !== null && typeof progress === "object" ? (progress as Record<string, unknown>) : {};
+      return { transferId: `restored-${id}-${index}`, downloadedBytes: Math.max(0, finiteNumber(rawProgress.downloadedBytes) ?? 0), totalBytes: finiteNumber(rawProgress.totalBytes) };
+    }),
     pausedProgress: Array.isArray(raw.pausedProgress)
       ? raw.pausedProgress
           .map((entry) => {
@@ -183,10 +214,10 @@ export function parseDownloadTask(value: unknown, fallbackAccountKey: string): D
             if (!photoId || downloadedBytes === null) return null;
             return { photoId, downloadedBytes: Math.max(0, downloadedBytes), totalBytes: finiteNumber(progress.totalBytes) };
           })
-          .filter((entry): entry is { photoId: string; downloadedBytes: number; totalBytes: number | null } => entry !== null)
+          .filter((entry): entry is { photoId: string; downloadedBytes: number; totalBytes: number | null } => entry !== null && pausedIds.has(entry.photoId))
       : [],
     usedNames: stringArray(raw.usedNames),
-    concurrency: Math.max(1, Math.min(16, nonNegativeInteger(raw.concurrency, 4))),
+    concurrency,
     createdAt: finiteNumber(raw.createdAt) ?? Date.now(),
     error: optionalString(raw.error),
   };

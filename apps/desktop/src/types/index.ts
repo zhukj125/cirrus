@@ -137,6 +137,7 @@ export interface PhotoItem {
 export interface SavedPhotoResult {
   path: string;
   sizeBytes: number;
+  fileName?: string;
 }
 
 export interface PhotosPage {

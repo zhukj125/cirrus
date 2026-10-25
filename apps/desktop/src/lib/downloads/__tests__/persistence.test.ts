@@ -93,6 +93,46 @@ describe("下载任务持久化 DTO", () => {
     expect(parsed?.source.kind === "snapshot" ? parsed.source.items.map((item) => item.id) : []).toEqual(["a", "b"]);
   });
 
+  it("旧任务中超出的暂停项会回到队列，最多保留一个并发窗口", () => {
+    const items = Array.from({ length: 10 }, (_, index) => photo(`p${index}`));
+    const raw = serializeDownloadTask({
+      accountKey: "dsid:2",
+      id: "dl-legacy-paused",
+      title: "旧暂停状态",
+      directory: "C:/out",
+      status: "paused",
+      source: { kind: "snapshot", items, pending: [] },
+      nextIndex: 4,
+      done: 4,
+      failed: [],
+      failedItems: [],
+      pausedItems: items.slice(2, 8),
+      usedNames: [],
+      concurrency: 4,
+      createdAt: 789,
+      error: null,
+    });
+    const parsed = parseDownloadTask(raw, "dsid:fallback");
+    expect(parsed?.pausedItems?.map((item) => item.id)).toEqual(["p4", "p5", "p6", "p7"]);
+    if (parsed?.source.kind === "snapshot") {
+      expect(parsed.source.pending.map((item) => item.id)).toEqual(["p2", "p3"]);
+    }
+  });
+
+  it("正在下载的项目和字节进度会持久化", () => {
+    const task = rangeTask();
+    task.activeItems = [photo("active")];
+    task.activeFiles = ["active.jpeg"];
+    task.activeProgress = [{ transferId: "t1", downloadedBytes: 600, totalBytes: 1200 }];
+    const raw = serializeDownloadTask(task);
+    expect(raw.inFlightItems.map((item) => item.id)).toEqual(["active"]);
+    expect(raw.inFlightProgress).toEqual([{ downloadedBytes: 600, totalBytes: 1200 }]);
+
+    const parsed = parseDownloadTask(raw, "dsid:fallback");
+    expect(parsed?.activeItems?.map((item) => item.id)).toEqual(["active"]);
+    expect(parsed?.activeProgress?.[0]).toMatchObject({ downloadedBytes: 600, totalBytes: 1200 });
+  });
+
   it("缺失账号 key 时使用当前账号回退值", () => {
     const raw = serializeDownloadTask(rangeTask());
     const parsed = parseDownloadTask({ ...raw, accountKey: undefined }, "dsid:fallback");

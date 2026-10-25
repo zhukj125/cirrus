@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use reqwest::header::{CONTENT_TYPE, RANGE};
+use reqwest::header::{CONTENT_RANGE, CONTENT_TYPE, RANGE};
 use reqwest::Url;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -47,6 +47,30 @@ struct RateLimiterState {
     limit_bps: u64,
     tokens: f64,
     last_refill: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContentRange {
+    start: u64,
+    end: u64,
+    total: Option<u64>,
+}
+
+fn parse_content_range_total(value: &str) -> Option<u64> {
+    value.strip_prefix("bytes */")?.parse::<u64>().ok()
+}
+
+fn parse_content_range(value: &str) -> Option<ContentRange> {
+    let value = value.strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start = start.parse::<u64>().ok()?;
+    let end = end.parse::<u64>().ok()?;
+    if end < start {
+        return None;
+    }
+    let total = if total == "*" { None } else { Some(total.parse::<u64>().ok()?) };
+    Some(ContentRange { start, end, total })
 }
 
 impl DownloadRateLimiter {
@@ -186,18 +210,28 @@ where
             last_emit = Instant::now();
         }
     }
+    if let Some(total) = total_bytes {
+        if downloaded != total {
+            return Err(AppError::other(format!("Download ended early: {downloaded}/{total} bytes")));
+        }
+    }
     on_progress(downloaded, total_bytes.or(Some(downloaded)));
 
     Ok(DownloadedMedia { size: bytes.len(), bytes, file_name: guess_file_name(url, name), content_type })
 }
 
 pub fn partial_file_path(target_path: &Path, url: &str) -> PathBuf {
+    partial_file_path_with_key(target_path, url, None)
+}
+
+fn partial_file_path_with_key(target_path: &Path, url: &str, partial_key: Option<&str>) -> PathBuf {
     let file_name = target_path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_DOWNLOAD_NAME.to_string());
-    let digest = format!("{:x}", Sha256::digest(url.as_bytes()));
+    let digest_input = partial_key.map_or_else(|| url.to_string(), |key| format!("{key}\0{url}"));
+    let digest = format!("{:x}", Sha256::digest(digest_input.as_bytes()));
     target_path.with_file_name(format!(".{file_name}.cirrus-{}.part", &digest[..12]))
 }
 
@@ -205,6 +239,7 @@ pub async fn fetch_media_to_file_with_progress<F>(
     url: &str,
     name: Option<&str>,
     target_path: &Path,
+    partial_key: Option<&str>,
     limiter: Option<&DownloadRateLimiter>,
     cancelled: Option<&AtomicBool>,
     mut on_progress: F,
@@ -219,7 +254,7 @@ where
         }
     }
 
-    let part_path = partial_file_path(target_path, url);
+    let part_path = partial_file_path_with_key(target_path, url, partial_key);
     let existing = std::fs::metadata(&part_path).map(|metadata| metadata.len()).unwrap_or(0);
     let client = reqwest::Client::builder()
         .connect_timeout(hc::MEDIA_CONNECT_TIMEOUT)
@@ -235,9 +270,54 @@ where
     let mut response = request.send().await.map_err(|error| AppError::other(format!("Download failed: {error}")))?;
 
     let status = response.status().as_u16();
+    let content_length = response.content_length();
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    if status == 416 && existing > 0 {
+        let total = response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_content_range_total);
+        if total == Some(existing) {
+            on_progress(existing, total);
+            return Ok(DownloadedFile {
+                path: part_path,
+                size: existing,
+                file_name: guess_file_name(url, name),
+                content_type,
+            });
+        }
+    }
     let (start, total_bytes) = match status {
-        200 => (0, response.content_length()),
-        206 if existing > 0 => (existing, response.content_length().map(|length| existing.saturating_add(length))),
+        200 => (0, content_length),
+        206 if existing > 0 => {
+            let range = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(parse_content_range);
+            if let Some(range) = range {
+                if range.start != existing {
+                    return Err(AppError::other("Server returned a different resume range"));
+                }
+                let expected = range.end.saturating_sub(range.start).saturating_add(1);
+                if content_length.is_some_and(|length| length != expected) {
+                    return Err(AppError::other("Resume response length did not match Content-Range"));
+                }
+                if range.total.is_some_and(|total| total < expected || total < existing) {
+                    return Err(AppError::other("Resume response total was invalid"));
+                }
+            }
+            let total = range
+                .and_then(|range| range.total)
+                .or_else(|| content_length.map(|length| existing.saturating_add(length)));
+            (existing, total)
+        }
         _ => {
             let host = response.url().host_str().unwrap_or("").to_string();
             log::warn!("[MEDIA] upstream returned HTTP {status}: {host}");
@@ -245,12 +325,6 @@ where
         }
     };
 
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| "application/octet-stream".to_string());
     let mut file =
         std::fs::OpenOptions::new().create(true).write(true).append(start > 0).truncate(start == 0).open(&part_path)?;
     let mut downloaded = start;
@@ -279,10 +353,46 @@ where
         }
     }
     file.flush()?;
+    if let Some(total) = total_bytes {
+        if downloaded != total {
+            return Err(AppError::other(format!("Download ended early: {downloaded}/{total} bytes")));
+        }
+    }
     on_progress(downloaded, total_bytes.or(Some(downloaded)));
 
     Ok(DownloadedFile { path: part_path, size: downloaded, file_name: guess_file_name(url, name), content_type })
 }
+pub fn target_with_content_extension(path: &Path, content_type: &str) -> PathBuf {
+    let current =
+        path.extension().and_then(|value| value.to_str()).map(|value| value.to_ascii_lowercase()).unwrap_or_default();
+    let (compatible, preferred): (&[&str], &str) =
+        match content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase().as_str() {
+            "image/jpeg" => (&["jpg", "jpeg"], "jpeg"),
+            "image/heic" | "image/heif" => (&["heic", "heif"], "heic"),
+            "image/png" => (&["png"], "png"),
+            "image/webp" => (&["webp"], "webp"),
+            "image/gif" => (&["gif"], "gif"),
+            "video/mp4" => (&["mp4", "m4v"], "mp4"),
+            "video/quicktime" => (&["mov", "qt"], "mov"),
+            _ => return path.to_path_buf(),
+        };
+    if compatible.contains(&current.as_str()) {
+        return path.to_path_buf();
+    }
+    path.with_extension(preferred)
+}
+
+pub fn persist_downloaded_file(source: &Path, target: &Path) -> AppResult<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::fs::copy(source, target)?;
+        let _ = std::fs::remove_file(source);
+    }
+    #[cfg(not(windows))]
+    std::fs::rename(source, target)?;
+    Ok(target.to_path_buf())
+}
+
 pub async fn save_media_bytes(bytes: &[u8], target_path: &Path) -> AppResult<String> {
     if let Some(parent) = target_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -451,6 +561,57 @@ mod tests {
         assert_eq!(first, same);
         assert_ne!(first, other);
         assert!(first.to_string_lossy().ends_with(".part"));
+    }
+
+    #[test]
+    fn parses_valid_content_range_headers() {
+        assert_eq!(
+            parse_content_range("bytes 100-199/500"),
+            Some(ContentRange { start: 100, end: 199, total: Some(500) })
+        );
+        assert_eq!(parse_content_range("bytes 0-0/*"), Some(ContentRange { start: 0, end: 0, total: None }));
+        assert_eq!(parse_content_range("bytes 5-4/10"), None);
+        assert_eq!(parse_content_range("items 0-1/2"), None);
+        assert_eq!(parse_content_range_total("bytes */500"), Some(500));
+        assert_eq!(parse_content_range_total("bytes 0-1/500"), None);
+    }
+
+    #[test]
+    fn partial_files_are_isolated_by_stable_download_key() {
+        let target = Path::new("C:/downloads/photo.jpeg");
+        let url = "https://cvws.icloud-content.com/B/AAA/photo.jpeg?one=1";
+        let first = partial_file_path_with_key(target, url, Some("task-a:photo"));
+        let same = partial_file_path_with_key(target, url, Some("task-a:photo"));
+        let other = partial_file_path_with_key(target, url, Some("task-b:photo"));
+        assert_eq!(first, same);
+        assert_ne!(first, other);
+    }
+
+    #[test]
+    fn file_extensions_follow_the_downloaded_content_type() {
+        assert_eq!(target_with_content_extension(Path::new("photo.HEIC"), "image/jpeg"), PathBuf::from("photo.jpeg"));
+        assert_eq!(target_with_content_extension(Path::new("photo.jpg"), "image/jpeg"), PathBuf::from("photo.jpg"));
+        assert_eq!(target_with_content_extension(Path::new("clip.mp4"), "video/quicktime"), PathBuf::from("clip.mov"));
+        assert_eq!(
+            target_with_content_extension(Path::new("photo.heic"), "application/octet-stream"),
+            PathBuf::from("photo.heic")
+        );
+    }
+
+    #[test]
+    fn completed_files_replace_existing_files() {
+        let dir = std::env::temp_dir().join(format!("cirrus-overwrite-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let target = dir.join("photo.jpeg");
+        let source = dir.join(".photo.cirrus-test.part");
+        std::fs::write(&target, b"old").expect("write existing file");
+        std::fs::write(&source, b"new").expect("write partial file");
+
+        let saved = persist_downloaded_file(&source, &target).expect("persist file");
+        assert_eq!(saved, target);
+        assert_eq!(std::fs::read(&saved).expect("read saved"), b"new");
+        assert!(!source.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

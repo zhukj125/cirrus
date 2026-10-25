@@ -4,31 +4,48 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+enum TransferState {
+    PendingCancel,
+    Active(Arc<AtomicBool>),
+}
+
 #[derive(Default)]
 pub struct DownloadTransferRegistry {
-    flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    transfers: Mutex<HashMap<String, TransferState>>,
 }
 
 impl DownloadTransferRegistry {
     pub async fn register(&self, transfer_id: &str) -> Arc<AtomicBool> {
-        let flag = Arc::new(AtomicBool::new(false));
-        self.flags.lock().await.insert(transfer_id.to_string(), Arc::clone(&flag));
+        let mut transfers = self.transfers.lock().await;
+        let cancelled = matches!(transfers.get(transfer_id), Some(TransferState::PendingCancel));
+        let flag = Arc::new(AtomicBool::new(cancelled));
+        transfers.insert(transfer_id.to_string(), TransferState::Active(Arc::clone(&flag)));
         flag
     }
 
     pub async fn cancel(&self, transfer_id: &str) -> bool {
-        let flags = self.flags.lock().await;
-        match flags.get(transfer_id) {
-            Some(flag) => {
-                flag.store(true, Ordering::Relaxed);
-                true
+        let mut transfers = self.transfers.lock().await;
+        match transfers.get_mut(transfer_id) {
+            Some(TransferState::Active(flag)) => flag.store(true, Ordering::Relaxed),
+            Some(TransferState::PendingCancel) => {}
+            None => {
+                const MAX_PENDING_CANCELS: usize = 1024;
+                if transfers.len() >= MAX_PENDING_CANCELS {
+                    let removable = transfers
+                        .iter()
+                        .find_map(|(id, state)| matches!(state, TransferState::PendingCancel).then(|| id.clone()));
+                    if let Some(id) = removable {
+                        transfers.remove(&id);
+                    }
+                }
+                transfers.insert(transfer_id.to_string(), TransferState::PendingCancel);
             }
-            None => false,
         }
+        true
     }
 
     pub async fn finish(&self, transfer_id: &str) {
-        self.flags.lock().await.remove(transfer_id);
+        self.transfers.lock().await.remove(transfer_id);
     }
 }
 
@@ -45,9 +62,12 @@ mod tests {
         assert!(registry.cancel("t1").await);
         assert!(first.load(Ordering::Relaxed));
         assert!(!second.load(Ordering::Relaxed));
-        assert!(!registry.cancel("missing").await);
+
+        assert!(registry.cancel("pre-register").await);
+        let pre_cancelled = registry.register("pre-register").await;
+        assert!(pre_cancelled.load(Ordering::Relaxed));
 
         registry.finish("t1").await;
-        assert!(!registry.cancel("t1").await);
+        assert!(registry.cancel("t1").await);
     }
 }

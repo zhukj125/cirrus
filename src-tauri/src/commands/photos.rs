@@ -45,6 +45,9 @@ pub struct SavePhotoRequest {
 
     #[serde(default)]
     pub transfer_id: Option<String>,
+
+    #[serde(default)]
+    pub partial_key: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -64,6 +67,7 @@ pub struct DownloadCancelRequest {
 pub struct SavedPhotoResult {
     pub path: String,
     pub size_bytes: u64,
+    pub file_name: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -208,6 +212,7 @@ pub async fn save_photo(
         &payload.url,
         payload.name.as_deref(),
         &absolute_target,
+        payload.partial_key.as_deref(),
         Some(limiter),
         cancel_flag.as_deref(),
         |downloaded_bytes, total_bytes| {
@@ -230,8 +235,13 @@ pub async fn save_photo(
         state.inner().download_transfers.finish(id).await;
     }
     let downloaded = fetch_result?;
-    std::fs::rename(&downloaded.path, &absolute_target)?;
-    let saved = absolute_target.to_string_lossy().to_string();
+    let destination = media::target_with_content_extension(&absolute_target, &downloaded.content_type);
+    let saved_path = media::persist_downloaded_file(&downloaded.path, &destination)?;
+    let saved = saved_path.to_string_lossy().to_string();
+    let saved_name = saved_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| downloaded.file_name.clone());
     log::info!(
         "[MEDIA] saved {} ({} bytes, {}) -> {}",
         downloaded.file_name,
@@ -239,7 +249,7 @@ pub async fn save_photo(
         downloaded.content_type,
         saved
     );
-    Ok(SavedPhotoResult { path: saved, size_bytes: downloaded.size })
+    Ok(SavedPhotoResult { path: saved, size_bytes: downloaded.size, file_name: saved_name })
 }
 #[cfg(test)]
 mod tests {

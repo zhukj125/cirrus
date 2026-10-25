@@ -125,6 +125,16 @@ function savedNames(): string[] {
   return saved.map((path) => path.slice(path.lastIndexOf("\\") + 1)).sort();
 }
 
+async function driveUntilDone(task: { status: string; done: number; failed: string[] }): Promise<void> {
+  for (let guard = 0; guard < 1000 && task.status !== "done"; guard += 1) {
+    const batch = gates;
+    gates = [];
+    transferCancellations.clear();
+    batch.forEach((release) => release());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 describe("下载任务", () => {
   beforeEach(() => {
     saved.length = 0;
@@ -160,19 +170,11 @@ describe("下载任务", () => {
     const task = store.create({ accountKey: "dsid:test", photos, title: "全部照片 · 12 张", directory: "C:\\out", concurrency: 4 });
     expect(task).not.toBeNull();
 
-    await Promise.resolve();
-    expect(maxInFlight).toBe(4);
+    await vi.waitFor(() => expect(maxInFlight).toBe(4));
 
-    while (gates.length > 0) {
-      const batch = gates;
-      gates = [];
-      transferCancellations.clear();
-      batch.forEach((release) => release());
-      await Promise.resolve();
-      await Promise.resolve();
-    }
-
-    await vi.waitFor(() => expect(task?.status).toBe("done"));
+    if (!task) throw new Error("任务创建失败");
+    await driveUntilDone(task);
+    await vi.waitFor(() => expect(task.status).toBe("done"));
     expect(task?.done).toBe(12);
     expect(task?.failed).toHaveLength(0);
     expect(saved).toHaveLength(12);
@@ -196,8 +198,7 @@ describe("下载任务", () => {
     const task = store.create({ accountKey: "dsid:test", photos, title: "全部照片 · 10 张", directory: "C:\\out", concurrency: 2 });
     if (!task) throw new Error("任务创建失败");
 
-    await Promise.resolve();
-    expect(gates).toHaveLength(2);
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
 
     store.pause(task.id);
 
@@ -219,27 +220,118 @@ describe("下载任务", () => {
 
     store.resume(task.id);
     await vi.waitFor(() => expect(task.status).toBe("running").valueOf());
-    while (task.status === "running") {
-      const batch = gates;
-      gates = [];
-      transferCancellations.clear();
-      batch.forEach((release) => release());
-      await Promise.resolve();
-      await Promise.resolve();
-      if (gates.length === 0 && inFlight === 0 && task.done + task.failed.length < (totalOf(task) ?? 0)) break;
-    }
+    await driveUntilDone(task);
     await vi.waitFor(() => expect(task.done).toBe(10));
     expect(task.status).toBe("done");
   });
 
-  it("同名文件自动补 -2，不互相覆盖", async () => {
+  it("只剩暂停文件时任务进入 paused 状态", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [photo("only")], title: "仅剩暂停", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(1));
+    store.pauseItem(task.id, "only");
+    await vi.waitFor(() => expect(task.status).toBe("paused"));
+    expect(task.pausedItems?.map((item) => item.id)).toEqual(["only"]);
+
+    hold = false;
+    store.resumeItem(task.id, "only");
+    for (let guard = 0; guard < 100 && task.status !== "done"; guard += 1) {
+      const batch = gates;
+      gates = [];
+      batch.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(1);
+  });
+
+  it("单个文件暂停会占住下载槽，不会继续拉新文件", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const photos = Array.from({ length: 10 }, (_, index) => photo(`slot-${index}`));
+    const task = store.create({ accountKey: "dsid:test", photos, title: "暂停槽位", directory: "C:\\out", concurrency: 4 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.activeFiles).toHaveLength(4));
+    const pausedIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const target = task.activeItems?.find((item) => !pausedIds.includes(item.id));
+      if (!target) throw new Error("没有可暂停的活动文件");
+      pausedIds.push(target.id);
+      store.pauseItem(task.id, target.id);
+      await vi.waitFor(() => {
+        const queue = queueView(task, Number.MAX_SAFE_INTEGER);
+        expect(queue.active.length).toBe(3 - index);
+        expect(queue.paused.length).toBe(index + 1);
+        expect(queue.active.length + queue.paused.length).toBe(4);
+      });
+    }
+    expect(task.nextIndex).toBe(4);
+
+    for (let index = 0; index < pausedIds.length; index += 1) {
+      store.resumeItem(task.id, pausedIds[index] as string);
+      await vi.waitFor(() => {
+        const queue = queueView(task, Number.MAX_SAFE_INTEGER);
+        expect(queue.active.length).toBe(index + 1);
+        expect(queue.paused.length).toBe(3 - index);
+        expect(queue.active.length + queue.paused.length).toBe(4);
+      });
+    }
+
+    hold = false;
+    for (let guard = 0; guard < 500 && task.status !== "done"; guard += 1) {
+      const batch = gates;
+      gates = [];
+      batch.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(task.done).toBe(10);
+    expect(task.failed).toEqual([]);
+  });
+  it("两个任务写同一目标文件时会串行覆盖", async () => {
+    hold = true;
+    const store = useDownloadsStore();
+    const first = store.create({ accountKey: "dsid:test", photos: [photo("a", "same.jpeg")], title: "任务一", directory: "C:\\out", concurrency: 1 });
+    const second = store.create({ accountKey: "dsid:test", photos: [photo("b", "same.jpeg")], title: "任务二", directory: "C:\\out", concurrency: 1 });
+    if (!first || !second) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(gates).toHaveLength(1);
+
+    gates[0]?.();
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    hold = false;
+    gates[1]?.();
+    await vi.waitFor(() => expect(first.status).toBe("done"));
+    await vi.waitFor(() => expect(second.status).toBe("done"));
+    expect(saved).toEqual(["C:\\out\\same.jpeg", "C:\\out\\same.jpeg"]);
+  });
+
+  it("非法文件名和路径分隔符不会逃出下载目录", async () => {
+    const store = useDownloadsStore();
+    const task = store.create({ accountKey: "dsid:test", photos: [photo("safe", "../../evil:name?.jpeg")], title: "安全文件名", directory: "C:\\out", concurrency: 1 });
+    if (!task) throw new Error("任务创建失败");
+
+    await vi.waitFor(() => expect(task.status).toBe("done"));
+    expect(saved).toEqual(["C:\\out\\evil_name_.jpeg"]);
+  });
+
+  it("同名文件直接覆盖，完成列表只保留最后一次结果", async () => {
     const store = useDownloadsStore();
     const photos = [photo("a", "IMG_0001.HEIC"), photo("b", "IMG_0001.HEIC"), photo("c", "IMG_0001.HEIC")];
 
     const task = store.create({ accountKey: "dsid:test", photos, title: "全部照片 · 3 张", directory: "C:\\out", concurrency: 1 });
-    await vi.waitFor(() => expect(task?.status).toBe("done"));
+    if (!task) throw new Error("任务创建失败");
+    await vi.waitFor(() => expect(task.status).toBe("done"));
 
-    expect(saved).toEqual(["C:\\out\\IMG_0001.HEIC", "C:\\out\\IMG_0001-2.HEIC", "C:\\out\\IMG_0001-3.HEIC"]);
+    expect(saved).toEqual(["C:\\out\\IMG_0001.HEIC", "C:\\out\\IMG_0001.HEIC", "C:\\out\\IMG_0001.HEIC"]);
+    expect(task.completedFiles).toEqual([{ name: "IMG_0001.HEIC", sizeBytes: 1024 }]);
   });
 
   it("单张失败不中断整批，失败会被记下来", async () => {
@@ -364,6 +456,8 @@ describe("下载任务 · 区间来源", () => {
     expect(task.done).toBe(0);
     expect(gates).toHaveLength(0);
     expect(listCalls).toEqual([null, "c1"]);
+    const pausedQueue = queueView(task, Number.MAX_SAFE_INTEGER);
+    expect(pausedQueue.paused.length + pausedQueue.pendingTotal + (pausedQueue.unfetched ?? 0)).toBe(4);
 
     hold = false;
     store.resume(task.id);
@@ -392,6 +486,11 @@ describe("下载任务 · 区间来源", () => {
     await vi.waitFor(() => expect(task.status).toBe("done"));
     expect(task.error).not.toBeNull();
     expect(listCalls).toEqual([null]);
+
+    setLibrary([{ photos: [photo("recovered", undefined, 15)], nextCursor: null }]);
+    store.resume(task.id);
+    await vi.waitFor(() => expect(task.done).toBe(1));
+    expect(task.error).toBeNull();
   });
 
   it("落点名次: 从最老端起跳、遇到上界就停，不碰游标翻页", async () => {
@@ -454,6 +553,45 @@ describe("下载任务 · 区间来源", () => {
     expect(task.failed).toEqual([]);
     expect(savedNames()).toEqual(["fallback.jpeg"]);
   });
+  it("区间拉取失败后继续会重新打开数据源", async () => {
+    setLibrary([{ photos: [photo("recovered", undefined, 5)], nextCursor: null }]);
+    const store = useDownloadsStore();
+    store.restoreAccountTasks("dsid:test", [
+      {
+        accountKey: "dsid:test",
+        id: "range-retry",
+        title: "区间重试",
+        directory: "C:\\out",
+        status: "paused",
+        source: {
+          kind: "range",
+          sessionId: "s1",
+          bounds: { after: 0, before: 10 },
+          total: 1,
+          startRank: null,
+          nextRank: null,
+          cursor: null,
+          pending: [],
+          exhausted: true,
+          oldestTakenAt: null,
+          seen: new Set(),
+        },
+        nextIndex: 0,
+        done: 0,
+        failed: [],
+        failedItems: [],
+        usedNames: [],
+        concurrency: 1,
+        createdAt: 1,
+        error: "Temporary list failure",
+      },
+    ]);
+
+    store.resume("range-retry");
+    await vi.waitFor(() => expect(store.tasks[0]?.status).toBe("done"));
+    expect(store.tasks[0]?.done).toBe(1);
+  });
+
   it("区间队列会提前预取下一页，下载时不会短暂清空", async () => {
     hold = true;
     setLibrary([
@@ -597,6 +735,7 @@ describe("下载任务 · 区间来源", () => {
     expect(task.done).toBe(0);
     expect(task.failed).toEqual(["retry-me.jpeg"]);
     expect(task.failedItems.map((failed) => failed.id)).toEqual(["retry-me"]);
+    expect(saveAttempts).not.toContain(item.thumbUrl);
 
     failedSaveUrls.clear();
     store.retryFailed(task.id);
