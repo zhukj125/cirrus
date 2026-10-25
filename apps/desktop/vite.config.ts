@@ -19,7 +19,8 @@ export default defineConfig(async () => ({
   build: {
     outDir: "../../dist",
     emptyOutDir: true,
-    target: "chrome110",
+    target: "safari15",
+    cssTarget: "safari15",
     chunkSizeWarningLimit: 800,
     sourcemap: false,
   },

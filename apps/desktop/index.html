@@ -9,6 +9,81 @@
     <link rel="preconnect" href="https://cvws.icloud-content.com.cn" crossorigin />
     <link rel="dns-prefetch" href="//cvws.icloud-content.com" />
     <link rel="dns-prefetch" href="//cvws.icloud-content.com.cn" />
+    <style>
+      html,
+      body,
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background: #f6f6f7;
+        color: #1c1c1e;
+      }
+
+      html.dark,
+      html.dark body {
+        background: #1b1b1d;
+        color: #f2f2f5;
+      }
+
+      #startup-loading,
+      #startup-error {
+        display: flex;
+        min-height: 100%;
+        box-sizing: border-box;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #startup-loading {
+        flex-direction: column;
+        gap: 11px;
+        color: #6b6b73;
+        font-size: 12px;
+      }
+
+      #startup-loading .startup-brand {
+        color: #1c1c1e;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+
+      html.dark #startup-loading .startup-brand {
+        color: #f2f2f5;
+      }
+
+      #startup-loading .startup-spinner {
+        width: 20px;
+        height: 20px;
+        box-sizing: border-box;
+        border: 2px solid rgba(107, 107, 115, 0.24);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: cirrus-startup-spin 0.8s linear infinite;
+      }
+
+      #startup-error {
+        padding: 24px;
+      }
+
+      @keyframes cirrus-startup-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #startup-loading .startup-spinner {
+          animation: none;
+        }
+      }
+    </style>
     <script>
       // Apply the stored theme before first paint.
       (function () {
@@ -23,7 +98,464 @@
     </script>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="startup-loading" role="status" aria-live="polite" aria-busy="true">
+        <div class="startup-brand">Cirrus</div>
+        <div class="startup-spinner" aria-hidden="true"></div>
+        <div id="startup-label">Starting...</div>
+      </div>
+    </div>
+
+    <script data-cirrus-startup-guard>
+      // Keep startup failures visible instead of leaving an empty window.
+      (function () {
+        "use strict";
+
+        var errorShown = false;
+        var chinese = /^zh/i.test(navigator.language || "");
+
+        function element(tag, css, text) {
+          var node = document.createElement(tag);
+          if (css) node.style.cssText = css;
+          if (text !== undefined) node.textContent = text;
+          return node;
+        }
+
+        function showStartupError(error) {
+          if (errorShown || document.querySelector("[data-cirrus-compat-gate]")) return;
+          var loading = document.getElementById("startup-loading");
+          if (!loading) return;
+          errorShown = true;
+
+          var dark = document.documentElement.classList.contains("dark");
+          var foreground = dark ? "#f2f2f5" : "#1c1c1e";
+          var muted = dark ? "#a0a0a8" : "#6b6b73";
+          var border = dark ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.11)";
+
+          loading.removeAttribute("role");
+          loading.removeAttribute("aria-busy");
+          loading.id = "startup-error";
+          loading.innerHTML = "";
+
+          var card = element(
+            "div",
+            "box-sizing:border-box;width:100%;max-width:560px;border:1px solid " + border + ";border-radius:12px;padding:22px;background:" + (dark ? "#232326" : "#ffffff") + ";color:" + foreground + ";",
+          );
+          card.appendChild(element("div", "margin-bottom:10px;font-size:11px;font-weight:600;letter-spacing:0.08em;color:" + muted + ";", "CIRRUS"));
+          card.appendChild(element("h1", "margin:0 0 8px;font-size:17px;font-weight:600;line-height:1.4;", chinese ? "Cirrus 启动失败" : "Cirrus failed to start"));
+          card.appendChild(
+            element(
+              "p",
+              "margin:0 0 14px;color:" + muted + ";line-height:1.6;",
+              chinese
+                ? "界面未能完成初始化。请重新加载；如果问题持续，请更新 Safari 和 macOS 后再试。"
+                : "The interface did not finish loading. Reload the app; if the problem persists, update Safari and macOS.",
+            ),
+          );
+
+          var detail = element("pre", "margin:0 0 14px;padding:9px 10px;border-radius:7px;background:" + (dark ? "#1b1b1d" : "#f6f6f7") + ";color:" + muted + ";font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;");
+          detail.textContent = String(error || (chinese ? "未知错误" : "Unknown error"));
+          card.appendChild(detail);
+
+          var reload = element("button", "padding:7px 13px;border:1px solid " + border + ";border-radius:7px;background:transparent;color:" + foreground + ";font:inherit;cursor:pointer;", chinese ? "重新加载" : "Reload");
+          reload.type = "button";
+          reload.addEventListener("click", function () {
+            window.location.reload();
+          });
+          card.appendChild(reload);
+          loading.appendChild(card);
+        }
+
+        window.addEventListener("error", function (event) {
+          var message = event && event.message ? event.message : chinese ? "前端资源加载失败" : "Failed to load the interface";
+          showStartupError(message);
+        });
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event && event.reason ? event.reason : chinese ? "未知启动错误" : "Unknown startup error";
+          showStartupError(reason && reason.message ? reason.message : reason);
+        });
+
+        if (chinese) document.getElementById("startup-label").textContent = "正在启动...";
+      })();
+    </script>
+
+    <script data-cirrus-polyfills>
+      // Fill the small set of modern built-ins used by the bundled application.
+      (function () {
+        "use strict";
+
+        function define(target, name, value) {
+          if (typeof target[name] === "function") return;
+          try {
+            Object.defineProperty(target, name, { configurable: true, writable: true, value: value });
+          } catch (error) {
+            target[name] = value;
+          }
+        }
+
+        define(Object, "hasOwn", function hasOwn(object, property) {
+          if (object === null || object === undefined) throw new TypeError("Cannot convert undefined or null to object");
+          return Object.prototype.hasOwnProperty.call(Object(object), property);
+        });
+
+        define(Array.prototype, "findLast", function findLast(predicate, thisArg) {
+          if (this === null || this === undefined) throw new TypeError("Array.prototype.findLast called on null or undefined");
+          if (typeof predicate !== "function") throw new TypeError("predicate must be a function");
+          var array = Object(this);
+          for (var index = array.length - 1; index >= 0; index -= 1) {
+            var value = array[index];
+            if (predicate.call(thisArg, value, index, array)) return value;
+          }
+          return undefined;
+        });
+
+        define(Array.prototype, "toReversed", function toReversed() {
+          return Array.prototype.slice.call(this).reverse();
+        });
+
+        define(Array.prototype, "toSorted", function toSorted(compareFn) {
+          return Array.prototype.slice.call(this).sort(compareFn);
+        });
+
+        define(Array.prototype, "toSpliced", function toSpliced() {
+          var copy = Array.prototype.slice.call(this);
+          Array.prototype.splice.apply(copy, arguments);
+          return copy;
+        });
+
+        define(String.prototype, "replaceAll", function replaceAll(searchValue, replaceValue) {
+          if (searchValue instanceof RegExp) return this.replace(searchValue, replaceValue);
+          var input = String(this);
+          var needle = String(searchValue);
+          if (typeof replaceValue === "function") {
+            var parts = input.split(needle);
+            var output = parts[0];
+            for (var index = 1; index < parts.length; index += 1) {
+              output += String(replaceValue(needle, index - 1, input)) + parts[index];
+            }
+            return output;
+          }
+          return input.split(needle).join(String(replaceValue));
+        });
+      })();
+    </script>
+
+    <script data-cirrus-compat-probe>
+      // Detect engines that cannot render the layered application stylesheet.
+      // The notice uses inline styles only so it remains readable when Tailwind CSS is unavailable.
+      (function () {
+        "use strict";
+
+        var BYPASS_KEY = "cirrus.compat.bypass";
+        var BANNER_KEY = "cirrus.compat.bannerDismissed";
+        var LEGACY_CLASS = "cirrus-legacy-webview";
+
+        var FATAL_PROBES = [
+          ["layer", function () { return supportsLayer(); }],
+          ["oklch", function () { return supportsStyle("color", "oklch(0.5 0.1 180)"); }],
+          ["color-mix", function () { return supportsStyle("color", "color-mix(in oklab, black 10%, transparent)"); }],
+        ];
+        var DEGRADED_PROBES = [
+          ["media-query-range", function () { return supportsMediaQueryRange(); }],
+          ["has-selector", function () { return supportsSelector(":has(*)"); }],
+          ["focus-visible", function () { return supportsSelector(":focus-visible"); }],
+        ];
+        var FEATURE_LABELS = {
+          layer: "@layer",
+          oklch: "oklch()",
+          "color-mix": "color-mix()",
+          "media-query-range": "media query range syntax",
+          "has-selector": ":has()",
+          "focus-visible": ":focus-visible",
+        };
+
+        var TEXT = {
+          "zh-CN": {
+            separator: "、",
+            macTitle: "当前系统的 WebKit 版本过旧，Cirrus 界面无法正常显示",
+            macBody: "Cirrus 使用 macOS 内置的 WebKit 渲染界面。这台 Mac 上的 WebKit 版本过旧，缺少必要的 CSS 能力，窗口可能空白或显示异常。",
+            macSteps: [
+              "打开「系统设置 → 通用 → 软件更新」，安装所有可用更新。",
+              "同时把 Safari 更新到当前系统支持的最新版本。macOS 11 或 12 也请在软件更新中检查 Safari 更新。",
+              "完全退出 Cirrus，然后重新打开。",
+            ],
+            macNote: "更新 Safari 会同步更新系统 WebKit，不需要重新安装 Cirrus。",
+            desktopSteps: ["请更新操作系统，以便同步更新系统内置的 WebView。", "完全退出 Cirrus，然后重新打开。"],
+            webSteps: ["请把浏览器更新到最新版本。", "更新完成后重新打开 Cirrus。"],
+            macBanner: "检测到 {engine}，部分样式可能显示异常。请在「系统设置 → 通用 → 软件更新」中更新 Safari，然后重新打开 Cirrus。",
+            desktopBanner: "检测到 {engine}，部分样式可能显示异常。建议更新操作系统以更新内置 WebView。",
+            webBanner: "检测到 {engine}，部分样式可能显示异常。建议更新浏览器后重新打开。",
+            webTitle: "当前浏览器版本过旧，Cirrus 界面无法正常显示",
+            webBody: "检测到 {engine}，该版本缺少 Cirrus 需要的 CSS 能力，界面可能无法正常显示。",
+            continue: "仍然继续",
+            dismiss: "知道了",
+            detected: "检测结果",
+          },
+          en: {
+            separator: ", ",
+            macTitle: "Cirrus needs a newer WebKit version",
+            macBody: "Cirrus uses the WebKit engine built into macOS. This Mac's WebKit is too old for the interface, so the window may be blank or incomplete.",
+            macSteps: [
+              "Open System Settings > General > Software Update and install all available updates.",
+              "Update Safari to the latest version available for this Mac. On macOS 11 or 12, check Software Update for Safari too.",
+              "Quit Cirrus completely, then open it again.",
+            ],
+            macNote: "Updating Safari also updates the system WebKit used by Cirrus. Cirrus does not need to be reinstalled.",
+            desktopSteps: ["Update your operating system so its built-in WebView is updated too.", "Quit Cirrus completely, then open it again."],
+            webSteps: ["Update your browser to the latest version.", "Reopen Cirrus after the update."],
+            macBanner: "Detected {engine}. Some styles may be incomplete. Update Safari from System Settings > General > Software Update, then reopen Cirrus.",
+            desktopBanner: "Detected {engine}. Some styles may be incomplete. Update your operating system to refresh its built-in WebView.",
+            webBanner: "Detected {engine}. Some styles may be incomplete. Update your browser, then reopen Cirrus.",
+            webTitle: "This browser is too old for Cirrus to render correctly",
+            webBody: "Detected {engine}, which is missing CSS capabilities Cirrus relies on, so the interface may not render correctly.",
+            continue: "Continue anyway",
+            dismiss: "Dismiss",
+            detected: "Detected",
+          },
+        };
+
+        var report = { tier: "ok", missing: [], engine: "", platform: "web", desktop: false, bypassed: false };
+        window.__CIRRUS_WEBVIEW_COMPAT__ = report;
+
+        function element(tag, css, text) {
+          var node = document.createElement(tag);
+          if (css) node.style.cssText = css;
+          if (text !== undefined) node.textContent = text;
+          return node;
+        }
+
+        function storage(store, key, value) {
+          try {
+            if (value === undefined) return String(window[store].getItem(key) || "");
+            window[store].setItem(key, value);
+          } catch (error) {
+            return "";
+          }
+          return "";
+        }
+
+        function supportsStyle(property, value) {
+          try {
+            return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports(property, value);
+          } catch (error) {
+            return true;
+          }
+        }
+
+        function supportsSelector(selector) {
+          try {
+            return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("selector(" + selector + ")");
+          } catch (error) {
+            return true;
+          }
+        }
+
+        function supportsMediaQueryRange() {
+          try {
+            return typeof window.matchMedia === "function" && window.matchMedia("(width >= 0px)").matches;
+          } catch (error) {
+            return true;
+          }
+        }
+
+        function supportsLayer() {
+          var style;
+          try {
+            style = document.createElement("style");
+            style.textContent = "@layer cirrus-layer-probe{html{--cirrus-layer-probe:1}}";
+            (document.head || document.documentElement).appendChild(style);
+            var value = window.getComputedStyle(document.documentElement).getPropertyValue("--cirrus-layer-probe");
+            return String(value).trim() === "1";
+          } catch (error) {
+            return true;
+          } finally {
+            if (style && style.parentNode) style.parentNode.removeChild(style);
+          }
+        }
+
+        function describeEngine(userAgent) {
+          var match = /Edg\/(\d+)/.exec(userAgent) || /OPR\/(\d+)/.exec(userAgent) || /Firefox\/(\d+)/.exec(userAgent) || /Chrome\/(\d+)/.exec(userAgent) || /Version\/([\d.]+).*Safari/.exec(userAgent);
+          if (!match) return "";
+          var name = /Edg\//.test(userAgent) ? "Edge" : /OPR\//.test(userAgent) ? "Opera" : /Firefox\//.test(userAgent) ? "Firefox" : /Chrome\//.test(userAgent) ? "Chrome" : "Safari";
+          return name + " " + match[1];
+        }
+
+        function describePlatform() {
+          var platform = navigator.platform || "";
+          var userAgent = navigator.userAgent || "";
+          if (/Mac|iPhone|iPad|iPod/.test(platform) || /Mac OS X/.test(userAgent)) return "macos";
+          if (/Win/.test(platform) || /Windows/.test(userAgent)) return "windows";
+          if (/Linux|X11/.test(platform) || /Linux/.test(userAgent)) return "linux";
+          return "web";
+        }
+
+        function pickLanguage() {
+          var languages = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ""];
+          for (var index = 0; index < languages.length; index += 1) {
+            if (/^zh/i.test(String(languages[index]))) return "zh-CN";
+            if (/^en/i.test(String(languages[index]))) return "en";
+          }
+          return "en";
+        }
+
+        function format(template, values) {
+          return String(template).replace(/\{(\w+)\}/g, function (match, key) {
+            return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : match;
+          });
+        }
+
+        function featureList(names, separator) {
+          var labels = [];
+          for (var index = 0; index < names.length; index += 1) labels.push(FEATURE_LABELS[names[index]] || names[index]);
+          return labels.join(separator);
+        }
+
+        function palette() {
+          var dark = document.documentElement.classList.contains("dark");
+          return {
+            background: dark ? "#232326" : "#ffffff",
+            page: dark ? "#1b1b1d" : "#f6f6f7",
+            text: dark ? "#f2f2f5" : "#1c1c1e",
+            muted: dark ? "#a0a0a8" : "#6b6b73",
+            border: dark ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.11)",
+          };
+        }
+
+        function renderNotice(tier, copy, names) {
+          var color = palette();
+          var banner = tier === "degraded";
+          var mac = report.desktop && report.platform === "macos";
+          var engine = report.engine || (mac ? "WebKit" : report.desktop ? report.platform : "unknown");
+          var values = { engine: engine, features: featureList(names, copy.separator) };
+          var steps = mac ? copy.macSteps : report.desktop ? copy.desktopSteps : copy.webSteps;
+          var bannerText = mac ? copy.macBanner : report.desktop ? copy.desktopBanner : copy.webBanner;
+          var detail = copy.detected + ": " + engine + (names.length ? " / " + values.features : "");
+
+          var surface = element(
+            "div",
+            "box-sizing:border-box;z-index:2147483647;text-align:left;background:" +
+              (banner ? color.background : color.page) +
+              ";color:" +
+              color.text +
+              ";font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.6;" +
+              (banner
+                ? "position:fixed;left:50%;transform:translateX(-50%);bottom:16px;width:calc(100vw - 32px);max-width:540px;border:1px solid " + color.border + ";border-radius:10px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,0.16);"
+                : "position:fixed;top:0;right:0;bottom:0;left:0;display:flex;overflow:auto;padding:24px;"),
+          );
+          surface.setAttribute(banner ? "data-cirrus-compat-banner" : "data-cirrus-compat-gate", tier);
+
+          var card = banner
+            ? surface
+            : element("div", "margin:auto;max-width:620px;width:100%;box-sizing:border-box;border:1px solid " + color.border + ";border-radius:12px;padding:22px;background:" + color.background + ";");
+
+          if (!banner) {
+            card.appendChild(element("div", "font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:" + color.muted + ";margin-bottom:10px;", "CIRRUS"));
+            card.appendChild(element("h1", "margin:0 0 10px;font-size:17px;font-weight:600;line-height:1.4;", mac ? copy.macTitle : copy.webTitle));
+          }
+          card.appendChild(element("p", "margin:0 0 12px;color:" + color.muted + ";", banner ? format(bannerText, values) : format(mac ? copy.macBody : copy.webBody, values)));
+
+          if (!banner) {
+            var list = element("ol", "margin:0 0 12px;padding-left:20px;");
+            for (var stepIndex = 0; stepIndex < steps.length; stepIndex += 1) list.appendChild(element("li", "margin:0 0 6px;", steps[stepIndex]));
+            card.appendChild(list);
+            card.appendChild(element("p", "margin:0 0 14px;font-size:12px;color:" + color.muted + ";", mac ? copy.macNote : ""));
+          }
+
+          var footer = element("div", "display:flex;flex-wrap:wrap;align-items:center;gap:10px;");
+          if (!banner) {
+            footer.appendChild(
+              element(
+                "span",
+                "font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:" + color.muted + ";background:" + color.page + ";border-radius:6px;padding:4px 8px;overflow-wrap:anywhere;",
+                detail,
+              ),
+            );
+          }
+
+          var dismiss = element(
+            "button",
+            "font:inherit;font-size:12px;cursor:pointer;border:1px solid " + color.border + ";border-radius:6px;background:transparent;color:" + color.text + ";padding:6px 12px;",
+            banner ? copy.dismiss : copy.continue,
+          );
+          dismiss.type = "button";
+          dismiss.addEventListener("click", function () {
+            if (banner) {
+              storage("localStorage", BANNER_KEY, "1");
+              surface.remove();
+              return;
+            }
+            storage("sessionStorage", BYPASS_KEY, "1");
+            window.location.reload();
+          });
+          footer.appendChild(dismiss);
+          card.appendChild(footer);
+
+          if (!banner) surface.appendChild(card);
+          document.body.appendChild(surface);
+        }
+
+        try {
+          report.desktop = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+          report.platform = describePlatform();
+          report.engine = describeEngine(navigator.userAgent || "");
+
+          var missingFatal = [];
+          var missingDegraded = [];
+          var index;
+          for (index = 0; index < FATAL_PROBES.length; index += 1) {
+            if (!FATAL_PROBES[index][1]()) missingFatal.push(FATAL_PROBES[index][0]);
+          }
+          for (index = 0; index < DEGRADED_PROBES.length; index += 1) {
+            if (!DEGRADED_PROBES[index][1]()) missingDegraded.push(DEGRADED_PROBES[index][0]);
+          }
+          report.missing = missingFatal.concat(missingDegraded);
+          report.tier = missingFatal.indexOf("layer") >= 0 ? "fatal" : missingFatal.length || missingDegraded.length ? "degraded" : "ok";
+
+          var override = null;
+          try {
+            override = new URLSearchParams(window.location.search).get("cirrus-compat");
+          } catch (error) {
+            override = null;
+          }
+          var forced = override === "force" || override === "fatal" || override === "force-degraded" || override === "degraded";
+          if (override === "reset") storage("sessionStorage", BYPASS_KEY, "");
+          if (override === "off") {
+            report.tier = "ok";
+            report.missing = [];
+          } else if (override === "force" || override === "fatal") {
+            report.tier = "fatal";
+            report.missing = ["layer"];
+          } else if (override === "force-degraded" || override === "degraded") {
+            report.tier = "degraded";
+            report.missing = ["media-query-range"];
+          }
+
+          report.bypassed = !forced && storage("sessionStorage", BYPASS_KEY) === "1";
+          window.__CIRRUS_COMPAT_BLOCKED__ = report.tier === "fatal" && !report.bypassed;
+
+          var root = document.documentElement;
+          if (report.tier === "ok") root.classList.remove(LEGACY_CLASS);
+          else root.classList.add(LEGACY_CLASS);
+          root.setAttribute("data-cirrus-compat", report.tier);
+          root.setAttribute("data-cirrus-engine", report.engine || report.platform);
+
+          var dismissedDegraded = report.tier === "degraded" && storage("localStorage", BANNER_KEY) === "1";
+          if (report.tier !== "ok" && !report.bypassed && !dismissedDegraded) {
+            renderNotice(report.tier, TEXT[pickLanguage()] || TEXT.en, report.missing);
+          }
+        } catch (error) {
+          report.tier = "ok";
+          report.missing = [];
+          window.__CIRRUS_COMPAT_BLOCKED__ = false;
+          try {
+            console.warn("[COMPAT] engine probe failed", error);
+          } catch (consoleError) {
+            /* Console can be unavailable on old WebViews. */
+          }
+        }
+      })();
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

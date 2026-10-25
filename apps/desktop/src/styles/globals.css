@@ -142,3 +142,50 @@
     animation: none;
   }
 }
+
+/* Legacy WebKit lacks color-mix(). Keep the core palette and controls readable. */
+html.cirrus-legacy-webview {
+  --accent: rgba(0, 0, 0, 0.05);
+  --border: rgba(0, 0, 0, 0.09);
+  --input: rgba(0, 0, 0, 0.12);
+  --ring: rgba(0, 113, 227, 0.45);
+  --sidebar-accent: rgba(0, 0, 0, 0.06);
+  --sidebar-border: rgba(0, 0, 0, 0.07);
+}
+
+html.cirrus-legacy-webview.dark {
+  --accent: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.11);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: rgba(10, 132, 255, 0.55);
+  --sidebar-accent: rgba(255, 255, 255, 0.08);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+}
+
+html.cirrus-legacy-webview ::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+}
+
+html.cirrus-legacy-webview.dark ::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+html.cirrus-legacy-webview ::selection {
+  background-color: rgba(0, 113, 227, 0.26);
+}
+
+html.cirrus-legacy-webview .battery-shell {
+  border-color: rgba(107, 107, 115, 0.38);
+}
+
+html.cirrus-legacy-webview .battery-cap {
+  background-color: rgba(107, 107, 115, 0.42);
+}
+
+html.cirrus-legacy-webview.dark .battery-shell {
+  border-color: rgba(160, 160, 168, 0.38);
+}
+
+html.cirrus-legacy-webview.dark .battery-cap {
+  background-color: rgba(160, 160, 168, 0.42);
+}
