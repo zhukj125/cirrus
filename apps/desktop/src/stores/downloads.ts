@@ -261,12 +261,14 @@ function taskFolderName(title: string, createdAt: number): string {
   return `Cirrus_${stamp}_${safeTitle}`;
 }
 
+const FALLBACK_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 export function fallbackMediaName(item: PhotoItem, sequence: number): string {
   const extension = item.isVideo ? ".mp4" : ".jpeg";
   if (!item.takenAt) return `Cirrus_${String(sequence).padStart(4, "0")}${extension}`;
-  const date = new Date(item.takenAt);
+  const date = new Date(item.takenAt + FALLBACK_TZ_OFFSET_MS);
   if (Number.isNaN(date.getTime())) return `Cirrus_${String(sequence).padStart(4, "0")}${extension}`;
-  const stamp = `${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}_${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}`;
+  const stamp = `${date.getUTCFullYear()}${two(date.getUTCMonth() + 1)}${two(date.getUTCDate())}_${two(date.getUTCHours())}${two(date.getUTCMinutes())}${two(date.getUTCSeconds())}`;
   return `${stamp}_${String(sequence).padStart(4, "0")}${extension}`;
 }
 
