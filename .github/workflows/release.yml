@@ -69,6 +69,9 @@ jobs:
 
             ### Highlights
 
+            - System tray background mode with a configurable first-close choice
+            - Close prompts can be changed or reset from Appearance settings
+            - Map Settings now opens the map configuration page directly
             - Shared, editable download settings in the app and download manager
             - Configurable concurrent tasks with automatic queueing
             - Configurable photo concurrency per task
