@@ -35,6 +35,17 @@ const theme = useThemeStore();
 const locale = useLocaleStore();
 const query = ref("");
 const active = ref(props.initialCategory);
+const closeBehavior = ref(readStored(StorageKey.closeBehavior) === "quit" ? "quit" : "background");
+
+watch(closeBehavior, (value) => {
+  writeStored(StorageKey.closeBehavior, value);
+  writeStored(StorageKey.closeBehaviorPrompted, "1");
+});
+
+function resetClosePrompt(): void {
+  writeStored(StorageKey.closeBehaviorPrompted, "0");
+  toast.success(locale.t("settings.closePromptResetDone"));
+}
 
 watch(
   () => props.initialCategory,
@@ -194,6 +205,20 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               </button>
             </div>
             <p class="mt-2 text-xs text-muted-foreground">{{ locale.t("settings.themeSaved") }}</p>
+          </div>
+
+          <div class="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-4">
+            <div class="min-w-0">
+              <p class="text-sm font-medium">{{ locale.t("settings.closeBehavior") }}</p>
+              <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.closeBehaviorTip") }}</p>
+            </div>
+            <div class="flex shrink-0 flex-col items-end gap-1.5">
+              <select v-model="closeBehavior" class="h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-ring" :aria-label="locale.t('settings.closeBehavior')">
+                <option value="background">{{ locale.t("settings.closeBackground") }}</option>
+                <option value="quit">{{ locale.t("settings.closeQuit") }}</option>
+              </select>
+              <button type="button" class="text-2xs text-primary transition-opacity hover:opacity-75" @click="resetClosePrompt">{{ locale.t("settings.closePromptReset") }}</button>
+            </div>
           </div>
         </section>
 

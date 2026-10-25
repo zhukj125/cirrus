@@ -20,6 +20,8 @@ export const StorageKey = {
   downloadDirectory: "cirrus.downloadDirectory",
   locale: "cirrus.locale",
   sidebarCollapsed: "cirrus.sidebarCollapsed",
+  closeBehavior: "cirrus.closeBehavior",
+  closeBehaviorPrompted: "cirrus.closeBehaviorPrompted",
   mapProvider: "cirrus.mapProvider",
   amapKey: "cirrus.amapKey",
   amapSecurityCode: "cirrus.amapSecurityCode",

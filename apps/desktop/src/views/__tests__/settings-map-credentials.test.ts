@@ -47,10 +47,26 @@ describe("SettingsView map credentials", () => {
     expect(localStorage.getItem(StorageKey.downloadConcurrency)).toBe("10");
   });
 
-
   it("can open directly on the maps section", () => {
     localStorage.clear();
     const wrapper = mount(SettingsView, { props: { initialCategory: "maps" }, global: { plugins: [createPinia()] } });
     expect(wrapper.find("#map-credential-apiKey").exists()).toBe(true);
+  });
+
+  it("persists the close behavior preference", async () => {
+    localStorage.clear();
+    const wrapper = mount(SettingsView, { global: { plugins: [createPinia()] } });
+    const select = wrapper.get('select[aria-label="When closing the window"]');
+    expect((select.element as HTMLSelectElement).value).toBe("background");
+    await select.setValue("quit");
+    await select.trigger("change");
+    expect(localStorage.getItem(StorageKey.closeBehavior)).toBe("quit");
+    expect(localStorage.getItem(StorageKey.closeBehaviorPrompted)).toBe("1");
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "Ask again next time")!
+      .trigger("click");
+    expect(localStorage.getItem(StorageKey.closeBehaviorPrompted)).toBe("0");
   });
 });
