@@ -278,7 +278,7 @@ async function handleDownload(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="photo" class="fixed inset-0 z-[2000] flex flex-col bg-background/95 backdrop-blur-sm">
+  <div v-if="photo" class="fixed top-8 right-0 bottom-0 left-0 z-[2000] flex flex-col bg-background/95 backdrop-blur-sm">
     <header class="flex h-11 shrink-0 items-center gap-3 border-b border-border px-4 select-none">
       <div class="flex min-w-0 items-center gap-2.5 text-sm text-muted-foreground">
         <span class="tabular shrink-0">{{ index + 1 }}/{{ photos.length }}</span>
