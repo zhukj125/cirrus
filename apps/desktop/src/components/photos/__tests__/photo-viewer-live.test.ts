@@ -56,6 +56,25 @@ describe("PhotoViewer · 实况", () => {
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
   });
 
+  it("底部缩略图栏显示当前照片并可点击切换", async () => {
+    const photos = Array.from({ length: 80 }, (_, index) => ({
+      ...stillPhoto,
+      id: `still-${index}`,
+      fileName: `still-${index}.jpeg`,
+      thumbUrl: `https://example.com/still-${index}-thumb.jpeg`,
+    }));
+    const wrapper = mount(PhotoViewer, { props: { photos, index: 0, hasMore: true }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    const strip = wrapper.get('div[aria-label="Photo thumbnails"]');
+    expect(strip.findAll("[data-filmstrip-index]")).toHaveLength(80);
+    expect(strip.get('[data-filmstrip-index="0"]').attributes("aria-current")).toBe("true");
+
+    await strip.get('[data-filmstrip-index="78"]').trigger("click");
+    expect(wrapper.emitted("update:index")?.[0]).toEqual([78]);
+    expect(wrapper.emitted("needMore")).toHaveLength(1);
+  });
+
   it("普通照片支持旋转和水平翻转", async () => {
     const wrapper = mount(PhotoViewer, { props: { photos: [stillPhoto], index: 0 }, global: { plugins: [createPinia()] } });
     await flushPromises();

@@ -45,6 +45,22 @@ const flipped = ref(false);
 
 const stage = ref<HTMLElement | null>(null);
 const stageSize = ref({ width: 0, height: 0 });
+const filmstrip = ref<HTMLElement | null>(null);
+
+const FILMSTRIP_RADIUS = 60;
+const FILMSTRIP_SIZE = FILMSTRIP_RADIUS * 2 + 1;
+
+const filmstripItems = computed(() => {
+  const maxStart = Math.max(0, props.photos.length - FILMSTRIP_SIZE);
+  const start = Math.min(Math.max(0, props.index - FILMSTRIP_RADIUS), maxStart);
+  const end = Math.min(props.photos.length, start + FILMSTRIP_SIZE);
+  return props.photos.slice(start, end).map((item, offset) => ({ photo: item, index: start + offset }));
+});
+
+function filmstripItemWidth(photo: PhotoItem): string {
+  const ratio = photo.width && photo.height ? photo.width / photo.height : 0.65;
+  return `${Math.round(Math.min(72, Math.max(20, 46 * ratio)))}px`;
+}
 
 const saving = ref(false);
 
@@ -172,6 +188,26 @@ function startDrag(event: MouseEvent): void {
   window.addEventListener("mouseup", endDrag);
 }
 
+async function scrollFilmstrip(behavior: ScrollBehavior = "smooth"): Promise<void> {
+  await nextTick();
+  const strip = filmstrip.value;
+  const item = strip?.querySelector<HTMLElement>(`[data-filmstrip-index="${props.index}"]`);
+  if (!strip || !item || typeof strip.scrollTo !== "function") return;
+  const stripRect = strip.getBoundingClientRect();
+  const itemRect = item.getBoundingClientRect();
+  const centeredLeft = strip.scrollLeft + itemRect.left - stripRect.left - (stripRect.width - itemRect.width) / 2;
+  strip.scrollTo({ left: Math.max(0, centeredLeft), behavior });
+}
+
+function selectFilmstripPhoto(next: number): void {
+  if (next < 0 || next >= props.photos.length || next === props.index) return;
+  loaded.value = false;
+  playingLive.value = false;
+  resetImageTransform();
+  emit("update:index", next);
+  if (props.hasMore && next >= props.photos.length - 12) emit("needMore");
+}
+
 function go(delta: number): void {
   const next = props.index + delta;
   if (next < 0) return;
@@ -198,10 +234,24 @@ function onKeydown(event: KeyboardEvent): void {
   else if (event.key.toLowerCase() === "f") toggleFlip();
 }
 
+watch(
+  () => props.index,
+  (next) => {
+    if (props.hasMore && next >= props.photos.length - 12) emit("needMore");
+    void scrollFilmstrip();
+  },
+);
+
+watch(
+  () => props.photos.length,
+  () => void scrollFilmstrip("auto"),
+);
+
 onMounted(() => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("resize", updateStageSize);
   updateStageSize();
+  void scrollFilmstrip("auto");
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
@@ -282,69 +332,96 @@ async function handleDownload(): Promise<void> {
     </header>
 
     <div class="relative flex min-h-0 flex-1 flex-col">
-      <div ref="stage" class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4" :class="dragging ? 'cursor-grabbing' : scale > MIN_SCALE ? 'cursor-grab' : ''" @click.self="emit('close')" @wheel.prevent="onWheel">
-        <img class="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full scale-105 object-contain opacity-40 blur-2xl" :src="photo.thumbUrl" alt="" aria-hidden="true" />
+      <div class="relative min-h-0 flex-1">
+        <div ref="stage" class="absolute inset-0 flex items-center justify-center overflow-hidden p-4" :class="dragging ? 'cursor-grabbing' : scale > MIN_SCALE ? 'cursor-grab' : ''" @click.self="emit('close')" @wheel.prevent="onWheel">
+          <img class="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full scale-105 object-contain opacity-40 blur-2xl" :src="photo.thumbUrl" alt="" aria-hidden="true" />
 
-        <video
-          v-if="isVideo && videoUrl"
-          class="relative max-h-full max-w-full rounded-md object-contain"
-          :class="photo.width && photo.height ? '' : 'h-full w-full'"
-          :src="videoUrl"
-          :poster="photo.thumbUrl"
-          :width="photo.width ?? undefined"
-          :height="photo.height ?? undefined"
-          controls
-          autoplay
-          playsinline
-          preload="metadata"
-        />
-        <video
-          v-else-if="playingLive && videoUrl"
-          ref="liveVideo"
-          class="relative max-h-full max-w-full rounded-md object-contain"
-          :src="videoUrl"
-          :poster="photo.thumbUrl"
-          :width="photo.width ?? undefined"
-          :height="photo.height ?? undefined"
-          controls
-          autoplay
-          playsinline
-          preload="auto"
-          @ended="playingLive = false"
-        />
-        <img
-          v-else
-          class="relative max-h-full max-w-full rounded-md object-contain transition-opacity duration-200"
-          :class="[loaded ? 'opacity-100' : 'opacity-0', dragging ? '' : 'transition-transform duration-100']"
-          :style="imageStyle"
-          :src="displayUrl"
-          :alt="fileName || t('photos.photoNameFallback')"
-          draggable="false"
-          @load="loaded = true"
-          @mousedown.prevent="startDrag"
-          @dblclick="toggleZoom"
-        />
+          <video
+            v-if="isVideo && videoUrl"
+            class="relative max-h-full max-w-full rounded-md object-contain"
+            :class="photo.width && photo.height ? '' : 'h-full w-full'"
+            :src="videoUrl"
+            :poster="photo.thumbUrl"
+            :width="photo.width ?? undefined"
+            :height="photo.height ?? undefined"
+            controls
+            autoplay
+            playsinline
+            preload="metadata"
+          />
+          <video
+            v-else-if="playingLive && videoUrl"
+            ref="liveVideo"
+            class="relative max-h-full max-w-full rounded-md object-contain"
+            :src="videoUrl"
+            :poster="photo.thumbUrl"
+            :width="photo.width ?? undefined"
+            :height="photo.height ?? undefined"
+            controls
+            autoplay
+            playsinline
+            preload="auto"
+            @ended="playingLive = false"
+          />
+          <img
+            v-else
+            class="relative max-h-full max-w-full rounded-md object-contain transition-opacity duration-200"
+            :class="[loaded ? 'opacity-100' : 'opacity-0', dragging ? '' : 'transition-transform duration-100']"
+            :style="imageStyle"
+            :src="displayUrl"
+            :alt="fileName || t('photos.photoNameFallback')"
+            draggable="false"
+            @load="loaded = true"
+            @mousedown.prevent="startDrag"
+            @dblclick="toggleZoom"
+          />
+        </div>
+
+        <button
+          type="button"
+          class="absolute top-1/2 left-4 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
+          :aria-label="t('viewer.previousPhoto')"
+          :disabled="index === 0"
+          @click="go(-1)"
+        >
+          <ChevronLeft :size="20" />
+        </button>
+
+        <button
+          type="button"
+          class="absolute top-1/2 right-4 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
+          :aria-label="t('viewer.nextPhoto')"
+          :disabled="index >= photos.length - 1 && !hasMore"
+          @click="go(1)"
+        >
+          <ChevronRight :size="20" />
+        </button>
       </div>
 
-      <button
-        type="button"
-        class="absolute top-1/2 left-4 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
-        :aria-label="t('viewer.previousPhoto')"
-        :disabled="index === 0"
-        @click="go(-1)"
-      >
-        <ChevronLeft :size="20" />
-      </button>
-
-      <button
-        type="button"
-        class="absolute top-1/2 right-4 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
-        :aria-label="t('viewer.nextPhoto')"
-        :disabled="index >= photos.length - 1 && !hasMore"
-        @click="go(1)"
-      >
-        <ChevronRight :size="20" />
-      </button>
+      <div class="relative h-[62px] shrink-0 border-t border-border bg-elevated/95 shadow-[0_-6px_18px_rgba(0,0,0,0.07)]">
+        <div ref="filmstrip" class="relative flex h-full items-center gap-px overflow-x-auto px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" :aria-label="t('viewer.thumbnailStrip')">
+          <button
+            v-for="item in filmstripItems"
+            :key="item.photo.id"
+            type="button"
+            class="group relative h-[46px] flex-none overflow-hidden border bg-muted transition-[margin,border-color,opacity,box-shadow] duration-200"
+            :class="item.index === index ? 'mx-2 rounded-md border-foreground/30 opacity-100 shadow-sm' : 'rounded-[3px] border-border/70 opacity-65 hover:border-border hover:opacity-100'"
+            :style="{ width: filmstripItemWidth(item.photo) }"
+            :data-filmstrip-index="item.index"
+            :aria-label="t('viewer.selectPhoto', { index: item.index + 1 })"
+            :aria-current="item.index === index ? 'true' : undefined"
+            :title="item.photo.fileName || t('photos.photoNameFallback')"
+            @click="selectFilmstripPhoto(item.index)"
+          >
+            <img :src="item.photo.thumbUrl" alt="" class="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" />
+            <span v-if="item.photo.isVideo || item.photo.isLivePhoto" class="absolute right-0.5 bottom-0.5 grid size-3 place-items-center rounded-full bg-black/65 text-white shadow-sm">
+              <Play :size="7" fill="currentColor" />
+            </span>
+          </button>
+        </div>
+        <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>
+        <div class="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>
+      </div>
     </div>
   </div>
 </template>

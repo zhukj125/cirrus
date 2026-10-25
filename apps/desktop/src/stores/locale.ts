@@ -155,6 +155,8 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "viewer.pauseLive": { zh: "暂停实况照片", en: "Pause Live Photo" },
   "viewer.previousPhoto": { zh: "上一张照片", en: "Previous photo" },
   "viewer.nextPhoto": { zh: "下一张照片", en: "Next photo" },
+  "viewer.thumbnailStrip": { zh: "照片缩略图", en: "Photo thumbnails" },
+  "viewer.selectPhoto": { zh: "查看第 {index} 张照片", en: "View photo {index}" },
   "login.emailRequired": { zh: "请输入 Apple ID 邮箱", en: "Enter your Apple ID email" },
   "login.passwordRequired": { zh: "请输入密码", en: "Enter your password" },
   "login.signInFailed": { zh: "登录失败", en: "Sign-in failed" },
