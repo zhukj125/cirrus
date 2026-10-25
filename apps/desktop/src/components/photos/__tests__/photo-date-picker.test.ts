@@ -1,4 +1,5 @@
 import { mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
 import { describe, expect, it } from "vitest";
 
 import PhotoDatePicker from "@/components/photos/PhotoDatePicker.vue";
@@ -20,6 +21,7 @@ const selected = { year: 2024, month: 3 };
 function mountPicker(props: Record<string, unknown> = {}) {
   return mount(PhotoDatePicker, {
     props: { activeRange: "all", customValue: UNBOUNDED, years, selected: null, loading: false, ...props },
+    global: { plugins: [createPinia()] },
   });
 }
 

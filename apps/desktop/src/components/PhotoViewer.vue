@@ -6,6 +6,7 @@ import { downloadPhoto } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
+import { useLocaleStore } from "@/stores/locale";
 import type { PhotoItem } from "@/types";
 
 const props = defineProps<{
@@ -15,11 +16,13 @@ const props = defineProps<{
   hasMore?: boolean;
 }>();
 const emit = defineEmits<{ "update:index": [value: number]; close: []; needMore: [] }>();
+const locale = useLocaleStore();
+const t = locale.t;
 
 function formatTime(takenAt: number | null | undefined): string {
   if (!takenAt) return "";
   try {
-    return new Date(takenAt).toLocaleString("en-US", {
+    return new Date(takenAt).toLocaleString(locale.locale, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -213,11 +216,11 @@ async function handleDownload(): Promise<void> {
   const name = target.fileName || `${target.id}${isVideo.value ? ".mp4" : ".jpeg"}`;
   saving.value = true;
   try {
-    const savedPath = await downloadPhoto(url, name);
+    const savedPath = await downloadPhoto(url, name, t("photos.saveTo"));
 
-    if (savedPath) toast.success(`Saved to ${savedPath}`);
+    if (savedPath) toast.success(t("photos.savedTo", { path: savedPath }));
   } catch (caught) {
-    toast.error(`Download failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+    toast.error(t("photos.downloadFailed", { error: caught instanceof Error ? caught.message : String(caught) }));
   } finally {
     saving.value = false;
   }
@@ -231,46 +234,48 @@ async function handleDownload(): Promise<void> {
         <span class="tabular shrink-0">{{ index + 1 }}/{{ photos.length }}</span>
         <span v-if="time" class="truncate">{{ time }}</span>
         <span v-if="fileName" class="truncate">{{ fileName }}</span>
-        <span v-if="isVideo" class="shrink-0">Video</span>
-        <span v-else-if="isLivePhoto" class="shrink-0">Live</span>
+        <span v-if="isVideo" class="shrink-0">{{ t("common.video") }}</span>
+        <span v-else-if="isLivePhoto" class="shrink-0">{{ t("common.live") }}</span>
       </div>
 
       <div class="ml-auto flex shrink-0 items-center gap-1">
         <template v-if="!isVideo && !playingLive">
-          <Button variant="ghost" size="icon" class="size-8" title="Zoom out (-)" aria-label="Zoom out" :disabled="scale <= MIN_SCALE" @click="zoomStep(-1)">
+          <Button variant="ghost" size="icon" class="size-8" :title="t('viewer.zoomOut')" :aria-label="t('viewer.zoomOut')" :disabled="scale <= MIN_SCALE" @click="zoomStep(-1)">
             <ZoomOut :size="15" />
           </Button>
-          <button type="button" class="tabular h-7 min-w-12 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" title="Click to reset (0)" :disabled="scale <= MIN_SCALE" @click="resetZoom">{{ Math.round(scale * 100) }}%</button>
-          <Button variant="ghost" size="icon" class="size-8" title="Zoom in (+)" aria-label="Zoom in" :disabled="scale >= MAX_SCALE" @click="zoomStep(1)">
+          <button type="button" class="tabular h-7 min-w-12 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :title="t('viewer.clickReset')" :disabled="scale <= MIN_SCALE" @click="resetZoom">
+            {{ Math.round(scale * 100) }}%
+          </button>
+          <Button variant="ghost" size="icon" class="size-8" :title="t('viewer.zoomIn')" :aria-label="t('viewer.zoomIn')" :disabled="scale >= MAX_SCALE" @click="zoomStep(1)">
             <ZoomIn :size="15" />
           </Button>
-          <Button variant="ghost" size="icon" class="size-8" title="Reset view (0)" aria-label="Reset view" :disabled="scale <= MIN_SCALE && rotation === 0 && !flipped" @click="resetImageTransform">
+          <Button variant="ghost" size="icon" class="size-8" :title="t('viewer.resetView')" :aria-label="t('viewer.resetView')" :disabled="scale <= MIN_SCALE && rotation === 0 && !flipped" @click="resetImageTransform">
             <Maximize2 :size="15" />
           </Button>
           <span class="mx-1 h-4 w-px bg-border" />
-          <Button variant="ghost" size="icon" class="size-8" title="Rotate left ([)" aria-label="Rotate left" @click="rotateBy(-90)">
+          <Button variant="ghost" size="icon" class="size-8" :title="t('viewer.rotateLeft')" :aria-label="t('viewer.rotateLeft')" @click="rotateBy(-90)">
             <RotateCcw :size="15" />
           </Button>
-          <Button variant="ghost" size="icon" class="size-8" title="Rotate right (])" aria-label="Rotate right" @click="rotateBy(90)">
+          <Button variant="ghost" size="icon" class="size-8" :title="t('viewer.rotateRight')" :aria-label="t('viewer.rotateRight')" @click="rotateBy(90)">
             <RotateCw :size="15" />
           </Button>
-          <Button variant="ghost" size="icon" class="size-8" :class="flipped ? 'bg-accent text-foreground' : ''" title="Flip horizontally (F)" aria-label="Flip horizontally" @click="toggleFlip">
+          <Button variant="ghost" size="icon" class="size-8" :class="flipped ? 'bg-accent text-foreground' : ''" :title="t('viewer.flip')" :aria-label="t('viewer.flip')" @click="toggleFlip">
             <FlipHorizontal2 :size="15" />
           </Button>
           <span class="mx-1 h-4 w-px bg-border" />
         </template>
 
-        <Button v-if="canPlayLive" variant="ghost" size="icon" :title="playingLive ? 'Pause Live Photo' : 'Play Live Photo'" :aria-label="playingLive ? 'Pause Live Photo' : 'Play Live Photo'" @click="playingLive = !playingLive">
+        <Button v-if="canPlayLive" variant="ghost" size="icon" :title="t(playingLive ? 'viewer.pauseLive' : 'viewer.playLive')" :aria-label="t(playingLive ? 'viewer.pauseLive' : 'viewer.playLive')" @click="playingLive = !playingLive">
           <Pause v-if="playingLive" :size="15" />
           <Play v-else :size="15" />
         </Button>
 
-        <Button v-if="originalUrl" variant="ghost" size="icon" :disabled="saving" :title="isVideo ? 'Download video' : 'Download original'" :aria-label="isVideo ? 'Download video' : 'Download original'" @click="handleDownload">
+        <Button v-if="originalUrl" variant="ghost" size="icon" :disabled="saving" :title="t(isVideo ? 'photos.downloadVideo' : 'photos.downloadOriginal')" :aria-label="t(isVideo ? 'photos.downloadVideo' : 'photos.downloadOriginal')" @click="handleDownload">
           <Spinner v-if="saving" :size="14" />
           <Download v-else :size="15" />
         </Button>
 
-        <Button variant="ghost" size="icon" title="Close" aria-label="Close" @click="emit('close')">
+        <Button variant="ghost" size="icon" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
           <X :size="15" />
         </Button>
       </div>
@@ -313,7 +318,7 @@ async function handleDownload(): Promise<void> {
           :class="[loaded ? 'opacity-100' : 'opacity-0', dragging ? '' : 'transition-transform duration-100']"
           :style="imageStyle"
           :src="displayUrl"
-          :alt="fileName || 'Photo'"
+          :alt="fileName || t('photos.photoNameFallback')"
           draggable="false"
           @load="loaded = true"
           @mousedown.prevent="startDrag"
@@ -324,7 +329,7 @@ async function handleDownload(): Promise<void> {
       <button
         type="button"
         class="absolute top-1/2 left-4 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
-        aria-label="Previous photo"
+        :aria-label="t('viewer.previousPhoto')"
         :disabled="index === 0"
         @click="go(-1)"
       >
@@ -334,7 +339,7 @@ async function handleDownload(): Promise<void> {
       <button
         type="button"
         class="absolute top-1/2 right-4 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
-        aria-label="Next photo"
+        :aria-label="t('viewer.nextPhoto')"
         :disabled="index >= photos.length - 1 && !hasMore"
         @click="go(1)"
       >

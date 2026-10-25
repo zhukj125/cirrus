@@ -1,4 +1,5 @@
 import { mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
 import { describe, expect, it } from "vitest";
 
 import DownloadFileList from "@/components/photos/DownloadFileList.vue";
@@ -15,7 +16,7 @@ function rows(count: number): DownloadFileRow[] {
 
 describe("DownloadFileList", () => {
   it("virtualizes large completed lists", async () => {
-    const wrapper = mount(DownloadFileList, { props: { rows: rows(1000), height: 180, itemHeight: 36 } });
+    const wrapper = mount(DownloadFileList, { props: { rows: rows(1000), height: 180, itemHeight: 36 }, global: { plugins: [createPinia()] } });
 
     expect(wrapper.findAll('[data-testid="download-file-row"]').length).toBeLessThan(30);
     expect(wrapper.text()).toContain("photo-0.jpeg");
@@ -31,6 +32,7 @@ describe("DownloadFileList", () => {
   it("emits per-file pause actions", async () => {
     const wrapper = mount(DownloadFileList, {
       props: { rows: [{ key: "a", name: "photo.jpeg", sizeBytes: 1024, status: "active", photoId: "photo-a" }] },
+      global: { plugins: [createPinia()] },
     });
     await wrapper.get('button[aria-label="Pause this file"]').trigger("click");
     expect(wrapper.emitted("pause")?.[0]).toEqual(["photo-a"]);

@@ -8,6 +8,7 @@ import { toast } from "@/lib/common/toast";
 import { parseDownloadTasks, serializeDownloadTasks } from "@/lib/downloads/persistence";
 import { passedUpperBound, scanRangePage } from "@/lib/photos/range";
 import type { DateBounds } from "@/lib/photos/dates";
+import { useLocaleStore } from "@/stores/locale";
 import type { DownloadProgressEvent, PhotoItem } from "@/types";
 
 export type TaskStatus = "running" | "paused" | "done" | "cancelled";
@@ -295,6 +296,8 @@ function downloadUrls(item: PhotoItem): string[] {
 }
 
 export const useDownloadsStore = defineStore("downloads", () => {
+  const locale = useLocaleStore();
+  const t = locale.t;
   const tasks = ref<DownloadTask[]>([]);
 
   const activeAccountKey = ref<string | null>(null);
@@ -494,9 +497,9 @@ export const useDownloadsStore = defineStore("downloads", () => {
       const restored = parseDownloadTasks(result.tasks, accountKey).map(recoverInterruptedTask);
       restoreAccountTasks(accountKey, restored);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Could not read download tasks";
+      const message = caught instanceof Error ? caught.message : t("downloads.readTasksFailed");
       persistenceWarning.value = message;
-      toast.error(`${message}. This download can continue.`);
+      toast.error(t("downloads.continueWarningResume", { message }));
     }
   }
 
@@ -724,7 +727,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     speedLimitBytesPerSec.value = value;
     writeStored(StorageKey.downloadSpeedLimit, String(value));
     void setDownloadSpeedLimit(value).catch((error) => {
-      toast.error(`Could not update the speed limit: ${error instanceof Error ? error.message : "Unknown error"}`);
+      toast.error(t("downloads.speedUpdateFailed", { error: error instanceof Error ? error.message : t("app.unknownError") }));
     });
   }
 
@@ -734,7 +737,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     try {
       unlistenProgress = await listenDownloadProgress(ingestDownloadProgress);
     } catch (caught) {
-      toast.error(caught instanceof Error ? `Could not track download progress: ${caught.message}` : "Could not track download progress");
+      toast.error(caught instanceof Error ? t("downloads.progressTrackFailed", { error: caught.message }) : t("downloads.progressTrackFailedNoDetail"));
     }
   }
 
@@ -792,11 +795,11 @@ export const useDownloadsStore = defineStore("downloads", () => {
       .catch((caught: unknown) => {
         failed = true;
         dirtyAccounts.add(accountKey);
-        const message = caught instanceof Error ? caught.message : "Could not save download tasks";
+        const message = caught instanceof Error ? caught.message : t("downloads.saveTasksFailed");
         persistenceWarning.value = message;
         if (!persistFailureNotified) {
           persistFailureNotified = true;
-          toast.error(`${message}. This download can continue, but it may not resume after restart.`);
+          toast.error(t("downloads.continueWarning", { message }));
         }
       })
       .finally(() => {
@@ -879,7 +882,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       }
 
       source.exhausted = true;
-      task.error = page.message ?? "Could not load the photo list";
+      task.error = page.message ?? t("downloads.listLoadFailed");
       toast.error(task.error);
       return;
     }
@@ -922,7 +925,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const promise = refillPage(task, source)
       .catch((caught: unknown) => {
         source.exhausted = true;
-        task.error = caught instanceof Error ? caught.message : "Could not load the photo list";
+        task.error = caught instanceof Error ? caught.message : t("downloads.listLoadFailed");
         toast.error(task.error);
       })
 
@@ -1102,12 +1105,12 @@ export const useDownloadsStore = defineStore("downloads", () => {
 
   function create(input: CreateDownloadInput): DownloadTask | null {
     if (!input.accountKey || input.accountKey !== activeAccountKey.value) {
-      toast.error("Sign in to the account that owns this task");
+      toast.error(t("downloads.signInOwner"));
       return null;
     }
     const directoryInput = input.directory.trim();
     if (!directoryInput) {
-      toast.error("Choose a download folder");
+      toast.error(t("downloads.chooseFolder"));
       return null;
     }
     const concurrency = Math.max(1, Math.min(16, Math.floor(input.concurrency ?? DEFAULT_CONCURRENCY)));
@@ -1135,7 +1138,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
           : null;
 
     if (!source) {
-      toast.error("No photos are available to download");
+      toast.error(t("downloads.noPhotosAvailable"));
       return null;
     }
 
@@ -1171,7 +1174,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     schedulePersist(input.accountKey, true);
 
     const tracked = tasks.value[0] ?? task;
-    toast.success(`Download task created: ${task.title}`);
+    toast.success(t("downloads.taskCreated", { title: task.title }));
     void pump(tracked);
     return tracked;
   }
@@ -1207,7 +1210,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const task = tasks.value.find((item) => item.id === id);
     if (!task || (task.status !== "paused" && task.status !== "cancelled" && !task.error)) return;
     if (!activeSessionId.value) {
-      toast.error("This account session is unavailable. Sign in again to continue.");
+      toast.error(t("downloads.sessionUnavailable"));
       return;
     }
     if (!Array.isArray(task.source.pending)) task.source.pending = [];
@@ -1250,7 +1253,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const task = tasks.value.find((item) => item.id === taskId);
     if (!task || !isItemPaused(task, photoId)) return;
     if (!activeSessionId.value) {
-      toast.error("This account session is unavailable. Sign in again to continue.");
+      toast.error(t("downloads.sessionUnavailable"));
       return;
     }
     const item = task.pausedItems?.find((paused) => paused.id === photoId);
@@ -1270,7 +1273,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const task = tasks.value.find((item) => item.id === id);
     if (!task || task.status === "running") return;
     if (!activeSessionId.value) {
-      toast.error("This account session is unavailable. Sign in again to continue.");
+      toast.error(t("downloads.sessionUnavailable"));
       return;
     }
     const failedItems = Array.isArray(task.failedItems) ? task.failedItems : [];

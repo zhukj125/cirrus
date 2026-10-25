@@ -15,6 +15,7 @@ import { wgs84ToGcj02 } from "@/lib/geo";
 import { reverseGeocode, type AddressInfo } from "@/lib/geocode";
 import { relativeTimeLabel, staleTimeLabel as formatStaleTimeLabel } from "@/lib/time";
 import { useAppStore } from "@/stores/app";
+import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 import type { Device, DevicesResponse } from "@/types";
 
@@ -106,12 +107,12 @@ function locationTimeMs(timestamp: number | null | undefined): number | null {
 
 function timeAgo(timestamp: number | null | undefined): string {
   const ms = locationTimeMs(timestamp);
-  return ms == null ? "" : relativeTimeLabel(ms);
+  return ms == null ? "" : relativeTimeLabel(ms, Date.now(), locale.isEnglish);
 }
 
 function staleTimeLabel(timestamp: number | null | undefined): string {
   const ms = locationTimeMs(timestamp);
-  return ms == null ? "" : formatStaleTimeLabel(ms);
+  return ms == null ? "" : formatStaleTimeLabel(ms, new Date(), locale.isEnglish);
 }
 
 function isDeviceReportedOnline(device: Device): boolean {
@@ -124,15 +125,15 @@ function deviceRowContent(device: Device, addressShort: string | undefined): { a
   const online = isDeviceReportedOnline(device);
   if (!isDeviceOnline(device)) {
     return {
-      address: device.locationEnabled === false ? "Location Services off" : "Location unavailable",
-      status: online ? "Online" : "Offline",
+      address: t(device.locationEnabled === false ? "map.locationServicesOff" : "map.locationUnavailable"),
+      status: t(online ? "map.online" : "map.offline"),
       stale: false,
     };
   }
 
   const stale = location?.isOld === true;
   const status = stale ? staleTimeLabel(location?.timeStamp) : timeAgo(location?.timeStamp);
-  return { address: addressShort || "Finding address…", status: status || (online ? "Online" : "Offline"), stale };
+  return { address: addressShort || t("map.findingAddress"), status: status || t(online ? "map.online" : "map.offline"), stale };
 }
 
 function distanceMeters(a: [number, number], b: [number, number]): number {
@@ -179,6 +180,8 @@ const emit = defineEmits<{ "play-sound": [deviceId: string]; "open-settings": []
 
 const store = useAppStore();
 const theme = useThemeStore();
+const locale = useLocaleStore();
+const t = locale.t;
 const { devicesLoading } = storeToRefs(store);
 
 const mapContainer = ref<HTMLDivElement | null>(null);
@@ -263,9 +266,9 @@ const detailAddress = computed(() => {
     const address = addresses.value[deviceKey(device)]?.full;
     if (address) return address;
     const location = device.location;
-    return location?.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}` : "Location found";
+    return location?.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}` : t("map.locationFound");
   }
-  return device.locationEnabled === false ? "Location Services off" : "Location unavailable";
+  return t(device.locationEnabled === false ? "map.locationServicesOff" : "map.locationUnavailable");
 });
 
 const detailTime = computed(() => {
@@ -482,7 +485,7 @@ function addressCacheKey(device: Device): string | null {
 function coordinateFallback(device: Device): string | null {
   const location = device.location;
   if (location?.latitude == null || location.longitude == null) return null;
-  return `Location ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+  return t("map.locationCoordinates", { coordinates: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` });
 }
 
 // Reuse one geocode result for every device at the same coordinate.
@@ -696,7 +699,8 @@ function onCompassPointerUp(): void {
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : "Map failed to initialize";
+  if (error instanceof Error && error.message.startsWith("Could not load AMap")) return t("map.loadFailed");
+  return error instanceof Error ? error.message : t("map.initFailed");
 }
 
 watch(
@@ -787,23 +791,23 @@ onUnmounted(() => {
 <template>
   <div class="relative h-full min-h-0 overflow-hidden">
     <aside class="absolute top-4 left-4 z-40 flex max-h-[calc(100%-2rem)] w-[320px] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card/95 shadow-2xl backdrop-blur-md">
-      <button v-if="devicePanelCollapsed" type="button" class="flex h-11 w-full items-center gap-2 px-4 text-left transition-colors hover:bg-accent" aria-label="Expand device list" aria-expanded="false" title="Expand device list" @click="devicePanelCollapsed = false">
-        <span class="min-w-0 flex-1 truncate text-md font-semibold">Devices</span>
-        <span class="text-xs text-muted-foreground">{{ deviceRows.length }} {{ deviceRows.length === 1 ? "device" : "devices" }}</span>
+      <button v-if="devicePanelCollapsed" type="button" class="flex h-11 w-full items-center gap-2 px-4 text-left transition-colors hover:bg-accent" :aria-label="t('map.expandList')" aria-expanded="false" :title="t('map.expandList')" @click="devicePanelCollapsed = false">
+        <span class="min-w-0 flex-1 truncate text-md font-semibold">{{ t("map.devices") }}</span>
+        <span class="text-xs text-muted-foreground">{{ t("map.deviceCount", { count: deviceRows.length }) }}</span>
         <ChevronDown :size="15" class="shrink-0 text-muted-foreground" />
       </button>
 
       <template v-if="!devicePanelCollapsed && !selectedDevice">
         <div class="flex shrink-0 items-center gap-1 border-b border-border px-3 py-1.5">
           <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span class="text-lg font-semibold tracking-tight">Devices</span>
-            <span class="text-xs text-muted-foreground">{{ deviceRows.length }} {{ deviceRows.length === 1 ? "device" : "devices" }}</span>
+            <span class="text-lg font-semibold tracking-tight">{{ t("map.devices") }}</span>
+            <span class="text-xs text-muted-foreground">{{ t("map.deviceCount", { count: deviceRows.length }) }}</span>
           </span>
 
-          <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-primary transition-colors hover:bg-accent" aria-label="Show all devices" title="Show all devices" @click="focusAll">
+          <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-primary transition-colors hover:bg-accent" :aria-label="t('map.showAll')" :title="t('map.showAll')" @click="focusAll">
             <Crosshair :size="14" />
           </button>
-          <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Collapse device list" aria-expanded="true" title="Collapse" @click="devicePanelCollapsed = true">
+          <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('map.collapseList')" aria-expanded="true" :title="t('map.collapseList')" @click="devicePanelCollapsed = true">
             <ChevronUp :size="15" />
           </button>
         </div>
@@ -811,7 +815,7 @@ onUnmounted(() => {
         <div ref="listRef" class="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
           <div v-if="deviceRows.length === 0" class="flex flex-col items-center gap-2.5 px-6 py-12 text-center text-muted-foreground">
             <RadarGlyph :size="26" />
-            <p class="text-sm">No devices yet</p>
+            <p class="text-sm">{{ t("map.noDevices") }}</p>
           </div>
 
           <template v-else>
@@ -833,7 +837,7 @@ onUnmounted(() => {
               </span>
 
               <span class="min-w-0 flex-1">
-                <span class="block truncate text-md font-medium">{{ row.device.name ?? "Unnamed device" }}</span>
+                <span class="block truncate text-md font-medium">{{ row.device.name ?? t("map.unnamedDevice") }}</span>
                 <span class="mt-0.5 block truncate text-sm text-muted-foreground">{{ row.address }}</span>
                 <span class="mt-0.5 block truncate text-sm" :class="row.stale ? 'text-warning' : 'text-muted-foreground'">{{ row.status }}</span>
               </span>
@@ -844,14 +848,14 @@ onUnmounted(() => {
 
       <template v-else-if="!devicePanelCollapsed && selectedDevice">
         <div class="flex h-10 shrink-0 items-center gap-1 border-b border-border px-3">
-          <button type="button" class="-ml-0.5 flex h-7 items-center gap-1 rounded-md px-1.5 text-base text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Back to device list" @click="clearSelection">
+          <button type="button" class="-ml-0.5 flex h-7 items-center gap-1 rounded-md px-1.5 text-base text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('map.backToList')" @click="clearSelection">
             <ArrowLeft :size="14" />
-            Devices
+            {{ t("map.devices") }}
           </button>
-          <button type="button" class="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Show all devices" title="Show all devices" @click="focusAll">
+          <button type="button" class="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('map.showAll')" :title="t('map.showAll')" @click="focusAll">
             <Crosshair :size="14" />
           </button>
-          <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Collapse device details" aria-expanded="true" title="Collapse" @click="devicePanelCollapsed = true">
+          <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('map.collapseDetails')" aria-expanded="true" :title="t('map.collapseList')" @click="devicePanelCollapsed = true">
             <ChevronUp :size="15" />
           </button>
         </div>
@@ -865,33 +869,33 @@ onUnmounted(() => {
                 <LockBadge :device="selectedDevice" :size="22" />
               </span>
             </span>
-            <p class="mt-2 text-md font-medium">{{ selectedDevice.name ?? "Unnamed device" }}</p>
-            <p class="mt-0.5 text-sm text-muted-foreground">{{ selectedDevice.deviceDisplayName ?? selectedDevice.modelDisplayName ?? "Unknown model" }}</p>
+            <p class="mt-2 text-md font-medium">{{ selectedDevice.name ?? t("map.unnamedDevice") }}</p>
+            <p class="mt-0.5 text-sm text-muted-foreground">{{ selectedDevice.deviceDisplayName ?? selectedDevice.modelDisplayName ?? t("map.unknownModel") }}</p>
           </div>
 
           <div class="divide-y divide-border overflow-hidden rounded-lg border border-border">
             <div class="flex items-start gap-3 px-3 py-2">
-              <span class="w-14 shrink-0 pt-px text-sm text-muted-foreground">Address</span>
+              <span class="w-14 shrink-0 pt-px text-sm text-muted-foreground">{{ t("map.address") }}</span>
               <span class="min-w-0 flex-1 text-base break-words">{{ detailAddress }}</span>
             </div>
             <div class="flex items-center gap-3 px-3 py-2">
-              <span class="w-14 shrink-0 text-sm text-muted-foreground">Location time</span>
+              <span class="w-14 shrink-0 text-sm text-muted-foreground">{{ t("map.locationTime") }}</span>
               <span class="tabular text-base" :class="detailStale ? 'text-warning' : ''">{{ detailTime || "—" }}</span>
             </div>
             <div class="flex items-center gap-3 px-3 py-2">
-              <span class="w-14 shrink-0 text-sm text-muted-foreground">Battery</span>
+              <span class="w-14 shrink-0 text-sm text-muted-foreground">{{ t("map.battery") }}</span>
               <BatteryIcon :level="selectedDevice.batteryLevel" :charging="selectedDevice.batteryStatus === 'Charging'" />
-              <span v-if="!isDeviceOnline(selectedDevice)" class="text-sm text-muted-foreground">Offline</span>
+              <span v-if="!isDeviceOnline(selectedDevice)" class="text-sm text-muted-foreground">{{ t("map.offline") }}</span>
             </div>
             <div class="flex items-center gap-3 px-3 py-2">
-              <span class="w-14 shrink-0 text-sm text-muted-foreground">Location</span>
-              <span class="text-base">{{ selectedDevice.locationEnabled === false ? "Off" : "On" }}</span>
+              <span class="w-14 shrink-0 text-sm text-muted-foreground">{{ t("map.location") }}</span>
+              <span class="text-base">{{ t(selectedDevice.locationEnabled === false ? "map.off" : "map.on") }}</span>
 
-              <Switch class="ml-auto" :model-value="selectedDevice.locationEnabled !== false" disabled title="Location Services are controlled on the device and shown here for status only" :aria-label="selectedDevice.locationEnabled === false ? 'Location Services off' : 'Location Services on'" />
+              <Switch class="ml-auto" :model-value="selectedDevice.locationEnabled !== false" disabled :title="t('map.deviceStatusHint')" :aria-label="t(selectedDevice.locationEnabled === false ? 'map.locationServicesOff' : 'map.locationServicesOn')" />
             </div>
             <div class="flex items-center gap-3 px-3 py-2">
-              <span class="w-14 shrink-0 text-sm text-muted-foreground">Security</span>
-              <span class="min-w-0 flex-1 text-base">{{ deviceLockLabel(selectedDevice) }}</span>
+              <span class="w-14 shrink-0 text-sm text-muted-foreground">{{ t("map.security") }}</span>
+              <span class="min-w-0 flex-1 text-base">{{ deviceLockLabel(selectedDevice, locale.isEnglish) }}</span>
               <LockBadge :device="selectedDevice" :size="16" />
             </div>
           </div>
@@ -899,9 +903,9 @@ onUnmounted(() => {
           <div class="mt-3">
             <Button class="w-full" :disabled="!selectedDevice.deviceId" @click="handlePlaySound(selectedDevice)">
               <Volume2 :size="14" />
-              Play Sound
+              {{ t("map.playSound") }}
             </Button>
-            <p v-if="!selectedDevice.deviceId" class="mt-1.5 text-center text-xs text-muted-foreground">Sound is not supported on this device</p>
+            <p v-if="!selectedDevice.deviceId" class="mt-1.5 text-center text-xs text-muted-foreground">{{ t("map.soundUnsupported") }}</p>
           </div>
         </div>
       </template>
@@ -914,8 +918,8 @@ onUnmounted(() => {
 
       <div v-if="clusterPopup" class="absolute top-3 right-3 z-30 w-64 overflow-hidden rounded-xl border border-border bg-card/95 text-card-foreground shadow-xl backdrop-blur">
         <div class="flex items-center justify-between border-b border-border px-3 py-2.5">
-          <span class="text-sm font-semibold">Same location · {{ clusterPopup.length }} devices</span>
-          <button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Close device list" @click="clusterPopup = null">
+          <span class="text-sm font-semibold">{{ t("map.sameLocation", { count: clusterPopup.length }) }}</span>
+          <button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('map.closeDeviceList')" @click="clusterPopup = null">
             <X :size="13" />
           </button>
         </div>
@@ -935,7 +939,7 @@ onUnmounted(() => {
               <DeviceIcon v-else :device-class="device.deviceClass" :size="19" />
             </span>
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium">{{ device.name ?? "Unnamed device" }}</span>
+              <span class="block truncate text-sm font-medium">{{ device.name ?? t("map.unnamedDevice") }}</span>
               <span class="block truncate text-xs text-muted-foreground">{{ device.deviceDisplayName ?? device.modelDisplayName ?? "" }}</span>
             </span>
           </button>
@@ -945,19 +949,19 @@ onUnmounted(() => {
       <div v-if="mapError" class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2.5 bg-background/85 px-6 text-center backdrop-blur-sm">
         <CircleAlert class="size-5 text-destructive" />
         <p class="max-w-[280px] text-base">{{ mapError }}</p>
-        <p class="max-w-[280px] text-xs text-muted-foreground">Add a Web JS API key in Settings to load the map.</p>
-        <Button variant="outline" size="sm" class="mt-1" @click="emit('open-settings')">Map Settings</Button>
+        <p class="max-w-[280px] text-xs text-muted-foreground">{{ t("map.keyHint") }}</p>
+        <Button variant="outline" size="sm" class="mt-1" @click="emit('open-settings')">{{ t("map.settings") }}</Button>
       </div>
 
       <div class="absolute right-3 bottom-3 z-20 flex flex-col items-center gap-2">
         <div class="flex flex-col overflow-hidden rounded-lg border border-border bg-elevated/85 text-elevated-foreground shadow-sm backdrop-blur">
-          <button type="button" class="grid size-8 place-items-center transition-colors hover:bg-accent" aria-label="Zoom in" title="Zoom in" @click="zoomIn">
+          <button type="button" class="grid size-8 place-items-center transition-colors hover:bg-accent" :aria-label="t('map.zoomIn')" :title="t('map.zoomIn')" @click="zoomIn">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
               <path d="M7 2.6v8.8M2.6 7h8.8" />
             </svg>
           </button>
           <span class="h-px w-full bg-border" />
-          <button type="button" class="grid size-8 place-items-center transition-colors hover:bg-accent" aria-label="Zoom out" title="Zoom out" @click="zoomOut">
+          <button type="button" class="grid size-8 place-items-center transition-colors hover:bg-accent" :aria-label="t('map.zoomOut')" :title="t('map.zoomOut')" @click="zoomOut">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
               <path d="M2.6 7h8.8" />
             </svg>
@@ -968,8 +972,8 @@ onUnmounted(() => {
           ref="compassRef"
           type="button"
           class="grid size-9 cursor-grab place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground shadow-sm backdrop-blur transition-colors select-none hover:bg-accent active:cursor-grabbing"
-          aria-label="Compass: drag to rotate, click to reset north"
-          title="Drag to rotate · Click to reset north"
+          :aria-label="t('map.compassAria')"
+          :title="t('map.compassTitle')"
           @pointerdown="onCompassPointerDown"
           @pointermove="onCompassPointerMove"
           @pointerup="onCompassPointerUp"
@@ -983,9 +987,9 @@ onUnmounted(() => {
       </div>
 
       <div class="pointer-events-none absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-md border border-border bg-elevated/85 px-2.5 py-1.5 text-xs whitespace-nowrap text-muted-foreground shadow-sm backdrop-blur">
-        <span>Updates every 60 seconds</span>
+        <span>{{ t("map.updatesEvery") }}</span>
         <i class="size-[3px] rounded-full bg-muted-foreground/40" />
-        <span class="tabular">Last sync {{ lastSyncTime }}</span>
+        <span class="tabular">{{ t("map.lastSync", { time: lastSyncTime }) }}</span>
       </div>
     </section>
   </div>

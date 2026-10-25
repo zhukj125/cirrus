@@ -9,6 +9,7 @@ import { writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useDownloadsStore } from "@/stores/downloads";
+import { useLocaleStore } from "@/stores/locale";
 import type { AccountInfo, DevicesResponse, KnownAccount, KnownAccountStatus, LoginContext, RuntimeInfo, SessionStateResponse } from "@/types";
 
 function sessionIdOf(account: KnownAccount | null): string | null {
@@ -31,6 +32,8 @@ function statusOf(state: SessionStateResponse): KnownAccountStatus {
 
 export const useAppStore = defineStore("app", () => {
   const downloads = useDownloadsStore();
+  const locale = useLocaleStore();
+  const t = locale.t;
 
   const devices = ref<DevicesResponse | null>(null);
 
@@ -80,7 +83,7 @@ export const useAppStore = defineStore("app", () => {
     pendingAccountPersist = pendingAccountPersist
       .then(() => accountStoreSave(snapshot))
       .catch((error) => {
-        toast.error(`Could not save account data: ${error instanceof Error ? error.message : "Unknown error"}`);
+        toast.error(t("app.accountSaveFailed", { error: error instanceof Error ? error.message : t("app.unknownError") }));
       });
   }
 
@@ -133,7 +136,7 @@ export const useAppStore = defineStore("app", () => {
       }
       downloads.rekeyAccount(fromKey, toKey);
       pendingDownloadRekey = rekeyDownloadTasks(fromKey, toKey).catch((error) => {
-        toast.error(`Could not migrate download tasks: ${error instanceof Error ? error.message : "Unknown error"}`);
+        toast.error(t("app.downloadMigrateFailed", { error: error instanceof Error ? error.message : t("app.unknownError") }));
       });
     }
     if (activeAccountKey.value === incoming.key || activeAccountKey.value === result.replacedKey) {
@@ -234,16 +237,16 @@ export const useAppStore = defineStore("app", () => {
     try {
       const state = await sessionState(sessionId).catch(() => null);
       if (!state?.valid || !state.verified) {
-        devicesError.value = "Session expired. Please sign in again.";
+        devicesError.value = t("app.sessionExpired");
         return false;
       }
       const result = await refreshDevices(sessionId).catch((error) => {
-        devicesError.value = error instanceof Error ? error.message : "Could not load devices";
+        devicesError.value = error instanceof Error ? error.message : t("app.loadDevicesFailed");
         return null;
       });
       if (expectedKey !== activeAccountKey.value || expectedEpoch !== switchEpoch) return false;
       if (result?.status !== Status.success) {
-        devicesError.value = result?.message ?? "Could not load devices";
+        devicesError.value = result?.message ?? t("app.loadDevicesFailed");
         return false;
       }
 
@@ -332,7 +335,7 @@ export const useAppStore = defineStore("app", () => {
     const state = await sessionState(sessionId).catch(() => null);
     const appleId = state?.appleId?.trim();
     if (!state?.valid || !state.verified || !appleId) {
-      toast.error("Could not verify your sign-in. Please sign in again.");
+      toast.error(t("app.signInVerifyFailed"));
       return false;
     }
 
@@ -380,7 +383,7 @@ export const useAppStore = defineStore("app", () => {
     if (epoch !== switchEpoch) return false;
     if (!state) {
       setAccountStatus(target.key, "unknown");
-      toast.error("Could not verify the account status. Try again later.");
+      toast.error(t("app.accountStatusVerifyFailed"));
       return false;
     }
     if (!state.valid || !state.verified) {
@@ -432,7 +435,7 @@ export const useAppStore = defineStore("app", () => {
     await downloads.flushPersistence();
     downloads.removeAccountTasks(current.key);
     await deleteDownloadTasks(current.key).catch((error) => {
-      toast.error(`Could not clean up download tasks: ${error instanceof Error ? error.message : "Unknown error"}`);
+      toast.error(t("app.downloadCleanupFailed", { error: error instanceof Error ? error.message : t("app.unknownError") }));
     });
     removeAccount(current.key);
     view.value = "photos-login";
@@ -453,12 +456,12 @@ export const useAppStore = defineStore("app", () => {
       return;
     }
     if (!state) {
-      toast.error("Could not verify the Photos session. Try again later.");
+      toast.error(t("app.photosVerifyFailed"));
       return;
     }
     setAccountStatus(current.key, "expired");
     beginRelogin(current.key);
-    toast.info("Your Photos session has expired. Please sign in again.");
+    toast.info(t("app.photosExpired"));
   }
 
   async function refreshActiveDevices(): Promise<void> {
@@ -477,12 +480,12 @@ export const useAppStore = defineStore("app", () => {
       if (isSessionGoneMessage(result.message)) {
         setAccountStatus(expectedKey, "expired");
         beginRelogin(expectedKey);
-        toast.info("Your session has expired. Please sign in again.");
+        toast.info(t("app.sessionExpiredRelogin"));
         return;
       }
-      toast.error(result.message ?? "Refresh failed");
+      toast.error(result.message ?? t("app.refreshFailed"));
     } catch (error) {
-      if (expectedKey === activeAccountKey.value && expectedEpoch === switchEpoch) toast.error(error instanceof Error ? error.message : "Refresh failed");
+      if (expectedKey === activeAccountKey.value && expectedEpoch === switchEpoch) toast.error(error instanceof Error ? error.message : t("app.refreshFailed"));
     } finally {
       if (expectedKey === activeAccountKey.value && expectedEpoch === switchEpoch) devicesLoading.value = false;
     }
@@ -499,7 +502,7 @@ export const useAppStore = defineStore("app", () => {
 
     const state = await sessionState(sessionId).catch(() => null);
     if (!state) {
-      toast.error("Could not verify the session. Try again later.");
+      toast.error(t("app.sessionVerifyFailed"));
       return;
     }
     if (!state.valid || !state.verified) {
@@ -513,10 +516,10 @@ export const useAppStore = defineStore("app", () => {
     if (devicesError.value && isSessionGoneMessage(devicesError.value)) {
       setAccountStatus(current.key, "expired");
       beginRelogin(current.key);
-      toast.info("Your Devices session has expired. Please sign in again.");
+      toast.info(t("app.devicesExpired"));
       return;
     }
-    toast.error("Could not load devices. Use Refresh in the top-right corner to try again.");
+    toast.error(t("app.devicesLoadFailed"));
   }
 
   function goTo(next: View): void {
@@ -528,20 +531,20 @@ export const useAppStore = defineStore("app", () => {
     const expectedKey = activeAccountKey.value;
     const expectedEpoch = switchEpoch;
     if (!sessionId) {
-      toast.error("Session expired. Please sign in again.");
+      toast.error(t("app.sessionExpired"));
       return false;
     }
     try {
       const result = await playSound(sessionId, deviceId);
       if (expectedKey !== activeAccountKey.value || expectedEpoch !== switchEpoch) return false;
       if (result.success) {
-        toast.success(result.message ?? "Play Sound command sent");
+        toast.success(result.message ?? t("app.soundSent"));
         return true;
       }
-      toast.error(result.message ?? "Could not play sound");
+      toast.error(result.message ?? t("app.soundFailed"));
       return false;
     } catch (error) {
-      if (expectedKey === activeAccountKey.value && expectedEpoch === switchEpoch) toast.error(error instanceof Error ? error.message : "Could not play sound");
+      if (expectedKey === activeAccountKey.value && expectedEpoch === switchEpoch) toast.error(error instanceof Error ? error.message : t("app.soundFailed"));
       return false;
     }
   }

@@ -5,8 +5,11 @@ import { AlertTriangle, Check, Pause, Play } from "@lucide/vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import type { DownloadFileRow } from "@/lib/downloads/file-row";
 import { formatBytes } from "@/stores/downloads";
+import { useLocaleStore } from "@/stores/locale";
 
 const emit = defineEmits<{ pause: [photoId: string]; resume: [photoId: string] }>();
+const locale = useLocaleStore();
+const t = locale.t;
 
 const props = withDefaults(
   defineProps<{
@@ -19,7 +22,6 @@ const props = withDefaults(
   {
     height: 240,
     itemHeight: 36,
-    emptyLabel: "No files",
     fill: false,
   },
 );
@@ -73,7 +75,7 @@ watch(
 
 <template>
   <div ref="scroller" data-testid="download-file-list" class="overflow-y-auto rounded-md border border-border bg-background" :style="fill ? undefined : { height: `${height}px` }" @scroll.passive="onScroll">
-    <div v-if="rows.length === 0" class="grid h-full place-items-center px-4 text-center text-xs text-muted-foreground">{{ emptyLabel }}</div>
+    <div v-if="rows.length === 0" class="grid h-full place-items-center px-4 text-center text-xs text-muted-foreground">{{ emptyLabel || t("downloads.noFiles") }}</div>
     <template v-else>
       <div :style="{ height: `${topSpace}px` }" aria-hidden="true" />
       <div v-for="row in visibleRows" :key="row.key" data-testid="download-file-row" class="flex min-w-0 items-center gap-2 border-b border-border/70 px-3 text-xs last:border-b-0" :style="{ height: `${itemHeight}px` }">
@@ -92,13 +94,20 @@ watch(
           v-if="(row.status === 'active' || row.status === 'pending') && row.photoId"
           type="button"
           class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-          title="Pause this file"
-          aria-label="Pause this file"
+          :title="t('downloads.pauseFile')"
+          :aria-label="t('downloads.pauseFile')"
           @click.stop="emit('pause', row.photoId)"
         >
           <Pause :size="12" />
         </button>
-        <button v-else-if="row.status === 'paused' && row.photoId" type="button" class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" title="Resume this file" aria-label="Resume this file" @click.stop="emit('resume', row.photoId)">
+        <button
+          v-else-if="row.status === 'paused' && row.photoId"
+          type="button"
+          class="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          :title="t('downloads.resumeFile')"
+          :aria-label="t('downloads.resumeFile')"
+          @click.stop="emit('resume', row.photoId)"
+        >
           <Play :size="12" />
         </button>
       </div>

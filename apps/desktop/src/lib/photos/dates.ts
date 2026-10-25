@@ -49,14 +49,15 @@ export function presetRange(key: Exclude<RangeKey, "all" | "custom">, now: Date 
   }
 }
 
-export function dayLabel(dayStart: number, now: Date = new Date()): string {
+export function dayLabel(dayStart: number, now: Date = new Date(), locale = "en-US"): string {
+  const english = locale.startsWith("en");
   const today = startOfDay(now);
-  if (dayStart === today) return "Today";
-  if (dayStart === addDays(today, -1)) return "Yesterday";
+  if (dayStart === today) return english ? "Today" : "今天";
+  if (dayStart === addDays(today, -1)) return english ? "Yesterday" : "昨天";
   const date = new Date(dayStart);
-  const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+  const weekday = date.toLocaleDateString(locale, { weekday: "short" });
   const prefix = date.getFullYear() === now.getFullYear() ? "" : `${date.getFullYear()} `;
-  return `${prefix}${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${weekday}`;
+  return english ? `${prefix}${date.toLocaleDateString(locale, { month: "short", day: "numeric" })}, ${weekday}` : `${date.toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" })}`;
 }
 
 export function filterByRange(photos: PhotoItem[], bounds: DateBounds): PhotoItem[] {
@@ -78,7 +79,7 @@ export interface PhotoDaySection {
   items: Array<{ photo: PhotoItem; index: number }>;
 }
 
-export function groupByDay(photos: PhotoItem[], now: Date = new Date()): PhotoDaySection[] {
+export function groupByDay(photos: PhotoItem[], now: Date = new Date(), locale = "en-US"): PhotoDaySection[] {
   const buckets = new Map<number, Array<{ photo: PhotoItem; index: number }>>();
   photos.forEach((photo, index) => {
     const key = photo.takenAt && photo.takenAt > 0 ? startOfDay(new Date(photo.takenAt)) : Number.NaN;
@@ -91,7 +92,7 @@ export function groupByDay(photos: PhotoItem[], now: Date = new Date()): PhotoDa
     .sort((a, b) => (Number.isNaN(a[0]) ? 1 : Number.isNaN(b[0]) ? -1 : b[0] - a[0]))
     .map(([dayStart, items]) => ({
       key: String(dayStart),
-      label: Number.isNaN(dayStart) ? "Unknown date" : dayLabel(dayStart, now),
+      label: Number.isNaN(dayStart) ? (locale.startsWith("en") ? "Unknown date" : "日期未知") : dayLabel(dayStart, now, locale),
       items,
     }));
 }

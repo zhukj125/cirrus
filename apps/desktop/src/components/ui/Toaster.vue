@@ -2,8 +2,10 @@
 import { CircleCheck, CircleX, Info, TriangleAlert, X } from "@lucide/vue";
 
 import { useToasts, toast, type ToastKind } from "@/lib/common/toast";
+import { useLocaleStore } from "@/stores/locale";
 
 const items = useToasts();
+const locale = useLocaleStore();
 
 const ICONS = {
   success: CircleCheck,
@@ -26,7 +28,7 @@ const TONES: Record<ToastKind, string> = {
       <div v-for="item in items" :key="item.id" class="pointer-events-auto flex items-start gap-2.5 rounded-lg border border-border bg-elevated px-3 py-2.5 shadow-lg">
         <component :is="ICONS[item.kind]" :class="['mt-px size-3.5 shrink-0', TONES[item.kind]]" />
         <p class="flex-1 text-base leading-5 break-words text-elevated-foreground">{{ item.message }}</p>
-        <button type="button" class="-mt-0.5 shrink-0 text-muted-foreground transition-colors hover:text-foreground" aria-label="Close" @click="toast.dismiss(item.id)">
+        <button type="button" class="-mt-0.5 shrink-0 text-muted-foreground transition-colors hover:text-foreground" :aria-label="locale.t('common.close')" @click="toast.dismiss(item.id)">
           <X class="size-3.5" />
         </button>
       </div>

@@ -1,3 +1,10 @@
+<script setup lang="ts">
+import { useLocaleStore } from "@/stores/locale";
+
+const locale = useLocaleStore();
+const t = locale.t;
+</script>
+
 <template>
   <div class="grid h-full min-h-[280px] place-items-center px-5 py-10">
     <div class="flex flex-col items-center text-center">
@@ -33,8 +40,8 @@
         <circle cx="433.636" cy="105.174" r="20" fill="var(--primary)" />
         <circle cx="433.636" cy="105.174" r="12.182" fill="var(--card)" />
       </svg>
-      <p class="mt-3 text-sm font-medium text-foreground">No downloads yet</p>
-      <p class="mt-1.5 text-xs text-muted-foreground">Your download history will appear here</p>
+      <p class="mt-3 text-sm font-medium text-foreground">{{ t("downloads.noDownloads") }}</p>
+      <p class="mt-1.5 text-xs text-muted-foreground">{{ t("downloads.historyHere") }}</p>
     </div>
   </div>
 </template>

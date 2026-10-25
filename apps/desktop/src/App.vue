@@ -108,7 +108,7 @@ onUnmounted(() => {
       <div v-if="restoring" class="grid h-full place-items-center">
         <div class="flex flex-col items-center gap-2.5">
           <Spinner :size="22" />
-          <p class="text-sm text-muted-foreground">Restoring session…</p>
+          <p class="text-sm text-muted-foreground">{{ i18n.t("app.restoring") }}</p>
         </div>
       </div>
 
@@ -134,7 +134,7 @@ onUnmounted(() => {
         <template #actions>
           <button v-if="shellView === 'findmy'" type="button" class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="devicesLoading" @click="store.refreshActiveDevices()">
             <RefreshCw :size="13" :class="devicesLoading ? 'animate-spin' : ''" />
-            Refresh
+            {{ i18n.t("app.refresh") }}
           </button>
         </template>
 
@@ -145,13 +145,15 @@ onUnmounted(() => {
         <div v-else class="grid h-full place-items-center">
           <div class="flex flex-col items-center gap-2.5">
             <Spinner v-if="devicesLoading" :size="22" />
-            <p class="max-w-md px-4 text-center text-sm text-muted-foreground">{{ devicesLoading ? "Loading devices…" : devicesError || "Could not load devices" }}</p>
+            <p class="max-w-md px-4 text-center text-sm text-muted-foreground">{{ devicesLoading ? i18n.t("app.loadingDevices") : devicesError || i18n.t("app.loadDevicesFailed") }}</p>
             <div v-if="!devicesLoading" class="flex items-center gap-2">
               <button type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.ensureDevices()">
                 <RefreshCw :size="13" />
-                Retry
+                {{ i18n.t("common.retry") }}
               </button>
-              <button v-if="activeAccountKey" type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.beginRelogin(activeAccountKey)">Verify again</button>
+              <button v-if="activeAccountKey" type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.beginRelogin(activeAccountKey)">
+                {{ i18n.t("app.verifyAgain") }}
+              </button>
             </div>
           </div>
         </div>

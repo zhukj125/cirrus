@@ -19,12 +19,15 @@ import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
 import PhotoDatePicker from "@/components/photos/PhotoDatePicker.vue";
 import { useDownloadsStore } from "@/stores/downloads";
+import { useLocaleStore } from "@/stores/locale";
 import PhotoViewer from "@/components/PhotoViewer.vue";
 import type { AssetDistribution, LibraryTotal, PhotoItem, Timeline } from "@/types";
 
 const props = defineProps<{ sessionId: string }>();
 const emit = defineEmits<{ logout: [] }>();
 const downloads = useDownloadsStore();
+const locale = useLocaleStore();
+const t = locale.t;
 
 const PAGE_SIZE = 60;
 
@@ -35,6 +38,13 @@ watch(photoView, (value) => writeStored(StorageKey.photosView, value));
 const photoGridClass = computed(() => galleryGridClass(photoView.value));
 const photoTileClass = computed(() => galleryTileClass(photoView.value));
 const photoSkeletonClass = computed(() => gallerySkeletonClass(photoView.value));
+const photoViewOptions = computed(() =>
+  PHOTO_VIEW_MODES.map((mode) => ({
+    ...mode,
+    label: t(`photos.view${mode.id.charAt(0).toUpperCase()}${mode.id.slice(1)}`),
+    title: t(`photos.view${mode.id.charAt(0).toUpperCase()}${mode.id.slice(1)}Title`),
+  })),
+);
 
 const range = ref<RangeKey>("all");
 
@@ -87,7 +97,7 @@ function selectCustomRangeFromPicker(value: DateBounds): void {
 const rangeLabel = computed(() => {
   const { after, before } = activeRange.value;
   if (after === null || before === null) return null;
-  return `${formatDateInput(after)} to ${formatDateInput(addDays(before, -1))}`;
+  return `${formatDateInput(after)}${locale.isEnglish ? " to " : " 至 "}${formatDateInput(addDays(before, -1))}`;
 });
 
 const isUnfiltered = computed(() => range.value === "all");
@@ -123,21 +133,21 @@ const timelineSelection = ref<TimelineSelection | null>(null);
 const timelinePickerOpen = ref(false);
 const timelinePicker = ref<HTMLElement | null>(null);
 
-const timelineYears = computed(() => timelineYearsDesc(timeline.value));
+const timelineYears = computed(() => timelineYearsDesc(timeline.value, locale.locale));
 const timelineTriggerLabel = computed(() => {
   const selected = timelineSelection.value;
-  if (selected) return selected.month === null ? `${selected.year}` : new Date(selected.year, selected.month - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
-  if (range.value === "all") return "All time";
-  if (range.value === "today") return "Today";
-  if (range.value === "week") return "Last 7 days";
-  if (range.value === "month") return "Last 30 days";
-  if (range.value === "year") return "This year";
-  return rangeLabel.value ?? "Custom range";
+  if (selected) return selected.month === null ? `${selected.year}` : new Date(selected.year, selected.month - 1, 1).toLocaleDateString(locale.locale, { month: "short", year: "numeric" });
+  if (range.value === "all") return t("photos.allTime");
+  if (range.value === "today") return t("photos.rangeToday");
+  if (range.value === "week") return t("photos.rangeWeek");
+  if (range.value === "month") return t("photos.rangeMonth");
+  if (range.value === "year") return t("photos.rangeYear");
+  return rangeLabel.value ?? t("photos.customRange");
 });
 
 async function loadExactRangeDates(startRank: number, limit: number): Promise<readonly (number | null)[]> {
   const page = await photosList({ sessionId: props.sessionId, startRank, limit });
-  if (page.status === Status.error) throw new Error(page.message ?? "Could not load photos by rank");
+  if (page.status === Status.error) throw new Error(page.message ?? t("photos.loadRankFailed"));
   return page.photos.map((photo) => photo.takenAt);
 }
 
@@ -146,7 +156,7 @@ let exactRangeReader: ((bounds: DateBounds) => Promise<ExactRangeResult>) | null
 
 function readExactRange(bounds: DateBounds): Promise<ExactRangeResult> {
   const dist = distribution.value;
-  if (!dist) return Promise.reject(new Error("Photo timeline is unavailable"));
+  if (!dist) return Promise.reject(new Error(t("photos.timelineUnavailable")));
   if (exactRangeReaderDistribution !== dist || exactRangeReader === null) {
     exactRangeReaderDistribution = dist;
     exactRangeReader = createExactRangeLoader(dist, loadExactRangeDates);
@@ -233,15 +243,18 @@ const landing = computed<SegmentLanding | null>(() => {
 
 const countLabel = computed(() => {
   const shown = isUnfiltered.value ? photos.value.length : visiblePhotos.value.length;
-  return photoCountLabel({
-    shown,
-    total: total.value?.assets ?? null,
-    filtered: !isUnfiltered.value,
-    hasMore: hasMore.value,
-    truncated: truncated.value,
-    exact: activeExactCount.value,
-    exactLoading: exactCountLoading.value,
-  });
+  return photoCountLabel(
+    {
+      shown,
+      total: total.value?.assets ?? null,
+      filtered: !isUnfiltered.value,
+      hasMore: hasMore.value,
+      truncated: truncated.value,
+      exact: activeExactCount.value,
+      exactLoading: exactCountLoading.value,
+    },
+    locale.isEnglish,
+  );
 });
 
 async function loadTotal(sessionId: string): Promise<void> {
@@ -331,7 +344,7 @@ const skeletonCount = computed(() => {
   return visiblePhotos.value.length === 0 ? 12 : hasMore.value || truncated.value ? 4 : 0;
 });
 
-const sections = computed(() => groupByDay(visiblePhotos.value));
+const sections = computed(() => groupByDay(visiblePhotos.value, new Date(), locale.locale));
 
 const selectedPhotoIds = reactive(new Set<string>());
 const selectionAnchorIndex = ref<number | null>(null);
@@ -473,14 +486,14 @@ function selectPhotoFromContext(photo: PhotoItem): void {
 }
 
 function photoType(photo: PhotoItem): string {
-  if (photo.isVideo) return "Video";
-  if (photo.isLivePhoto) return "Live Photo";
-  return "Photo";
+  if (photo.isVideo) return t("common.video");
+  if (photo.isLivePhoto) return t("photos.typeLivePhoto");
+  return t("photos.typePhoto");
 }
 
 function formatPhotoTime(takenAt: number | null | undefined): string {
   if (!takenAt) return "—";
-  return new Date(takenAt).toLocaleString("en-US", {
+  return new Date(takenAt).toLocaleString(locale.locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -506,15 +519,15 @@ async function downloadSinglePhoto(photo: PhotoItem): Promise<void> {
   if (downloadingPhotoId.value) return;
   const url = photoDownloadUrl(photo);
   if (!url) {
-    toast.error("This photo has no downloadable URL");
+    toast.error(t("photos.noDownloadUrl"));
     return;
   }
   downloadingPhotoId.value = photo.id;
   try {
-    const savedPath = await downloadPhoto(url, photoFileName(photo));
-    if (savedPath) toast.success(`Saved to ${savedPath}`);
+    const savedPath = await downloadPhoto(url, photoFileName(photo), t("photos.saveTo"));
+    if (savedPath) toast.success(t("photos.savedTo", { path: savedPath }));
   } catch (caught) {
-    toast.error(`Download failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+    toast.error(t("photos.downloadFailed", { error: caught instanceof Error ? caught.message : String(caught) }));
   } finally {
     downloadingPhotoId.value = null;
   }
@@ -578,7 +591,7 @@ function resetThumbnailState(): void {
 function handleExpiredSession(message: string | null): boolean {
   if (!isSessionGoneMessage(message)) return false;
   sessionExpired.value = true;
-  toast.error(message ?? "Session expired. Please sign in again.");
+  toast.error(message ?? t("photos.sessionExpired"));
   emit("logout");
   return true;
 }
@@ -593,7 +606,7 @@ async function loadPage(pageCursor: string | null, replace: boolean, epoch = loa
     if (epoch !== loadEpoch || sessionId !== props.sessionId) return;
     if (page.status === Status.error) {
       if (handleExpiredSession(page.message)) return;
-      error.value = page.message ?? "Could not load photos";
+      error.value = page.message ?? t("photos.loadFailed");
       hasMore.value = false;
       return;
     }
@@ -613,7 +626,7 @@ async function loadPage(pageCursor: string | null, replace: boolean, epoch = loa
     hasMore.value = !stalled && page.nextCursor != null && page.photos.length > 0;
   } catch (caught) {
     if (epoch !== loadEpoch) return;
-    error.value = caught instanceof Error ? caught.message : "Network request failed";
+    error.value = caught instanceof Error ? caught.message : t("photos.networkFailed");
     hasMore.value = false;
   } finally {
     if (epoch === loadEpoch) loading.value = false;
@@ -669,7 +682,7 @@ async function loadRankPages(epoch: number, pageLimit = RANK_SCROLL_PAGES): Prom
       return { rank, page };
     });
   } catch (caught) {
-    requestError = caught instanceof Error ? caught.message : "Network request failed";
+    requestError = caught instanceof Error ? caught.message : t("photos.networkFailed");
   } finally {
     if (epoch === loadEpoch) loading.value = false;
   }
@@ -834,7 +847,7 @@ watch(
           class="flex h-8 max-w-[330px] items-center gap-2 rounded-md border border-border/70 bg-background px-2.5 text-sm text-foreground shadow-sm transition-colors hover:bg-accent focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/25"
           :aria-expanded="timelinePickerOpen"
           aria-haspopup="dialog"
-          title="Select date range"
+          :title="t('photos.selectDateRange')"
           @click="timelinePickerOpen = !timelinePickerOpen"
         >
           <CalendarRange :size="14" class="shrink-0 text-muted-foreground" />
@@ -842,7 +855,7 @@ watch(
           <ChevronDown :size="13" class="shrink-0 text-muted-foreground transition-transform" :class="timelinePickerOpen ? 'rotate-180' : ''" />
         </button>
 
-        <div v-if="timelinePickerOpen" class="absolute top-full left-0 z-[1200] mt-2" role="dialog" aria-label="Select date range">
+        <div v-if="timelinePickerOpen" class="absolute top-full left-0 z-[1200] mt-2" role="dialog" :aria-label="t('photos.selectDateRange')">
           <PhotoDatePicker
             :active-range="range"
             :custom-value="customBounds"
@@ -867,10 +880,10 @@ watch(
           <select
             v-model="photoView"
             class="h-7 appearance-none rounded-md border border-border/70 bg-background pr-7 pl-7 text-xs text-muted-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-foreground focus:border-primary"
-            title="Photo layout"
-            aria-label="Photo layout"
+            :title="t('photos.layout')"
+            :aria-label="t('photos.layout')"
           >
-            <option v-for="mode in PHOTO_VIEW_MODES" :key="mode.id" :value="mode.id" :title="mode.title">{{ mode.label }}</option>
+            <option v-for="mode in photoViewOptions" :key="mode.id" :value="mode.id" :title="mode.title">{{ mode.label }}</option>
           </select>
           <ChevronDown :size="12" class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground" />
         </div>
@@ -878,23 +891,23 @@ watch(
           type="button"
           class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-sm text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
           :class="downloads.dialogOpen ? 'bg-accent text-foreground' : ''"
-          :title="isUnfiltered ? 'Download all photos' : 'Download all photos in the selected date range'"
+          :title="isUnfiltered ? t('photos.downloadAll') : t('photos.downloadRange')"
           @click="downloads.openDialog(isUnfiltered ? null : activeRange)"
         >
           <Download :size="13" />
-          Download
+          {{ t("photos.download") }}
         </button>
         <span class="h-4 w-px shrink-0 bg-border" />
         <span class="tabular max-w-[280px] shrink-0 truncate rounded-md bg-secondary/70 px-2.5 py-1 text-xs" :title="countLabel">{{ countLabel }}</span>
 
         <span v-if="error" class="flex min-w-0 items-center gap-2">
           <span class="truncate text-destructive" :title="error">{{ error }}</span>
-          <button type="button" class="shrink-0 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="retry">Retry</button>
+          <button type="button" class="shrink-0 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="retry">{{ t("common.retry") }}</button>
         </span>
 
         <span v-if="busy" class="flex shrink-0 items-center gap-1.5">
           <Spinner :size="12" />
-          Loading…
+          {{ t("photos.loading") }}
         </span>
       </div>
     </div>
@@ -905,7 +918,7 @@ watch(
           <div class="flex flex-col items-center gap-2.5 text-sm text-muted-foreground">
             <ImageOff :size="22" />
             <p>{{ error }}</p>
-            <Button size="sm" variant="outline" @click="retry">Retry</Button>
+            <Button size="sm" variant="outline" @click="retry">{{ t("common.retry") }}</Button>
           </div>
         </div>
 
@@ -924,14 +937,14 @@ watch(
         <div v-else-if="!busy && visiblePhotos.length === 0" class="grid h-full place-items-center">
           <div class="flex flex-col items-center gap-2.5 text-sm text-muted-foreground">
             <Images :size="22" />
-            <p>{{ isUnfiltered ? "Your library is empty" : "No photos in this date range" }}</p>
+            <p>{{ isUnfiltered ? t("photos.emptyLibrary") : t("photos.emptyRange") }}</p>
 
             <p v-if="truncated" class="max-w-[280px] text-xs text-warning">
-              {{ isUnfiltered ? "Your library is large, so only recent photos are loaded" : "This range is older than the automatic pagination window, so it may not have been reached yet" }}
+              {{ isUnfiltered ? t("photos.largeLibraryHint") : t("photos.olderRangeHint") }}
             </p>
             <Button v-if="!isUnfiltered" size="sm" variant="outline" @click="selectRange('all')">
               <RotateCcw :size="13" />
-              Clear filters
+              {{ t("photos.clearFilters") }}
             </Button>
           </div>
         </div>
@@ -940,7 +953,7 @@ watch(
           <section v-for="section in sections" :key="section.key">
             <div class="sticky top-0 z-10 -mx-4 flex items-center gap-2.5 border-b border-border/40 bg-background/92 px-4 py-2.5 backdrop-blur-sm">
               <h2 class="shrink-0 text-sm font-semibold">{{ section.label }}</h2>
-              <span class="tabular shrink-0 rounded-full bg-secondary px-2 py-0.5 text-2xs text-muted-foreground">{{ section.items.length }} photos</span>
+              <span class="tabular shrink-0 rounded-full bg-secondary px-2 py-0.5 text-2xs text-muted-foreground">{{ t("photos.photoCount", { count: section.items.length }) }}</span>
               <span class="h-px flex-1 bg-border/60" aria-hidden="true" />
             </div>
 
@@ -955,7 +968,7 @@ watch(
                 role="button"
                 tabindex="0"
                 :aria-busy="Boolean(entry.photo.thumbUrl) && !loadedThumbUrls.has(entry.photo.thumbUrl) && !failedThumbUrls.has(entry.photo.thumbUrl)"
-                :aria-label="`${entry.photo.fileName ?? 'Photo'}; click to view, drag to select, right-click for details`"
+                :aria-label="t('photos.photoAria', { name: entry.photo.fileName ?? t('photos.photoNameFallback') })"
                 @pointerdown="onPhotoPointerDown(entry, $event)"
                 @click="onPhotoClick(entry, $event)"
                 @keydown.enter.prevent="onPhotoKeyboard(entry)"
@@ -979,7 +992,7 @@ watch(
                     class="absolute inset-0 size-full object-cover transition-transform duration-300 group-hover:scale-[1.025]"
                     :class="loadedThumbUrls.has(entry.photo.thumbUrl) ? 'opacity-100' : 'opacity-0'"
                     :src="entry.photo.thumbUrl"
-                    :alt="entry.photo.fileName ?? 'Photo'"
+                    :alt="entry.photo.fileName ?? t('photos.photoNameFallback')"
                     :loading="entry.index < 24 ? 'eager' : 'lazy'"
                     :fetchpriority="entry.index < 12 ? 'high' : 'auto'"
                     decoding="async"
@@ -995,11 +1008,11 @@ watch(
                   <template v-if="entry.photo.thumbUrl && loadedThumbUrls.has(entry.photo.thumbUrl)">
                     <span class="pointer-events-none absolute inset-0 bg-black/15 opacity-0 transition-opacity group-hover:opacity-100" />
 
-                    <span v-if="entry.photo.isLivePhoto && !entry.photo.isVideo" class="absolute top-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium tracking-wide text-white backdrop-blur-sm">LIVE</span>
+                    <span v-if="entry.photo.isLivePhoto && !entry.photo.isVideo" class="absolute top-2 left-2 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium tracking-wide text-white backdrop-blur-sm">{{ t("photos.liveBadge") }}</span>
 
                     <span v-if="entry.photo.isVideo" class="absolute right-2 bottom-2 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-2xs text-white backdrop-blur-sm">
                       <Play :size="9" class="fill-current" />
-                      Video
+                      {{ t("common.video") }}
                     </span>
                   </template>
                 </div>
@@ -1039,7 +1052,7 @@ watch(
           <div v-if="hasMore && busy" class="pointer-events-none flex justify-center px-3 pt-2 pb-2">
             <div class="flex min-h-8 items-center rounded-full border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur" role="status" aria-live="polite">
               <Spinner :size="13" />
-              <span class="ml-2">Loading more photos</span>
+              <span class="ml-2">{{ t("photos.loadingMore") }}</span>
               <span class="ml-1 flex items-center gap-0.5" aria-hidden="true">
                 <span v-for="index in 3" :key="`loading-dot-${index}`" class="size-1 animate-bounce rounded-full bg-current" :style="{ animationDelay: `${index * 120}ms` }" />
               </span>
@@ -1054,14 +1067,14 @@ watch(
     <div v-if="selectedCount > 0" class="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-xl border border-border/80 bg-popover/95 p-1.5 pl-2.5 text-popover-foreground shadow-xl backdrop-blur-xl" role="status" aria-live="polite">
       <span class="flex items-center gap-2 text-xs font-medium">
         <span class="grid size-4 place-items-center rounded-full bg-primary/10 text-primary"><Check :size="10" :stroke-width="3" /></span>
-        {{ selectedCount }} selected
+        {{ t("photos.selected", { count: selectedCount }) }}
       </span>
       <span class="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
       <Button size="sm" variant="outline" class="h-7 gap-1 rounded-md border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary shadow-none hover:bg-primary/10 hover:text-primary" @click="downloadSelectedPhotos">
         <Download :size="13" />
-        Download selected
+        {{ t("photos.downloadSelected") }}
       </Button>
-      <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Clear selection" title="Clear selection" @click="clearPhotoSelection">
+      <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('photos.clearSelection')" :title="t('photos.clearSelection')" @click="clearPhotoSelection">
         <X :size="14" />
       </button>
     </div>
@@ -1071,16 +1084,16 @@ watch(
         <p class="truncate px-2.5 pt-1.5 pb-2 text-xs text-muted-foreground" :title="photoFileName(contextMenu.photo)">{{ photoFileName(contextMenu.photo) }}</p>
         <button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground" @click="openPhotoDetails(contextMenu.photo)">
           <Info :size="14" />
-          Photo details
+          {{ t("photos.details") }}
         </button>
         <button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50" :disabled="downloadingPhotoId === contextMenu.photo.id" @click="downloadSinglePhoto(contextMenu.photo)">
           <Spinner v-if="downloadingPhotoId === contextMenu.photo.id" :size="13" />
           <Download v-else :size="14" />
-          Download original
+          {{ t("photos.downloadOriginal") }}
         </button>
         <button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground" @click="selectPhotoFromContext(contextMenu.photo)">
           <Check :size="14" />
-          Select this photo
+          {{ t("photos.selectThis") }}
         </button>
       </div>
     </div>
@@ -1089,8 +1102,8 @@ watch(
       <div class="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="photo-details-title">
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <Info :size="16" class="text-primary" />
-          <h2 id="photo-details-title" class="text-sm font-semibold">Photo details</h2>
-          <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Close" @click="detailsPhoto = null">
+          <h2 id="photo-details-title" class="text-sm font-semibold">{{ t("photos.details") }}</h2>
+          <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('common.close')" @click="detailsPhoto = null">
             <X :size="16" />
           </button>
         </header>
@@ -1109,29 +1122,29 @@ watch(
 
             <dl class="mt-5 divide-y divide-border text-sm">
               <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">Taken</dt>
+                <dt class="text-muted-foreground">{{ t("photos.taken") }}</dt>
                 <dd>{{ formatPhotoTime(detailsPhoto.takenAt) }}</dd>
               </div>
               <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">Dimensions</dt>
+                <dt class="text-muted-foreground">{{ t("photos.dimensions") }}</dt>
                 <dd class="tabular">{{ photoDimensions(detailsPhoto) }}</dd>
               </div>
               <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">Type</dt>
+                <dt class="text-muted-foreground">{{ t("photos.type") }}</dt>
                 <dd>{{ photoType(detailsPhoto) }}</dd>
               </div>
               <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">Original</dt>
-                <dd>{{ detailsPhoto.originalUrl ? "Available" : "Unavailable" }}</dd>
+                <dt class="text-muted-foreground">{{ t("photos.original") }}</dt>
+                <dd>{{ t(detailsPhoto.originalUrl ? "common.available" : "common.unavailable") }}</dd>
               </div>
             </dl>
 
             <div class="mt-auto flex items-center justify-end gap-2 pt-6">
-              <Button variant="outline" size="sm" class="h-8" @click="openViewerForPhoto(detailsPhoto)">View full size</Button>
+              <Button variant="outline" size="sm" class="h-8" @click="openViewerForPhoto(detailsPhoto)">{{ t("photos.viewFullSize") }}</Button>
               <Button size="sm" class="h-8 gap-1.5" :disabled="downloadingPhotoId === detailsPhoto.id" @click="downloadSinglePhoto(detailsPhoto)">
                 <Spinner v-if="downloadingPhotoId === detailsPhoto.id" :size="13" />
                 <Download v-else :size="14" />
-                Download original
+                {{ t("photos.downloadOriginal") }}
               </Button>
             </div>
           </div>

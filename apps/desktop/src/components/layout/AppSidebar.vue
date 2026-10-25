@@ -76,7 +76,7 @@ const displayName = computed(() => {
     const local = appleId.split("@")[0] ?? appleId;
     return { text: local, title: appleId };
   }
-  return { text: "Signed in", title: "" };
+  return { text: locale.t("sidebar.signedIn"), title: "" };
 });
 
 const appleId = computed(() => props.account?.appleId ?? null);
@@ -115,12 +115,12 @@ function accountStatusClass(account: KnownAccount): string {
 <template>
   <aside class="flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 select-none" :class="collapsed ? 'w-14' : 'w-[200px]'">
     <div class="flex items-center gap-1 pt-3 pb-1" :class="collapsed ? 'justify-center px-1.5' : 'px-3'">
-      <p v-if="!collapsed" class="min-w-0 flex-1 truncate px-1 text-2xs font-semibold tracking-[0.08em] text-muted-foreground">Browse</p>
+      <p v-if="!collapsed" class="min-w-0 flex-1 truncate px-1 text-2xs font-semibold tracking-[0.08em] text-muted-foreground">{{ locale.t("sidebar.browse") }}</p>
       <button
         type="button"
         class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        :title="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
-        :aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        :title="collapsed ? locale.t('sidebar.expand') : locale.t('sidebar.collapse')"
+        :aria-label="collapsed ? locale.t('sidebar.expand') : locale.t('sidebar.collapse')"
         :aria-expanded="!collapsed"
         @click="toggleCollapsed"
       >
@@ -153,8 +153,8 @@ function accountStatusClass(account: KnownAccount): string {
       type="button"
       class="relative mb-2 border border-sidebar-border bg-card/60 text-left shadow-sm transition-colors hover:bg-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       :class="collapsed ? 'mx-1.5 grid size-10 place-items-center rounded-lg p-0' : 'mx-2 rounded-lg px-2.5 py-2'"
-      :title="`${downloads.summary.tasks} tasks · ${downloads.summary.finished}/${downloads.summary.total ?? 'Unknown'} complete`"
-      :aria-label="collapsed ? `Downloads, ${downloads.summary.percent === null ? 'progress unknown' : `${downloads.summary.percent}%`}` : undefined"
+      :title="locale.t('sidebar.tasks', { count: downloads.summary.tasks, finished: downloads.summary.finished, total: downloads.summary.total ?? locale.t('sidebar.unknown') })"
+      :aria-label="collapsed ? locale.t('sidebar.downloadsAria', { progress: downloads.summary.percent === null ? locale.t('sidebar.progressUnknown') : `${downloads.summary.percent}%` }) : undefined"
       @click="downloads.openDialog()"
     >
       <template v-if="collapsed">
@@ -169,13 +169,13 @@ function accountStatusClass(account: KnownAccount): string {
       <template v-else>
         <span class="flex items-center gap-1.5 text-xs font-medium">
           <span class="grid size-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Download :size="12" /></span>
-          <span class="truncate">Downloads</span>
+          <span class="truncate">{{ locale.t("sidebar.downloads") }}</span>
           <span v-if="downloads.downloadSpeed > 0" class="tabular ml-auto shrink-0 text-2xs text-primary">{{ formatSpeed(downloads.downloadSpeed) }}</span>
           <span class="tabular shrink-0 text-xs text-muted-foreground" :class="downloads.downloadSpeed > 0 ? '' : 'ml-auto'">{{ downloads.summary.percent === null ? "—" : `${downloads.summary.percent}%` }}</span>
         </span>
         <span class="mt-1.5 flex items-center justify-between gap-2 text-2xs text-muted-foreground">
-          <span>{{ downloads.summary.running > 0 ? `${downloads.summary.running} active` : "Paused" }}</span>
-          <span class="tabular">{{ downloads.summary.finished }} / {{ downloads.summary.total ?? "Unknown" }}</span>
+          <span>{{ downloads.summary.running > 0 ? locale.t("sidebar.active", { count: downloads.summary.running }) : locale.t("sidebar.paused") }}</span>
+          <span class="tabular">{{ downloads.summary.finished }} / {{ downloads.summary.total ?? locale.t("sidebar.unknown") }}</span>
         </span>
         <span class="mt-2 block h-1.5 w-full overflow-hidden rounded-full bg-sidebar-accent">
           <span class="block h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${downloads.summary.percent ?? 0}%` }" />
@@ -203,13 +203,13 @@ function accountStatusClass(account: KnownAccount): string {
     </div>
 
     <div ref="menuRoot" class="relative border-t border-sidebar-border py-2.5" :class="collapsed ? 'px-1.5' : 'px-3'">
-      <div v-if="accountsOpen" id="account-switcher" role="dialog" aria-label="Switch account" class="absolute bottom-full left-1.5 z-50 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl" @keydown.esc="accountsOpen = false">
+      <div v-if="accountsOpen" id="account-switcher" role="dialog" :aria-label="locale.t('sidebar.switchAccountAria')" class="absolute bottom-full left-1.5 z-50 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl" @keydown.esc="accountsOpen = false">
         <div class="flex items-center justify-between border-b border-border px-3 py-2">
           <span class="text-sm font-semibold">{{ locale.t("account.switch") }}</span>
           <span v-if="accountsLoading" class="text-2xs text-muted-foreground">{{ locale.t("account.checking") }}</span>
         </div>
 
-        <div role="listbox" aria-label="Known accounts" class="max-h-64 overflow-y-auto p-1">
+        <div role="listbox" :aria-label="locale.t('sidebar.knownAccountsAria')" class="max-h-64 overflow-y-auto p-1">
           <button
             v-for="item in accounts"
             :key="item.key"
@@ -217,17 +217,17 @@ function accountStatusClass(account: KnownAccount): string {
             role="option"
             :aria-selected="item.key === activeAccountKey"
             class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-            :aria-label="`Switch to ${item.appleId}, ${accountStatus(item)}`"
+            :aria-label="locale.t('sidebar.switchAccountItemAria', { account: item.appleId, status: accountStatus(item) })"
             @click="selectAccount(item)"
           >
             <img v-if="avatars[item.key]" :src="avatars[item.key]" alt="" class="size-7 shrink-0 rounded-full object-cover" />
             <span v-else class="grid size-7 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-semibold">{{ accountName(item).charAt(0).toUpperCase() }}</span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium">{{ accountName(item) }}</span>
-              <span class="block truncate text-2xs text-muted-foreground" :title="item.appleId">{{ item.appleId }} · {{ recentTimeLabel(item.lastUsedAt) }}</span>
+              <span class="block truncate text-2xs text-muted-foreground" :title="item.appleId">{{ item.appleId }} · {{ recentTimeLabel(item.lastUsedAt, Date.now(), locale.isEnglish) }}</span>
             </span>
             <span class="shrink-0 text-right">
-              <span v-if="item.key === activeAccountKey" class="sr-only">Current</span>
+              <span v-if="item.key === activeAccountKey" class="sr-only">{{ locale.t("sidebar.current") }}</span>
               <Check v-if="item.key === activeAccountKey" :size="13" class="ml-auto text-primary" />
               <span class="mt-0.5 block text-2xs" :class="accountStatusClass(item)">{{ accountStatus(item) }}</span>
             </span>

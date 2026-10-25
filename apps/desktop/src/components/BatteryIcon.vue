@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import { useLocaleStore } from "@/stores/locale";
+
+const locale = useLocaleStore();
+
 const props = withDefaults(
   defineProps<{
     level: number | null;
@@ -20,7 +24,10 @@ const TONE = {
 } as const;
 
 const tone = computed(() => (percent.value == null ? TONE.unknown : percent.value <= 20 ? TONE.danger : percent.value <= 50 ? TONE.warning : TONE.success));
-const title = computed(() => (percent.value != null ? `Battery ${percent.value}%${props.charging ? " (charging)" : ""}` : "Battery level unavailable"));
+const title = computed(() => {
+  if (percent.value == null) return locale.t("battery.unavailable");
+  return `${locale.t("battery.level", { percent: percent.value })}${props.charging ? locale.t("battery.charging") : ""}`;
+});
 </script>
 
 <template>

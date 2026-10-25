@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia } from "pinia";
 
 import PhotoViewer from "@/components/PhotoViewer.vue";
 import type { PhotoItem } from "@/types";
@@ -47,7 +48,7 @@ describe("PhotoViewer · 实况", () => {
   });
 
   it("打开实况照片时自动播放配对视频", async () => {
-    const wrapper = mount(PhotoViewer, { props: { photos: [livePhoto], index: 0 } });
+    const wrapper = mount(PhotoViewer, { props: { photos: [livePhoto], index: 0 }, global: { plugins: [createPinia()] } });
     await flushPromises();
 
     expect(wrapper.find("video").exists()).toBe(true);
@@ -56,7 +57,7 @@ describe("PhotoViewer · 实况", () => {
   });
 
   it("普通照片支持旋转和水平翻转", async () => {
-    const wrapper = mount(PhotoViewer, { props: { photos: [stillPhoto], index: 0 } });
+    const wrapper = mount(PhotoViewer, { props: { photos: [stillPhoto], index: 0 }, global: { plugins: [createPinia()] } });
     await flushPromises();
 
     const rotateRight = wrapper.findAll("button").find((button) => button.attributes("title") === "Rotate right (])");

@@ -107,15 +107,15 @@ export function photosStatus(sessionId: string): Promise<PhotosStatus> {
   return call<PhotosStatus>("photos_status", { sessionId });
 }
 
-export async function downloadPhoto(url: string, name: string): Promise<string | null> {
-  const targetPath = await save({ title: "Save to", defaultPath: name });
+export async function downloadPhoto(url: string, name: string, title = "Save to"): Promise<string | null> {
+  const targetPath = await save({ title, defaultPath: name });
   if (!targetPath) return null;
   const result = await call<SavedPhotoResult>("save_photo", { url, name, targetPath });
   return result.path;
 }
 
-export async function pickDownloadDirectory(): Promise<string | null> {
-  const picked = await open({ title: "Choose save folder", directory: true, multiple: false });
+export async function pickDownloadDirectory(title = "Choose save folder"): Promise<string | null> {
+  const picked = await open({ title, directory: true, multiple: false });
   return typeof picked === "string" ? picked : null;
 }
 

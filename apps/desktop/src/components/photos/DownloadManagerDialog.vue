@@ -9,6 +9,7 @@ import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useAppStore } from "@/stores/app";
 import { CONCURRENCY_OPTIONS, formatBytes, formatSpeed, percentOf, queueView, totalOf, useDownloadsStore, type DownloadTask } from "@/stores/downloads";
+import { useLocaleStore } from "@/stores/locale";
 import { RANGE_OPTIONS, UNBOUNDED, addDays, formatDateInput, presetRange, type DateBounds, type RangeKey } from "@/lib/photos/dates";
 import { segmentLanding, type SegmentLanding } from "@/lib/photos/distribution";
 import { createExactRangeLoader, createExactRangeStore, type ExactRangeResult } from "@/lib/photos/exact";
@@ -23,14 +24,16 @@ import type { AssetDistribution, LibraryTotal, PhotoItem } from "@/types";
 
 const downloads = useDownloadsStore();
 const app = useAppStore();
+const locale = useLocaleStore();
+const t = locale.t;
 
 const canResumeTasks = computed(() => Boolean(app.photosSession && app.activeAccountKey && downloads.activeAccountKey === app.activeAccountKey));
 
 const settingsOpen = ref(false);
 const speedLimitMb = ref("");
 const downloadDirectory = ref(readStored(StorageKey.downloadDirectory) ?? "");
-const headerTitle = computed(() => (settingsOpen.value ? "Download Settings" : "Download Photos"));
-const headerSubtitle = computed(() => (settingsOpen.value ? "Bandwidth limits for all active downloads" : "Choose a photo range and destination"));
+const headerTitle = computed(() => t(settingsOpen.value ? "downloads.settingsTitle" : "downloads.title"));
+const headerSubtitle = computed(() => t(settingsOpen.value ? "downloads.settingsSubtitle" : "downloads.subtitle"));
 const taskOverview = computed(() => {
   let running = 0;
   let paused = 0;
@@ -51,11 +54,11 @@ function openSettings(): void {
 function saveSettings(): void {
   const mb = speedLimitMb.value.trim() === "" ? 0 : Number(speedLimitMb.value);
   if (!Number.isFinite(mb) || mb < 0) {
-    toast.error("Enter a speed limit of 0 or greater");
+    toast.error(t("downloads.speedInvalid"));
     return;
   }
   downloads.setSpeedLimit(Math.round(mb * 1024 * 1024));
-  toast.success(mb > 0 ? `Global speed limit set to ${mb} MB/s` : "Global speed limit removed");
+  toast.success(mb > 0 ? t("downloads.speedSet", { speed: mb }) : t("downloads.speedRemoved"));
   settingsOpen.value = false;
 }
 
@@ -143,7 +146,7 @@ function folderLabel(path: string): string {
 }
 
 function formatTaskCreatedAt(createdAt: number): string {
-  return new Date(createdAt).toLocaleString("en-US", {
+  return new Date(createdAt).toLocaleString(locale.isEnglish ? "en-US" : "zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -153,13 +156,13 @@ function formatTaskCreatedAt(createdAt: number): string {
 }
 
 function taskStatusLabel(task: DownloadTask): string {
-  if (task.status === "running") return "Downloading";
-  if (task.status === "paused") return "Paused";
+  if (task.status === "running") return t("downloads.statusDownloading");
+  if (task.status === "paused") return t("downloads.statusPaused");
   if (task.status === "done") {
-    if (task.error) return "Failed";
-    return task.failed.length > 0 ? "Completed with errors" : "Completed";
+    if (task.error) return t("downloads.statusFailed");
+    return t(task.failed.length > 0 ? "downloads.statusCompletedErrors" : "downloads.statusCompleted");
   }
-  return task.error ? "Failed" : "Cancelled";
+  return t(task.error ? "downloads.statusFailed" : "downloads.statusCancelled");
 }
 
 watch(totalPages, (pages) => {
@@ -203,13 +206,13 @@ const showFoundStatus = computed(() => range.value !== "custom" || hasCustomRang
 
 async function chooseDownloadDirectory(): Promise<string | null> {
   try {
-    const picked = await pickDownloadDirectory();
+    const picked = await pickDownloadDirectory(t("downloads.chooseSaveFolder"));
     if (!picked) return null;
     downloadDirectory.value = picked;
     writeStored(StorageKey.downloadDirectory, picked);
     return picked;
   } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : "Could not select a folder");
+    toast.error(caught instanceof Error ? caught.message : t("downloads.folderPickFailed"));
     return null;
   }
 }
@@ -234,9 +237,9 @@ const rangeLanding = ref<SegmentLanding | null>(null);
 
 async function loadExactDates(startRank: number, limit: number): Promise<readonly (number | null)[]> {
   const sessionId = app.photosSession;
-  if (!sessionId) throw new Error("Photo session is unavailable");
+  if (!sessionId) throw new Error(t("downloads.sessionUnavailable"));
   const page = await photosList({ sessionId, startRank, limit });
-  if (page.status === Status.error) throw new Error(page.message ?? "Could not load photos by rank");
+  if (page.status === Status.error) throw new Error(page.message ?? t("downloads.listFailed"));
   return page.photos.map((photo) => photo.takenAt);
 }
 
@@ -245,7 +248,7 @@ let exactReader: ((bounds: DateBounds) => Promise<ExactRangeResult>) | null = nu
 
 function readExactRange(bounds: DateBounds): Promise<ExactRangeResult> {
   const dist = distribution.value;
-  if (!dist) return Promise.reject(new Error("Photo timeline is unavailable"));
+  if (!dist) return Promise.reject(new Error(t("downloads.listFailed")));
   if (exactReaderDistribution !== dist || exactReader === null) {
     exactReaderDistribution = dist;
     exactReader = createExactRangeLoader(dist, loadExactDates);
@@ -278,7 +281,8 @@ const rangeLabel = computed(() => {
   if (after === null || before === null) return null;
   return `${formatDateInput(after)} to ${formatDateInput(addDays(before, -1))}`;
 });
-const scopeLabel = computed(() => (selectionMode.value ? `${selectedItems.value.length} selected photos` : rangeLabel.value ? `Range ${rangeLabel.value}` : "All photos"));
+const scopeLabel = computed(() => (selectionMode.value ? t("downloads.selectedPhotos", { count: selectedItems.value.length }) : rangeLabel.value ? t("downloads.rangeLabel", { range: rangeLabel.value }) : t("downloads.allPhotos")));
+const rangeOptions = computed(() => RANGE_OPTIONS.map((option) => ({ ...option, label: t(`downloads.range${option.key.charAt(0).toUpperCase()}${option.key.slice(1)}`) })));
 
 const plannedTotal = computed<number | null>(() => {
   if (selectionMode.value) return selectedItems.value.length;
@@ -288,22 +292,22 @@ const plannedTotal = computed<number | null>(() => {
   return found.value.length;
 });
 
-const plannedLabel = computed(() => (plannedTotal.value === null ? null : `${plannedTotal.value} photos`));
+const plannedLabel = computed(() => (plannedTotal.value === null ? null : t("downloads.photosCount", { count: plannedTotal.value })));
 const taskTitle = computed(() => (plannedLabel.value === null ? scopeLabel.value : `${scopeLabel.value} · ${plannedLabel.value}`));
-const createLabel = computed(() => (selectionMode.value ? "Download selected" : "Download"));
+const createLabel = computed(() => t(selectionMode.value ? "downloads.downloadSelected" : "downloads.download"));
 
 const foundLabel = computed(() => {
-  if (selectionMode.value) return `${selectedItems.value.length} photos selected and ready to download`;
+  if (selectionMode.value) return t("downloads.selected", { count: selectedItems.value.length });
   if (range.value === "all") {
-    if (totalLoading.value) return "Loading total…";
-    return total.value === null ? "Total unknown; scanning while downloading" : `${total.value.assets} photos`;
+    if (totalLoading.value) return t("downloads.loadingTotal");
+    return total.value === null ? t("downloads.totalUnknown") : t("downloads.photosCount", { count: total.value.assets });
   }
 
-  if (rangeExact.value !== null) return `${rangeExact.value.count} photos`;
-  if (exactPending.value) return "Calculating exact count…";
-  if (handedToTask.value) return "The task will continue scanning this range";
-  if (searching.value) return `Searching… ${found.value.length} found`;
-  return truncated.value ? `${found.value.length} found (range not fully scanned)` : `${found.value.length} photos`;
+  if (rangeExact.value !== null) return t("downloads.photosCount", { count: rangeExact.value.count });
+  if (exactPending.value) return t("downloads.calculating");
+  if (handedToTask.value) return t("downloads.taskWillScan");
+  if (searching.value) return t("downloads.searching", { count: found.value.length });
+  return truncated.value ? t("downloads.foundTruncated", { count: found.value.length }) : t("downloads.photosCount", { count: found.value.length });
 });
 
 async function loadTotal(): Promise<void> {
@@ -381,7 +385,7 @@ function onCustomChange(value: DateBounds): void {
 async function fetchRange(): Promise<void> {
   const sessionId = app.photosSession;
   if (!sessionId) {
-    toast.error("Photo session is unavailable. Return to Photos and sign in again.");
+    toast.error(t("downloads.sessionUnavailable"));
     return;
   }
   const epoch = ++searchEpoch;
@@ -428,8 +432,8 @@ async function fetchRange(): Promise<void> {
       const page = await photosList({ sessionId, cursor, limit: PAGE_SIZE });
       if (epoch !== searchEpoch) return;
       if (page.status === Status.error) {
-        if (isSessionGoneMessage(page.message)) toast.error(page.message ?? "Session expired. Please sign in again.");
-        else toast.error(page.message ?? "Could not find photos");
+        if (isSessionGoneMessage(page.message)) toast.error(page.message ?? t("photos.sessionExpired"));
+        else toast.error(page.message ?? t("downloads.listFailed"));
         break;
       }
 
@@ -457,7 +461,7 @@ async function fetchRange(): Promise<void> {
     found.value = collected.slice();
   } catch (caught) {
     if (epoch !== searchEpoch) return;
-    toast.error(caught instanceof Error ? caught.message : "Could not find photos");
+    toast.error(caught instanceof Error ? caught.message : t("downloads.listFailed"));
   } finally {
     if (epoch === searchEpoch) {
       searching.value = false;
@@ -481,22 +485,22 @@ async function createTask(): Promise<void> {
   const sessionId = app.photosSession;
   const accountKey = app.activeAccountKey;
   if (!sessionId || !accountKey) {
-    toast.error("Photo session is unavailable. Return to Photos and sign in again.");
+    toast.error(t("downloads.sessionUnavailable"));
     return;
   }
 
   const items = selectionMode.value ? selectedItems.value.slice() : [];
   if (selectionMode.value && items.length === 0) {
-    toast.error("No photos selected");
+    toast.error(t("downloads.noPhotosSelected"));
     return;
   }
   if (!selectionMode.value && range.value !== "all") {
     if (rangeExact.value?.count === 0) {
-      toast.error("No photos in this date range");
+      toast.error(t("downloads.noPhotosInRange"));
       return;
     }
     if (rangeExact.value === null && !searching.value && !truncated.value && found.value.length === 0) {
-      toast.error("No photos in this date range");
+      toast.error(t("downloads.noPhotosInRange"));
       return;
     }
   }
@@ -527,7 +531,7 @@ async function createTask(): Promise<void> {
     if (startRank === null) {
       const scannedItems = found.value.slice();
       if (scannedItems.length === 0) {
-        toast.error("No photos in this date range");
+        toast.error(t("downloads.noPhotosInRange"));
         return;
       }
       downloads.create({
@@ -575,7 +579,7 @@ async function openTaskFolder(path: string): Promise<void> {
   try {
     await openDownloadFolder(path);
   } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : "Could not open the folder");
+    toast.error(caught instanceof Error ? caught.message : t("downloads.openFolderFailed"));
   }
 }
 
@@ -626,13 +630,13 @@ watch(
         </div>
         <div class="ml-auto flex items-center gap-1.5">
           <span v-if="!settingsOpen && downloads.downloadSpeed > 0" class="tabular mr-1 flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-2xs font-medium text-primary">↓ {{ formatSpeed(downloads.downloadSpeed) }}</span>
-          <button v-if="!settingsOpen" type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Download settings" aria-label="Download settings" @click="openSettings">
+          <button v-if="!settingsOpen" type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :title="t('downloads.settings')" :aria-label="t('downloads.settings')" @click="openSettings">
             <Settings2 :size="15" />
           </button>
-          <button v-else type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Back to downloads" aria-label="Back to downloads" @click="settingsOpen = false">
+          <button v-else type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :title="t('downloads.backToDownloads')" :aria-label="t('downloads.backToDownloads')" @click="settingsOpen = false">
             <ArrowLeft :size="15" />
           </button>
-          <button type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" title="Close" aria-label="Close" @click="close">
+          <button type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" :title="t('common.close')" :aria-label="t('common.close')" @click="close">
             <X :size="16" />
           </button>
         </div>
@@ -642,7 +646,7 @@ watch(
         <div class="shrink-0 border-b border-border bg-muted/20 p-3">
           <div v-if="selectionMode" class="rounded-xl border border-border bg-card p-3 shadow-sm">
             <div class="flex min-w-0 items-center gap-3">
-              <span class="flex shrink-0 items-center gap-1.5 text-sm font-medium"><Check :size="14" class="text-primary" />{{ selectedItems.length }} selected</span>
+              <span class="flex shrink-0 items-center gap-1.5 text-sm font-medium"><Check :size="14" class="text-primary" />{{ t("downloads.selected", { count: selectedItems.length }) }}</span>
               <div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
                 <img v-for="item in selectedItems.slice(0, 8)" :key="item.id" :src="item.thumbUrl" alt="" class="size-8 shrink-0 rounded-md border border-border/60 object-cover" draggable="false" />
                 <span v-if="selectedItems.length > 8" class="shrink-0 text-xs text-muted-foreground">+{{ selectedItems.length - 8 }}</span>
@@ -650,11 +654,11 @@ watch(
               <button
                 type="button"
                 class="flex h-8 min-w-0 max-w-56 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                :title="downloadDirectory || 'Choose download folder'"
+                :title="downloadDirectory || t('downloads.chooseFolder')"
                 @click="chooseDownloadDirectory"
               >
                 <FolderOpen :size="13" class="shrink-0" />
-                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : "Choose folder" }}</span>
+                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : t("downloads.chooseFolder") }}</span>
               </button>
               <Button class="h-8 shrink-0 px-4 text-xs" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
             </div>
@@ -662,9 +666,9 @@ watch(
 
           <div v-else class="rounded-xl border border-border bg-card p-3 shadow-sm">
             <div class="flex min-w-0 flex-wrap items-center gap-2">
-              <span class="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground">Range</span>
+              <span class="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground">{{ t("downloads.range") }}</span>
               <div class="flex shrink-0 items-center gap-0.5 rounded-lg bg-secondary/80 p-1">
-                <button v-for="option in RANGE_OPTIONS" :key="option.key" type="button" class="h-7 rounded-md px-2.5 text-xs transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
+                <button v-for="option in rangeOptions" :key="option.key" type="button" class="h-7 rounded-md px-2.5 text-xs transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
                   {{ option.label }}
                 </button>
               </div>
@@ -678,11 +682,11 @@ watch(
               <button
                 type="button"
                 class="flex h-8 min-w-0 max-w-56 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                :title="downloadDirectory || 'Choose download folder'"
+                :title="downloadDirectory || t('downloads.chooseFolder')"
                 @click="chooseDownloadDirectory"
               >
                 <FolderOpen :size="13" class="shrink-0" />
-                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : "Choose folder" }}</span>
+                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : t("downloads.chooseFolder") }}</span>
               </button>
               <Button class="h-8 shrink-0 px-4 text-xs" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
             </div>
@@ -695,7 +699,7 @@ watch(
         </div>
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div class="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
-            <div class="grid w-64 grid-cols-2 rounded-lg bg-secondary/80 p-1" role="tablist" aria-label="Download tasks">
+            <div class="grid w-64 grid-cols-2 rounded-lg bg-secondary/80 p-1" :aria-label="t('downloads.downloadTasksAria')" role="tablist">
               <button
                 type="button"
                 class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
@@ -704,7 +708,7 @@ watch(
                 :aria-selected="queueTab === 'active'"
                 @click="selectQueueTab('active')"
               >
-                Active <span class="tabular text-2xs">{{ activeTasks.length }}</span>
+                {{ t("downloads.active") }} <span class="tabular text-2xs">{{ activeTasks.length }}</span>
               </button>
               <button
                 type="button"
@@ -714,15 +718,15 @@ watch(
                 :aria-selected="queueTab === 'completed'"
                 @click="selectQueueTab('completed')"
               >
-                Completed <span class="tabular text-2xs">{{ completedTasks.length }}</span>
+                {{ t("downloads.completed") }} <span class="tabular text-2xs">{{ completedTasks.length }}</span>
               </button>
             </div>
             <div class="ml-auto flex items-center gap-3 text-2xs">
               <template v-if="queueTab === 'active'">
-                <span v-if="taskOverview.running" class="font-medium text-primary">{{ taskOverview.running }} running</span>
-                <span v-if="taskOverview.paused" class="font-medium text-warning">{{ taskOverview.paused }} paused</span>
+                <span v-if="taskOverview.running" class="font-medium text-primary">{{ t("downloads.running", { count: taskOverview.running }) }}</span>
+                <span v-if="taskOverview.paused" class="font-medium text-warning">{{ t("downloads.pausedCount", { count: taskOverview.paused }) }}</span>
               </template>
-              <button v-else-if="completedTasks.length" type="button" class="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">Clear finished</button>
+              <button v-else-if="completedTasks.length" type="button" class="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">{{ t("downloads.clearFinished") }}</button>
             </div>
           </div>
 
@@ -733,13 +737,19 @@ watch(
                 <Check v-if="queueTab === 'completed'" :size="17" />
                 <Download v-else :size="17" />
               </span>
-              <p class="mt-3 text-sm font-medium">{{ queueTab === "active" ? "No active downloads" : "No completed downloads" }}</p>
-              <p class="mt-1 text-xs text-muted-foreground">{{ queueTab === "active" ? "New tasks will appear here." : "Finished downloads will appear here." }}</p>
+              <p class="mt-3 text-sm font-medium">{{ t(queueTab === "active" ? "downloads.noActive" : "downloads.noCompleted") }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ t(queueTab === "active" ? "downloads.newTasksHere" : "downloads.finishedHere") }}</p>
             </div>
           </div>
           <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
             <div class="flex flex-col gap-2">
-              <article v-for="task in pagedTasks" :key="task.id" class="group relative cursor-pointer overflow-hidden rounded-xl border border-border/80 bg-card transition-all hover:border-primary/40 hover:shadow-sm" :title="`${task.title} · View task details`" @click="openTaskDetails(task)">
+              <article
+                v-for="task in pagedTasks"
+                :key="task.id"
+                class="group relative cursor-pointer overflow-hidden rounded-xl border border-border/80 bg-card transition-all hover:border-primary/40 hover:shadow-sm"
+                :title="`${task.title} · ${t('downloads.viewDetails')}`"
+                @click="openTaskDetails(task)"
+              >
                 <span class="absolute inset-y-3 left-0 w-0.5 rounded-r-full" :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary'" />
                 <div class="p-3.5 pl-4">
                   <div class="flex min-w-0 items-start gap-3">
@@ -762,16 +772,14 @@ watch(
                         <span v-if="task.speedBytesPerSec" class="tabular shrink-0 text-2xs font-medium text-primary">{{ formatSpeed(task.speedBytesPerSec) }}</span>
                       </div>
                       <p class="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
-                        <span
-                          >{{ task.done + task.failed.length }}<template v-if="totalOf(task) !== null"> / {{ totalOf(task) }}</template> files</span
-                        >
+                        <span>{{ totalOf(task) === null ? t("downloads.filesProgressUnknown", { done: task.done + task.failed.length }) : t("downloads.filesProgress", { done: task.done + task.failed.length, total: totalOf(task) ?? 0 }) }}</span>
                         <span>·</span>
                         <span>{{ percentOf(task) ?? 0 }}%</span>
                         <span>·</span>
-                        <span class="truncate">Created {{ formatTaskCreatedAt(task.createdAt) }}</span>
+                        <span class="truncate">{{ t("downloads.created", { time: formatTaskCreatedAt(task.createdAt) }) }}</span>
                         <button type="button" class="ml-auto flex min-w-0 max-w-64 shrink items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-primary" :title="task.directory" @click.stop="openTaskFolder(task.directory)">
                           <FolderOpen :size="11" class="shrink-0" />
-                          <span class="shrink-0">Open folder</span>
+                          <span class="shrink-0">{{ t("downloads.openFolder") }}</span>
                           <span class="text-muted-foreground/60">·</span>
                           <span class="truncate">{{ folderLabel(task.directory) }}</span>
                         </button>
@@ -779,10 +787,10 @@ watch(
                     </div>
 
                     <div class="flex shrink-0 items-center gap-0.5" @click.stop>
-                      <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="ghost" size="icon" class="size-7 rounded-full" title="Retry failed files" aria-label="Retry failed files" @click="downloads.retryFailed(task.id)">
+                      <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="ghost" size="icon" class="size-7 rounded-full" :title="t('downloads.retryFailed')" :aria-label="t('downloads.retryFailed')" @click="downloads.retryFailed(task.id)">
                         <RotateCcw :size="13" />
                       </Button>
-                      <Button v-if="task.status === 'running'" variant="ghost" size="icon" class="size-7 rounded-full" title="Pause task" aria-label="Pause task" @click="downloads.pause(task.id)">
+                      <Button v-if="task.status === 'running'" variant="ghost" size="icon" class="size-7 rounded-full" :title="t('downloads.pauseTask')" :aria-label="t('downloads.pauseTask')" @click="downloads.pause(task.id)">
                         <Pause :size="14" />
                       </Button>
                       <Button
@@ -791,13 +799,13 @@ watch(
                         size="icon"
                         class="size-7 rounded-full"
                         :disabled="!canResumeTasks"
-                        :title="canResumeTasks ? (task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task') : 'Sign in again to resume'"
-                        :aria-label="task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task'"
+                        :title="canResumeTasks ? t(task.status === 'cancelled' || task.error ? 'downloads.restoreTask' : 'downloads.resumeTask') : t('downloads.signInToResume')"
+                        :aria-label="t(task.status === 'cancelled' || task.error ? 'downloads.restoreTask' : 'downloads.resumeTask')"
                         @click="downloads.resume(task.id)"
                       >
                         <Play :size="14" />
                       </Button>
-                      <Button variant="ghost" size="icon" class="size-7 rounded-full text-muted-foreground hover:text-destructive" title="Remove from list (keeps files)" aria-label="Remove from list" @click="downloads.remove(task.id)">
+                      <Button variant="ghost" size="icon" class="size-7 rounded-full text-muted-foreground hover:text-destructive" :title="t('downloads.removeTask')" :aria-label="t('downloads.removeTask')" @click="downloads.remove(task.id)">
                         <Trash :size="13" />
                       </Button>
                     </div>
@@ -816,9 +824,9 @@ watch(
                       <span class="truncate" :title="task.activeFiles[0]">{{ task.activeFiles[0] }}</span>
                       <span v-if="task.activeFiles.length > 1" class="shrink-0">+{{ task.activeFiles.length - 1 }}</span>
                     </span>
-                    <span v-else-if="task.lastFile" class="min-w-0 flex-1 truncate" :title="task.lastFile">Last: {{ task.lastFile }}</span>
+                    <span v-else-if="task.lastFile" class="min-w-0 flex-1 truncate" :title="task.lastFile">{{ t("downloads.lastFile", { name: task.lastFile }) }}</span>
                   </div>
-                  <p v-if="task.status === 'paused' && !canResumeTasks" class="mt-1.5 text-2xs text-muted-foreground">Sign in to this account again to resume this task</p>
+                  <p v-if="task.status === 'paused' && !canResumeTasks" class="mt-1.5 text-2xs text-muted-foreground">{{ t("downloads.signInToResume") }}</p>
                   <p v-if="task.error" class="mt-1.5 line-clamp-2 text-2xs text-warning">{{ task.error }}</p>
                 </div>
               </article>
@@ -826,18 +834,18 @@ watch(
           </div>
 
           <div v-if="totalPages > 1" class="flex h-10 shrink-0 items-center justify-center gap-2 border-t border-border bg-card px-4 text-2xs text-muted-foreground">
-            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage <= 1" @click="goToPage(taskPage - 1)">Previous</button>
-            <span class="tabular">Page {{ taskPage }} / {{ totalPages }}</span>
-            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage >= totalPages" @click="goToPage(taskPage + 1)">Next</button>
+            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage <= 1" @click="goToPage(taskPage - 1)">{{ t("downloads.previous") }}</button>
+            <span class="tabular">{{ t("downloads.page", { page: taskPage, pages: totalPages }) }}</span>
+            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage >= totalPages" @click="goToPage(taskPage + 1)">{{ t("downloads.next") }}</button>
           </div>
         </div>
       </template>
 
       <div v-else class="min-h-0 flex-1 overflow-y-auto p-6">
         <div class="mx-auto max-w-xl">
-          <h3 class="text-base font-semibold tracking-tight">Global Speed Limit</h3>
-          <p class="mt-1 text-sm leading-6 text-muted-foreground">Limit the combined bandwidth used by all downloads. Leave blank or enter 0 for no limit.</p>
-          <label class="mt-5 block text-sm font-medium" for="download-speed-limit">Speed limit (MB/s)</label>
+          <h3 class="text-base font-semibold tracking-tight">{{ t("downloads.speedSettingsTitle") }}</h3>
+          <p class="mt-1 text-sm leading-6 text-muted-foreground">{{ t("downloads.speedSettingsDesc") }}</p>
+          <label class="mt-5 block text-sm font-medium" for="download-speed-limit">{{ t("downloads.speedLabel") }}</label>
           <div class="mt-2 flex items-center gap-2">
             <input
               id="download-speed-limit"
@@ -851,10 +859,10 @@ watch(
             />
             <span class="text-sm text-muted-foreground">MB/s</span>
           </div>
-          <p class="mt-2 text-xs text-muted-foreground">For example, 10 means all active downloads combined stay below 10 MB/s. Applies immediately and is restored on the next launch.</p>
+          <p class="mt-2 text-xs text-muted-foreground">{{ t("downloads.speedHelp") }}</p>
           <div class="mt-6 flex items-center gap-2">
-            <Button class="h-8 px-4" @click="saveSettings">Save Settings</Button>
-            <Button variant="outline" class="h-8 px-4" @click="settingsOpen = false">Cancel</Button>
+            <Button class="h-8 px-4" @click="saveSettings">{{ t("downloads.save") }}</Button>
+            <Button variant="outline" class="h-8 px-4" @click="settingsOpen = false">{{ t("downloads.cancel") }}</Button>
           </div>
         </div>
       </div>
@@ -864,11 +872,11 @@ watch(
       <div class="flex h-[min(680px,calc(100vh-48px))] w-[min(760px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="task-details-title">
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <ListChecks :size="16" class="text-primary" />
-          <h2 id="task-details-title" class="text-sm font-semibold">Task Details</h2>
+          <h2 id="task-details-title" class="text-sm font-semibold">{{ t("downloads.taskDetails") }}</h2>
           <span class="rounded-full px-2 py-0.5 text-2xs font-medium" :class="detailsTask.status === 'running' ? 'bg-primary/10 text-primary' : detailsTask.status === 'done' && !detailsTask.error && detailsTask.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{
             taskStatusLabel(detailsTask)
           }}</span>
-          <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Close task details" @click="detailsTaskId = null">
+          <button type="button" class="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('downloads.closeDetails')" @click="detailsTaskId = null">
             <X :size="16" />
           </button>
         </header>
@@ -878,21 +886,21 @@ watch(
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <h3 class="break-words text-base font-semibold">{{ detailsTask.title }}</h3>
-                <p class="mt-1 text-xs text-muted-foreground">Created {{ formatTaskCreatedAt(detailsTask.createdAt) }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ t("downloads.created", { time: formatTaskCreatedAt(detailsTask.createdAt) }) }}</p>
                 <p class="mt-1 truncate text-xs text-muted-foreground" :title="detailsTask.directory">{{ detailsTask.directory }}</p>
               </div>
               <div class="flex shrink-0 items-center gap-2">
                 <Button v-if="detailsTask.status === 'running'" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" @click="downloads.pause(detailsTask.id)">
                   <Pause :size="12" />
-                  Pause
+                  {{ t("downloads.pauseTask") }}
                 </Button>
                 <Button v-else-if="detailsTask.status === 'paused' || detailsTask.status === 'cancelled' || detailsTask.error" variant="outline" size="sm" class="h-7 gap-1 px-2 text-xs" :disabled="!canResumeTasks" @click="downloads.resume(detailsTask.id)">
                   <Play :size="12" />
-                  Restore
+                  {{ t("downloads.restoreTask") }}
                 </Button>
                 <button type="button" class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" @click="openTaskFolder(detailsTask.directory)">
                   <FolderOpen :size="13" />
-                  Open folder
+                  {{ t("downloads.openFolder") }}
                 </button>
               </div>
             </div>
@@ -904,28 +912,28 @@ watch(
               <span class="tabular shrink-0 text-xs text-muted-foreground"
                 >{{ detailsTask.done + detailsTask.failed.length }}<template v-if="totalOf(detailsTask) !== null"> / {{ totalOf(detailsTask) }}</template></span
               >
-              <span class="tabular shrink-0 text-xs text-muted-foreground">Transferred {{ detailsTransferredBytes === null ? "—" : formatBytes(detailsTransferredBytes) }}</span>
+              <span class="tabular shrink-0 text-xs text-muted-foreground">{{ t("downloads.transferred", { size: detailsTransferredBytes === null ? "—" : formatBytes(detailsTransferredBytes) }) }}</span>
               <span v-if="detailsTask.speedBytesPerSec" class="tabular shrink-0 text-xs font-medium text-primary">{{ formatSpeed(detailsTask.speedBytesPerSec) }}</span>
             </div>
 
             <dl class="mt-4 grid grid-cols-3 gap-2 text-center">
               <div class="rounded-md border border-border bg-background px-2 py-2">
-                <dt class="text-2xs text-muted-foreground">Completed</dt>
+                <dt class="text-2xs text-muted-foreground">{{ t("downloads.completedLabel") }}</dt>
                 <dd class="tabular mt-0.5 text-sm font-semibold">{{ detailsTask.done }}</dd>
               </div>
               <div class="rounded-md border border-border bg-background px-2 py-2">
-                <dt class="text-2xs text-muted-foreground">Failed</dt>
+                <dt class="text-2xs text-muted-foreground">{{ t("downloads.failedLabel") }}</dt>
                 <dd class="tabular mt-0.5 text-sm font-semibold" :class="detailsTask.failed.length ? 'text-warning' : ''">{{ detailsTask.failed.length }}</dd>
               </div>
               <div class="rounded-md border border-border bg-background px-2 py-2">
-                <dt class="text-2xs text-muted-foreground">Remaining</dt>
-                <dd class="tabular mt-0.5 text-sm font-semibold">{{ detailsQueue.remaining ?? "Unknown" }}</dd>
+                <dt class="text-2xs text-muted-foreground">{{ t("downloads.remainingLabel") }}</dt>
+                <dd class="tabular mt-0.5 text-sm font-semibold">{{ detailsQueue.remaining ?? t("downloads.unknown") }}</dd>
               </div>
             </dl>
           </section>
 
           <section class="flex min-h-0 flex-1 flex-col p-4">
-            <div class="grid grid-cols-3 rounded-lg bg-secondary p-1" role="tablist" aria-label="Download task details">
+            <div class="grid grid-cols-3 rounded-lg bg-secondary p-1" role="tablist" :aria-label="t('downloads.taskDetails')">
               <button
                 type="button"
                 class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
@@ -934,7 +942,7 @@ watch(
                 :aria-selected="detailsTab === 'downloading'"
                 @click="detailsTab = 'downloading'"
               >
-                Downloading <span class="tabular text-2xs">{{ detailsDownloadingRows.length }}</span>
+                {{ t("downloads.downloadingTab") }} <span class="tabular text-2xs">{{ detailsDownloadingRows.length }}</span>
               </button>
               <button
                 type="button"
@@ -944,7 +952,7 @@ watch(
                 :aria-selected="detailsTab === 'queued'"
                 @click="detailsTab = 'queued'"
               >
-                Queued <span class="tabular text-2xs">{{ detailsQueue.pendingTotal + (detailsQueue.unfetched ?? 0) }}</span>
+                {{ t("downloads.queuedTab") }} <span class="tabular text-2xs">{{ detailsQueue.pendingTotal + (detailsQueue.unfetched ?? 0) }}</span>
               </button>
               <button
                 type="button"
@@ -954,7 +962,7 @@ watch(
                 :aria-selected="detailsTab === 'completed'"
                 @click="detailsTab = 'completed'"
               >
-                Completed <span class="tabular text-2xs">{{ detailsCompletedFiles.length + detailsQueue.failed.length }}</span>
+                {{ t("downloads.completedTab") }} <span class="tabular text-2xs">{{ detailsCompletedFiles.length + detailsQueue.failed.length }}</span>
               </button>
             </div>
 
@@ -962,7 +970,7 @@ watch(
               <DownloadFileList v-if="detailsDownloadingRows.length" :rows="detailsDownloadingRows" fill @pause="downloads.pauseItem(detailsTask.id, $event)" @resume="downloads.resumeItem(detailsTask.id, $event)" class="mt-2" />
               <div v-else class="mt-2 flex min-h-0 flex-1 items-center justify-center gap-2 rounded-md border border-dashed border-border text-xs text-muted-foreground">
                 <Spinner v-if="detailsTask.status === 'running'" :size="13" />
-                {{ detailsTask.status === "running" ? "Preparing the next file…" : "No active downloads" }}
+                {{ t(detailsTask.status === "running" ? "downloads.preparingNext" : "downloads.noActiveFiles") }}
               </div>
             </div>
 
@@ -971,37 +979,37 @@ watch(
                 <h4 class="text-xs font-medium text-muted-foreground">
                   Pending <span class="tabular">{{ detailsQueue.pendingTotal }}</span>
                 </h4>
-                <DownloadFileList :rows="detailsPendingRows" fill empty-label="No pending files" class="mt-2" @pause="downloads.pauseItem(detailsTask.id, $event)" />
+                <DownloadFileList :rows="detailsPendingRows" fill :empty-label="t('downloads.noPending')" class="mt-2" @pause="downloads.pauseItem(detailsTask.id, $event)" />
               </div>
               <p v-if="detailsQueue.unfetched !== null && detailsQueue.unfetched > 0" class="mt-3 rounded-md border border-border bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
-                <span class="tabular font-medium text-foreground">{{ detailsQueue.unfetched }}</span> more waiting to be retrieved from iCloud.
+                {{ t("downloads.moreWaiting", { count: detailsQueue.unfetched }) }}
               </p>
-              <div v-if="detailsQueue.pendingTotal === 0 && (detailsQueue.unfetched ?? 0) === 0" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">No queued files</div>
+              <div v-if="detailsQueue.pendingTotal === 0 && (detailsQueue.unfetched ?? 0) === 0" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">{{ t("downloads.noQueued") }}</div>
             </div>
 
             <div v-else class="mt-4 flex min-h-0 flex-1 flex-col">
               <div v-if="detailsCompletedFiles.length" class="flex min-h-0 flex-1 flex-col">
                 <div class="flex items-center gap-2">
                   <h4 class="flex items-center gap-1.5 text-xs font-medium text-success">
-                    <Check :size="12" />Downloaded files <span class="tabular">{{ detailsCompletedFiles.length }}</span>
+                    <Check :size="12" />{{ t("downloads.downloadedFiles") }} <span class="tabular">{{ detailsCompletedFiles.length }}</span>
                   </h4>
-                  <span class="tabular ml-auto text-2xs text-muted-foreground">{{ detailsCompletedBytes === null ? "Size unavailable" : formatBytes(detailsCompletedBytes) }}</span>
+                  <span class="tabular ml-auto text-2xs text-muted-foreground">{{ detailsCompletedBytes === null ? t("downloads.sizeUnavailable") : formatBytes(detailsCompletedBytes) }}</span>
                 </div>
-                <DownloadFileList :rows="detailsCompletedRows" fill empty-label="No completed files" class="mt-2" />
+                <DownloadFileList :rows="detailsCompletedRows" fill :empty-label="t('downloads.noCompletedFiles')" class="mt-2" />
               </div>
               <div v-if="detailsQueue.failed.length" class="mt-4">
                 <div class="flex items-center gap-2">
                   <h4 class="flex items-center gap-1.5 text-xs font-medium text-warning">
-                    <AlertTriangle :size="12" />Failed files <span class="tabular">{{ detailsQueue.failed.length }}</span>
+                    <AlertTriangle :size="12" />{{ t("downloads.failedFiles") }} <span class="tabular">{{ detailsQueue.failed.length }}</span>
                   </h4>
                   <Button v-if="(detailsTask.failedItems?.length ?? 0) > 0 && detailsTask.status !== 'running'" variant="outline" size="sm" class="ml-auto h-7 gap-1 px-2 text-xs" @click="downloads.retryFailed(detailsTask.id)">
                     <RotateCcw :size="12" />
-                    Retry failed
+                    {{ t("downloads.retryFailed") }}
                   </Button>
                 </div>
-                <DownloadFileList :rows="detailsFailedRows" :height="180" empty-label="No failed files" class="mt-2" />
+                <DownloadFileList :rows="detailsFailedRows" :height="180" :empty-label="t('downloads.noFailedFiles')" class="mt-2" />
               </div>
-              <div v-if="!detailsCompletedFiles.length && !detailsQueue.failed.length" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">Nothing completed yet</div>
+              <div v-if="!detailsCompletedFiles.length && !detailsQueue.failed.length" class="mt-2 flex min-h-0 flex-1 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">{{ t("downloads.nothingCompleted") }}</div>
             </div>
           </section>
         </div>

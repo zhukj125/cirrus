@@ -79,23 +79,43 @@ onUnmounted(() => unlisten?.());
     </span>
 
     <div class="ml-auto flex h-full items-stretch">
-      <button type="button" class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :title="`Change theme (current: ${themeMeta.label})`" :aria-label="`Change theme, current: ${themeMeta.label}`" @click="cycleTheme">
+      <button
+        type="button"
+        class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        :title="locale.t('titlebar.changeTheme', { theme: themeMeta.label })"
+        :aria-label="locale.t('titlebar.changeThemeAria', { theme: themeMeta.label })"
+        @click="cycleTheme"
+      >
         <Transition name="theme-icon" mode="out-in">
           <component :is="themeMeta.icon" :key="theme.mode" :size="14" />
         </Transition>
       </button>
-      <button v-if="props.showSettings" type="button" class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :class="props.settingsActive ? 'bg-accent text-foreground' : ''" aria-label="Settings" title="Settings" @click="emit('settings')">
+      <button
+        v-if="props.showSettings"
+        type="button"
+        class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        :class="props.settingsActive ? 'bg-accent text-foreground' : ''"
+        :aria-label="locale.t('titlebar.settings')"
+        :title="locale.t('titlebar.settings')"
+        @click="emit('settings')"
+      >
         <SettingsIcon :size="14" />
       </button>
       <span class="my-2 w-px bg-border" />
-      <button type="button" class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" aria-label="Minimize" title="Minimize" @click="minimize">
+      <button type="button" class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="locale.t('titlebar.minimize')" :title="locale.t('titlebar.minimize')" @click="minimize">
         <Minus :size="14" />
       </button>
-      <button type="button" class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="maximized ? 'Restore' : 'Maximize'" :title="maximized ? 'Restore' : 'Maximize'" @click="toggleMaximize">
+      <button
+        type="button"
+        class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        :aria-label="locale.t(maximized ? 'titlebar.restore' : 'titlebar.maximize')"
+        :title="locale.t(maximized ? 'titlebar.restore' : 'titlebar.maximize')"
+        @click="toggleMaximize"
+      >
         <Copy v-if="maximized" :size="12" />
         <Square v-else :size="12" />
       </button>
-      <button type="button" class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-danger-solid hover:text-white" aria-label="Close" title="Close" @click="close">
+      <button type="button" class="grid w-[46px] place-items-center text-muted-foreground transition-colors hover:bg-danger-solid hover:text-white" :aria-label="locale.t('titlebar.close')" :title="locale.t('titlebar.close')" @click="close">
         <X :size="14" />
       </button>
     </div>

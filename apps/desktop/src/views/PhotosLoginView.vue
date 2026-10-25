@@ -120,7 +120,7 @@ async function pollOnce(sessionId: string): Promise<void> {
   if (pollCount.value > POLL_LIMIT) {
     stopPolling();
     polling.value = false;
-    statusError.value = "Two-factor authentication timed out. Resend the code or sign in again.";
+    statusError.value = locale.t("login.authTimedOut");
     return;
   }
 
@@ -169,18 +169,18 @@ function onSwitchRowClick(event: MouseEvent): void {
 async function handleLogin(): Promise<void> {
   const id = lockAppleId.value ? (props.loginContext.appleId ?? "").trim() : appleId.value.trim();
   if (!id) {
-    toast.error("Enter your Apple ID email");
+    toast.error(locale.t("login.emailRequired"));
     return;
   }
   if (!password.value) {
-    toast.error("Enter your password");
+    toast.error(locale.t("login.passwordRequired"));
     return;
   }
   loading.value = true;
   try {
     const result = await photosLogin({ appleId: id, password: password.value, chinaMainland: chinaMainland.value });
     if (result.status === Status.error) {
-      toast.error(result.message ?? "Sign-in failed");
+      toast.error(result.message ?? locale.t("login.signInFailed"));
       return;
     }
     if (result.status === Status.need2fa && result.sessionId) {
@@ -189,7 +189,7 @@ async function handleLogin(): Promise<void> {
     }
     if (result.sessionId) emit("success", result.sessionId);
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Request failed. Try again later.");
+    toast.error(error instanceof Error ? error.message : locale.t("login.requestFailedLater"));
   } finally {
     loading.value = false;
   }
@@ -291,20 +291,20 @@ async function handleVerify(): Promise<void> {
   if (!sessionId || verifying.value) return;
   const trimmed = code.value;
   if (!/^\d{6}$/.test(trimmed)) {
-    toast.error("Enter the full 6-digit code");
+    toast.error(locale.t("login.codeRequired"));
     return;
   }
   verifying.value = true;
   try {
     const result = await photosVerify2fa({ sessionId, code: trimmed });
     if (result.status === Status.error) {
-      toast.error(result.message ?? "Verification failed");
+      toast.error(result.message ?? locale.t("login.verificationFailed"));
       return;
     }
-    toast.success("Verification successful");
+    toast.success(locale.t("login.verificationSuccess"));
     finish(sessionId);
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Request failed");
+    toast.error(error instanceof Error ? error.message : locale.t("login.requestFailed"));
   } finally {
     verifying.value = false;
   }
@@ -317,12 +317,12 @@ async function handleResend(): Promise<void> {
   try {
     const result = await photosSendCode(sessionId);
     if (result.status === Status.error) {
-      toast.error(result.message ?? "Could not send the verification code");
+      toast.error(result.message ?? locale.t("login.resendFailed"));
       return;
     }
-    toast.success("A new code was sent to your trusted device");
+    toast.success(locale.t("login.codeSentAgain"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Request failed");
+    toast.error(error instanceof Error ? error.message : locale.t("login.requestFailed"));
   } finally {
     resending.value = false;
   }
@@ -386,7 +386,7 @@ function switchToOtherAccount(): void {
 
             <div class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-secondary/45 px-3.5 py-2.5 text-sm select-none" @click="onSwitchRowClick">
               <span class="flex items-center gap-2 text-muted-foreground"><MapPin :size="14" />{{ locale.t("login.china") }}</span>
-              <Switch id="china-mainland" v-model="chinaMainland" aria-label="Mainland China account" />
+              <Switch id="china-mainland" v-model="chinaMainland" :aria-label="locale.t('login.china')" />
             </div>
 
             <Button type="submit" class="mt-1 h-10 w-full rounded-lg" :disabled="loading">
@@ -429,7 +429,7 @@ function switchToOtherAccount(): void {
                 autocomplete="one-time-code"
                 placeholder="·"
                 :autofocus="index === 0"
-                :aria-label="`Two-factor authentication code digit ${index + 1}`"
+                :aria-label="locale.t('login.codeDigitAria', { index: index + 1 })"
                 @input="onCodeDigitInput(index, $event)"
                 @keydown="onCodeKeydown(index, $event)"
                 @paste="onCodePaste(index, $event)"
@@ -456,7 +456,7 @@ function switchToOtherAccount(): void {
           <button type="button" class="rounded-md px-1.5 py-0.5 text-xs text-primary transition-colors hover:bg-accent" @click="switchToOtherAccount">{{ locale.t("login.addOther") }}</button>
         </div>
 
-        <button v-for="item in accounts" :key="item.key" type="button" class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-accent" :aria-label="`Switch to ${item.appleId}`" @click="emit('selectAccount', item.key)">
+        <button v-for="item in accounts" :key="item.key" type="button" class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-accent" :aria-label="locale.t('login.switchToAccount', { account: item.appleId })" @click="emit('selectAccount', item.key)">
           <img v-if="avatars[item.key]" :src="avatars[item.key]" alt="" class="size-9 shrink-0 rounded-full object-cover" />
           <span v-else class="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-semibold text-muted-foreground">{{ displayName(item).charAt(0).toUpperCase() }}</span>
           <span class="min-w-0 flex-1">

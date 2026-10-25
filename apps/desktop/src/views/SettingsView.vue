@@ -130,7 +130,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   <div class="flex h-full min-h-0">
     <aside class="flex w-48 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground select-none">
       <div class="flex h-11 items-center gap-1.5 border-b border-sidebar-border px-2.5 text-sm font-semibold">
-        <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="Back" title="Back" @click="emit('back')">
+        <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" :aria-label="locale.t('settings.back')" :title="locale.t('settings.back')" @click="emit('back')">
           <ArrowLeft :size="15" />
         </button>
         <Settings2 :size="15" />
@@ -301,7 +301,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p class="text-sm font-medium">{{ locale.t("settings.downloadSubfolder") }}</p>
               <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.downloadSubfolderTip") }}</p>
             </div>
-            <Switch id="download-subfolder-setting" v-model="downloadSubfolder" class="mt-0.5 shrink-0" aria-label="Separate task folders" />
+            <Switch id="download-subfolder-setting" v-model="downloadSubfolder" class="mt-0.5 shrink-0" :aria-label="locale.t('settings.separateTaskFolders')" />
           </div>
         </section>
 

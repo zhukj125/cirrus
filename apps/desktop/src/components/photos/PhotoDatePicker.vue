@@ -5,6 +5,7 @@ import { computed, ref, watch } from "vue";
 import DateRangeCalendar from "@/components/ui/date-range-picker/DateRangeCalendar.vue";
 import { RANGE_OPTIONS, type DateBounds, type RangeKey } from "@/lib/photos/dates";
 import type { TimelineSelection, TimelineYearView } from "@/lib/photos/timeline";
+import { useLocaleStore } from "@/stores/locale";
 
 const props = defineProps<{
   activeRange: RangeKey;
@@ -31,9 +32,18 @@ const emit = defineEmits<{
   ensureYear: [number];
 }>();
 
+const locale = useLocaleStore();
+const t = locale.t;
 const mode = ref<"browse" | "custom">(props.activeRange === "custom" && !props.selected ? "custom" : "browse");
 const activeYear = ref<number | null>(null);
-const quickOptions = computed(() => RANGE_OPTIONS.filter((option) => option.key !== "custom"));
+const RANGE_LABEL_KEYS: Record<Exclude<RangeKey, "custom">, string> = {
+  all: "photos.rangeAll",
+  today: "photos.rangeToday",
+  week: "photos.rangeWeek",
+  month: "photos.rangeMonth",
+  year: "photos.rangeYear",
+};
+const quickOptions = computed(() => RANGE_OPTIONS.filter((option): option is { key: Exclude<RangeKey, "custom">; label: string } => option.key !== "custom").map((option) => ({ ...option, label: t(RANGE_LABEL_KEYS[option.key]) })));
 const activeIndex = computed(() => props.years.findIndex((year) => year.year === activeYear.value));
 const activeEntry = computed(() => props.years[activeIndex.value] ?? props.years[0] ?? null);
 const activeYearKey = computed(() => (activeEntry.value ? String(activeEntry.value.year) : ""));
@@ -50,10 +60,10 @@ const months = computed(() => {
     const month = index + 1;
     return {
       key: `${entry.year}-${String(month).padStart(2, "0")}`,
-      label: new Date(2020, month - 1, 1).toLocaleDateString("en-US", { month: "short" }),
+      label: new Date(2020, month - 1, 1).toLocaleDateString(locale.locale, { month: "short" }),
       year: entry.year,
       month,
-      fullLabel: `${new Date(entry.year, month - 1, 1).toLocaleDateString("en-US", { month: "short" })} ${entry.year}`,
+      fullLabel: new Date(entry.year, month - 1, 1).toLocaleDateString(locale.locale, { month: "short", year: "numeric" }),
     };
   });
 });
@@ -95,13 +105,13 @@ function pendingOf(key: string): boolean {
 
 function countOf(key: string): string {
   const exact = exactOf(key);
-  if (exact !== null) return `${exact} photos`;
+  if (exact !== null) return t("photos.photoCount", { count: exact });
   return pendingOf(key) ? "…" : "—";
 }
 
 function countTitle(key: string): string {
-  if (exactOf(key) !== null) return "Exact count";
-  return pendingOf(key) ? "Calculating exact count…" : "Exact count unavailable";
+  if (exactOf(key) !== null) return t("photos.exactCount");
+  return pendingOf(key) ? t("photos.calculatingCount") : t("photos.countUnavailable");
 }
 
 function stepYear(delta: number): void {
@@ -118,14 +128,14 @@ function applyCustom(value: DateBounds): void {
   <section class="w-[352px] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
     <header class="border-b border-border p-2">
       <div class="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5">
-        <button type="button" class="h-7 rounded-[5px] text-xs transition-colors" :class="mode === 'browse' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="mode = 'browse'">Quick & Month</button>
-        <button type="button" class="h-7 rounded-[5px] text-xs transition-colors" :class="mode === 'custom' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="mode = 'custom'">Custom date</button>
+        <button type="button" class="h-7 rounded-[5px] text-xs transition-colors" :class="mode === 'browse' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="mode = 'browse'">{{ t("photos.quickAndMonth") }}</button>
+        <button type="button" class="h-7 rounded-[5px] text-xs transition-colors" :class="mode === 'custom' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="mode = 'custom'">{{ t("photos.customDate") }}</button>
       </div>
     </header>
 
     <template v-if="mode === 'browse'">
       <div class="p-3">
-        <p class="mb-2 text-2xs font-medium tracking-wide text-muted-foreground">Quick select</p>
+        <p class="mb-2 text-2xs font-medium tracking-wide text-muted-foreground">{{ t("photos.quickSelect") }}</p>
         <div class="grid grid-cols-3 gap-1.5">
           <button
             v-for="option in quickOptions"
@@ -143,8 +153,8 @@ function applyCustom(value: DateBounds): void {
 
       <div class="border-t border-border px-3 pt-3 pb-3">
         <div class="mb-2 flex items-center justify-between">
-          <p class="text-2xs font-medium tracking-wide text-muted-foreground">By year and month</p>
-          <p v-if="activeEntry" class="tabular text-2xs text-muted-foreground" :title="countTitle(activeYearKey)">Full year {{ countOf(activeYearKey) }}</p>
+          <p class="text-2xs font-medium tracking-wide text-muted-foreground">{{ t("photos.byYearMonth") }}</p>
+          <p v-if="activeEntry" class="tabular text-2xs text-muted-foreground" :title="countTitle(activeYearKey)">{{ t("photos.fullYear") }} {{ countOf(activeYearKey) }}</p>
         </div>
 
         <template v-if="activeEntry">
@@ -153,21 +163,21 @@ function applyCustom(value: DateBounds): void {
               type="button"
               class="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-background text-muted-foreground transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-35"
               :disabled="activeIndex <= 0"
-              title="Previous year"
-              aria-label="Previous year"
+              :title="t('photos.previousYear')"
+              :aria-label="t('photos.previousYear')"
               @click="stepYear(-1)"
             >
               <ChevronLeft :size="14" />
             </button>
-            <select v-model="activeYear" class="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-center text-xs font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-ring/20" aria-label="Select year">
+            <select v-model="activeYear" class="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-center text-xs font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-ring/20" :aria-label="t('photos.selectYear')">
               <option v-for="year in years" :key="year.key" :value="year.year">{{ year.label }}</option>
             </select>
             <button
               type="button"
               class="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-background text-muted-foreground transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-35"
               :disabled="activeIndex < 0 || activeIndex >= years.length - 1"
-              title="Next year"
-              aria-label="Next year"
+              :title="t('photos.nextYear')"
+              :aria-label="t('photos.nextYear')"
               @click="stepYear(1)"
             >
               <ChevronRight :size="14" />
@@ -180,7 +190,7 @@ function applyCustom(value: DateBounds): void {
             :class="selected?.year === activeEntry.year && selected.month === null ? 'border-primary/35 bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'"
             @click="emit('selectTimeline', { year: activeEntry.year, month: null })"
           >
-            <span class="font-medium text-foreground">Full year</span>
+            <span class="font-medium text-foreground">{{ t("photos.fullYear") }}</span>
             <span class="tabular ml-auto" :title="countTitle(activeYearKey)">{{ countOf(activeYearKey) }}</span>
           </button>
 
@@ -201,17 +211,17 @@ function applyCustom(value: DateBounds): void {
           </div>
         </template>
 
-        <p v-else class="py-5 text-center text-xs text-muted-foreground">{{ loading ? "Loading year and month data…" : "Year and month navigation is unavailable" }}</p>
+        <p v-else class="py-5 text-center text-xs text-muted-foreground">{{ loading ? t("photos.loadingYears") : t("photos.yearsUnavailable") }}</p>
       </div>
     </template>
 
     <div v-else class="p-3">
       <div class="mb-2 flex items-center justify-between gap-3">
         <div class="min-w-0">
-          <p class="text-2xs font-medium tracking-wide text-muted-foreground">Custom date</p>
+          <p class="text-2xs font-medium tracking-wide text-muted-foreground">{{ t("photos.customDate") }}</p>
           <p v-if="customLabel" class="tabular mt-0.5 truncate text-xs text-foreground" :title="customLabel">{{ customLabel }}</p>
         </div>
-        <button type="button" class="shrink-0 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="mode = 'browse'">Back</button>
+        <button type="button" class="shrink-0 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="mode = 'browse'">{{ t("common.back") }}</button>
       </div>
       <DateRangeCalendar :model-value="customValue" @update:model-value="applyCustom" @cancel="mode = 'browse'" />
     </div>
