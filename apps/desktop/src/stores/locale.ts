@@ -175,6 +175,8 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "titlebar.changeTheme": { zh: "切换主题（当前：{theme}）", en: "Change theme (current: {theme})" },
   "titlebar.changeThemeAria": { zh: "切换主题，当前：{theme}", en: "Change theme, current: {theme}" },
   "titlebar.settings": { zh: "设置", en: "Settings" },
+  "titlebar.github": { zh: "GitHub 仓库", en: "GitHub repository" },
+  "titlebar.githubOpenFailed": { zh: "无法打开 GitHub 仓库", en: "Could not open the GitHub repository" },
   "titlebar.minimize": { zh: "最小化", en: "Minimize" },
   "titlebar.maximize": { zh: "最大化", en: "Maximize" },
   "titlebar.restore": { zh: "还原", en: "Restore" },
