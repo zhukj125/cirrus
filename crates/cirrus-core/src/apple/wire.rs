@@ -64,7 +64,7 @@ impl ClientContext {
             device_list_version: 1,
             fmly: true,
             timezone: "US/Pacific",
-            inactive_time: 1313,
+            inactive_time: 21,
         }
     }
 }
@@ -73,8 +73,11 @@ impl ClientContext {
 #[serde(rename_all = "camelCase")]
 pub struct AccountLoginRequest {
     pub account_country_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ds_web_auth_token: Option<String>,
+    #[serde(rename = "extended_login")]
     pub extended_login: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_token: Option<String>,
 }
 

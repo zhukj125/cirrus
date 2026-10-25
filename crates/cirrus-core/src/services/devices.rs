@@ -15,8 +15,56 @@ fn web_auth_token(session: &SrpSession) -> Option<String> {
     session.session_data(SESSION_TOKEN).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string)
 }
 
+fn ensure_fmip_client_id(session: &mut SrpSession) -> String {
+    let client_id = session
+        .session_data(FMIP_CLIENT_ID)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    session.set_session_data(FMIP_CLIENT_ID, &client_id);
+    client_id
+}
+
+fn account_login_ready(session: &SrpSession) -> bool {
+    let has_web_auth_token = session
+        .cookie_value_for(session.setup_base(), "X-APPLE-WEBAUTH-TOKEN")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    session.dsid().is_some()
+        && session.find_me_url().is_some()
+        && session.contacts_url().is_some()
+        && has_web_auth_token
+}
+
+fn account_login_payload(session: &SrpSession, country: String) -> AccountLoginRequest {
+    let trust_token = session.session_data(TRUST_TOKEN).filter(|value| !value.trim().is_empty()).map(str::to_string);
+    AccountLoginRequest {
+        account_country_code: country,
+        ds_web_auth_token: web_auth_token(session),
+        extended_login: trust_token.is_some(),
+        trust_token,
+    }
+}
+
+fn account_login_url(session: &SrpSession, client_id: &str) -> String {
+    let request_id = Uuid::new_v4();
+    let build = utf8_percent_encode(hc::CLIENT_BUILD_NUMBER, NON_ALPHANUMERIC).to_string();
+    let client_id = utf8_percent_encode(client_id, NON_ALPHANUMERIC).to_string();
+    let mut url = format!(
+        "{}{}?requestId={request_id}&clientBuildNumber={build}&clientMasteringNumber={build}&clientId={client_id}",
+        session.setup_base(),
+        api::setup::ACCOUNT_LOGIN,
+    );
+    if let Some(dsid) = session.dsid().filter(|value| !value.trim().is_empty()) {
+        url.push_str("&dsid=");
+        url.push_str(&utf8_percent_encode(dsid, NON_ALPHANUMERIC).to_string());
+    }
+    url
+}
+
 pub async fn list_devices(handle: &SessionHandle) -> DeviceInfoResult {
     let mut session = handle.lock().await;
+    ensure_fmip_client_id(&mut session);
 
     if let Err(error) = account_login(&mut session, false).await {
         log::warn!("[DEVICE] accountLogin failed: {error}");
@@ -25,12 +73,6 @@ pub async fn list_devices(handle: &SessionHandle) -> DeviceInfoResult {
     if session.dsid().is_none() {
         return DeviceInfoResult::error("accountLogin did not return a dsid; devices cannot be queried");
     }
-    let client_id = session
-        .session_data(FMIP_CLIENT_ID)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    session.set_session_data(FMIP_CLIENT_ID, &client_id);
 
     if session.server_context().is_some() {
         match find_my_refresh(&mut session).await {
@@ -49,15 +91,30 @@ pub async fn list_devices(handle: &SessionHandle) -> DeviceInfoResult {
             result
         }
         Err(error) => {
-            log::warn!("[DEVICE] initClient failed: {error}");
-            DeviceInfoResult::error(error.to_string())
+            log::warn!("[DEVICE] initClient failed; refreshing accountLogin and retrying: {error}");
+            if let Err(login_error) = account_login(&mut session, true).await {
+                log::warn!("[DEVICE] accountLogin retry failed: {login_error}");
+                return DeviceInfoResult::error(format!(
+                    "initClient failed: {error}; accountLogin retry failed: {login_error}"
+                ));
+            }
+            match find_my_init(&mut session).await {
+                Ok(result) => {
+                    handle.touch();
+                    result
+                }
+                Err(retry_error) => {
+                    log::warn!("[DEVICE] initClient retry failed: {retry_error}");
+                    DeviceInfoResult::error(retry_error.to_string())
+                }
+            }
         }
     }
 }
 // ---- Step 1: accountLogin ----
 
 pub async fn account_login(session: &mut SrpSession, force: bool) -> AppResult<()> {
-    if !force && session.dsid().is_some() && session.contacts_url().is_some() {
+    if !force && account_login_ready(session) {
         return Ok(());
     }
     if force {
@@ -70,17 +127,15 @@ pub async fn account_login(session: &mut SrpSession, force: bool) -> AppResult<(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(hc::DEFAULT_ACCOUNT_COUNTRY)
             .to_string();
-        let payload = AccountLoginRequest {
-            account_country_code: country,
-            ds_web_auth_token: web_auth_token(session),
-            extended_login: true,
-            trust_token: session.session_data(TRUST_TOKEN).map(str::to_string),
-        };
+        let client_id = ensure_fmip_client_id(session);
+        let payload = account_login_payload(session, country);
         let payload = serde_json::to_value(&payload).map_err(AppError::from)?;
 
-        let owned_headers = session.oauth_headers();
+        let mut owned_headers = session.oauth_headers();
+        owned_headers.push((hh::CONTENT_TYPE, hc::CONTENT_TYPE_TEXT_PLAIN.to_string()));
+        owned_headers.push((hh::ACCEPT, "*/*".to_string()));
         let headers: Vec<(&str, &str)> = owned_headers.iter().map(|(name, value)| (*name, value.as_str())).collect();
-        let url = format!("{}{}", session.setup_base(), api::setup::ACCOUNT_LOGIN);
+        let url = account_login_url(session, &client_id);
         let response = session.request(Method::POST, &url, Some(&payload), &headers).await?;
 
         if response.status == 302 {
@@ -285,9 +340,11 @@ pub async fn play_sound(handle: &SessionHandle, device_id: &str) -> PlaySoundRes
 
     let find_me_url = session.find_me_url().unwrap_or_default().to_string();
     let dsid = session.dsid().unwrap_or_default().to_string();
-    let client_id = session.client_id().to_string();
-    let build = utf8_percent_encode(hc::CLIENT_BUILD_NUMBER, NON_ALPHANUMERIC).to_string();
-    let client_id_encoded = utf8_percent_encode(&client_id, NON_ALPHANUMERIC).to_string();
+    let Some(client_id) = session.session_data(FMIP_CLIENT_ID).filter(|value| !value.trim().is_empty()) else {
+        return PlaySoundResult::error("Find My clientId is not initialized. Load devices first.");
+    };
+    let build = utf8_percent_encode(hc::FIND_MY_CLIENT_BUILD_NUMBER, NON_ALPHANUMERIC).to_string();
+    let client_id_encoded = utf8_percent_encode(client_id, NON_ALPHANUMERIC).to_string();
 
     let url = format!(
         "{find_me_url}{play}{q_build}{build}{q_master}{build}{q_client}{client_id}{q_dsid}{dsid}",
@@ -423,5 +480,74 @@ mod tests {
         let data = json!({"webservices": {"findme": {"url": "https://p12-fmip.icloud.com/"}}});
         assert_eq!(service_url(&data, "findme").as_deref(), Some("https://p12-fmip.icloud.com"));
         assert_eq!(service_url(&data, "photos"), None);
+    }
+
+    fn sample_session() -> SrpSession {
+        SrpSession::with_endpoints(
+            "user@example.com".to_string(),
+            None,
+            crate::apple::api::auth::BASE_CN,
+            crate::apple::api::setup::BASE_CN,
+            crate::apple::api::home::URL_CN,
+        )
+        .expect("构造测试会话失败")
+    }
+
+    #[test]
+    fn fmip_client_id_is_stable_and_valid() {
+        let mut session = sample_session();
+        let first = ensure_fmip_client_id(&mut session);
+        let second = ensure_fmip_client_id(&mut session);
+        assert_eq!(first, second);
+        assert!(uuid::Uuid::parse_str(&first).is_ok());
+    }
+
+    #[test]
+    fn account_login_url_matches_the_web_session_contract() {
+        let mut session = sample_session();
+        session.set_dsid(Some("489338457".to_string()));
+        let url = account_login_url(&session, "6037bbb4fb4e4af5935474902a2e036c");
+        assert!(url.starts_with("https://setup.icloud.com.cn/setup/ws/1/accountLogin?requestId="));
+        assert!(url.contains("&clientBuildNumber=2638Build27"));
+        assert!(url.contains("&clientMasteringNumber=2638Build27"));
+        assert!(url.contains("&clientId=6037bbb4fb4e4af5935474902a2e036c"));
+        assert!(url.ends_with("&dsid=489338457"));
+    }
+
+    #[test]
+    fn account_login_payload_stays_basic_without_a_trust_token() {
+        let session = sample_session();
+        let payload = serde_json::to_value(account_login_payload(&session, "CHN".to_string()))
+            .expect("序列化 accountLogin 请求失败");
+        assert_eq!(payload["accountCountryCode"], "CHN");
+        assert_eq!(payload["extended_login"], false);
+        assert!(payload.get("dsWebAuthToken").is_none());
+        assert!(payload.get("trustToken").is_none());
+    }
+
+    #[test]
+    fn account_login_payload_enables_extended_login_after_trusting_the_browser() {
+        let mut session = sample_session();
+        session.set_session_data(SESSION_TOKEN, "ds-web-auth-token");
+        session.set_session_data(TRUST_TOKEN, "two-step-trust-token");
+        let payload = serde_json::to_value(account_login_payload(&session, "CHN".to_string()))
+            .expect("序列化 accountLogin 请求失败");
+        assert_eq!(payload["dsWebAuthToken"], "ds-web-auth-token");
+        assert_eq!(payload["extended_login"], true);
+        assert_eq!(payload["trustToken"], "two-step-trust-token");
+    }
+
+    #[test]
+    fn find_my_url_reuses_the_same_client_id() {
+        let mut session = sample_session();
+        session.set_dsid(Some("489338457".to_string()));
+        session.set_find_me_url(Some("https://p232-fmipweb.icloud.com.cn:443".to_string()));
+        session.set_session_data(FMIP_CLIENT_ID, "6037bbb4fb4e4af5935474902a2e036c");
+        let url = find_my_service_url(&session, api::find_my::REFRESH_CLIENT).expect("构造 Find My URL 失败");
+        assert!(url.starts_with("https://p232-fmipweb.icloud.com.cn:443/fmipservice/client/web/refreshClient?"));
+        assert!(url.contains("clientBuildNumber=2638Build19"));
+        assert!(url.contains("clientMasteringNumber=2638Build19"));
+        assert!(url.contains("clientId=6037bbb4fb4e4af5935474902a2e036c"));
+        assert!(url.ends_with("&dsid=489338457"));
     }
 }

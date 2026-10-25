@@ -14,6 +14,7 @@ pub mod statuses {
     pub const SUBMITTED: &str = "SUBMITTED";
 
     pub const CODE_SENT: &str = "CODE_SENT";
+    pub const TRUST_BROWSER_REQUIRED: &str = "TRUST_BROWSER_REQUIRED";
 
     pub const AUTHENTICATED: &str = "AUTHENTICATED";
     pub const PENDING: &str = "PENDING";
@@ -32,6 +33,7 @@ pub mod session_keys {
     pub const BOOTSTRAP_BODY: &str = "bootstrap_body";
     pub const CHALLENGE_BODY: &str = "challenge_body";
 
+    pub const TWO_FACTOR_VERIFIED: &str = "two_factor_verified";
     pub const PHOTOS_VERIFIED: &str = "photos_2fa_verified";
 
     pub const PHOTOS_ACCESS_PROBE_AT: &str = "photos_access_probe_at";
@@ -276,6 +278,17 @@ impl PhotosLoginResult {
         }
     }
 
+    pub fn trust_browser_required(session_id: String) -> Self {
+        Self {
+            status: statuses::TRUST_BROWSER_REQUIRED.to_string(),
+            message: Some("Verification succeeded. Choose whether to trust this browser.".to_string()),
+            session_id: Some(session_id),
+            auth_type: None,
+            first_name: None,
+            last_name: None,
+        }
+    }
+
     pub fn ok(session_id: String, first_name: Option<String>, last_name: Option<String>) -> Self {
         Self {
             status: statuses::OK.to_string(),
@@ -515,6 +528,13 @@ impl Photos2faOptions {
 pub struct PhotosVerifyRequest {
     pub session_id: String,
     pub code: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotosFinish2faRequest {
+    pub session_id: String,
+    pub trust_browser: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

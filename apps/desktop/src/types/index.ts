@@ -103,7 +103,7 @@ export interface RuntimeInfo {
 }
 
 export interface PhotosLoginResult {
-  status: "NEED_2FA" | "OK" | "ERROR";
+  status: "NEED_2FA" | "TRUST_BROWSER_REQUIRED" | "OK" | "ERROR";
   message: string | null;
   sessionId: string | null;
   authType: string | null;

@@ -381,28 +381,59 @@ async fn verify_device_code(session: &mut SrpSession, code: &str) -> PhotosLogin
             extract_verify_error(&response.body)
         ));
     }
-    activate(session, &headers).await
+    session.set_session_data(TWO_FACTOR_VERIFIED, FLAG_TRUE);
+    PhotosLoginResult::trust_browser_required(session.id().to_string())
 }
 
-async fn activate(session: &mut SrpSession, headers: &[(&'static str, String)]) -> PhotosLoginResult {
+async fn trust_current_browser(session: &mut SrpSession) -> AppResult<()> {
+    let headers = device_headers(session);
+    let refs = header_refs(&headers);
     let url = format!("{}{}", session.auth_base(), api::auth::TRUST);
-    let refs = header_refs(headers);
-    let trust = match session.request(Method::GET, &url, None, &refs).await {
-        Ok(response) => response,
-        Err(error) => {
-            log::warn!("[PHOTOS] service activation failed: {error}");
-            return PhotosLoginResult::error(format!("Verification succeeded, but service activation failed: {error}"));
-        }
-    };
-    log::info!("[PHOTOS] GET /2sv/trust: HTTP {}", trust.status);
+    let response = session.request(Method::GET, &url, None, &refs).await?;
+    log::info!("[PHOTOS] GET /2sv/trust: HTTP {}", response.status);
+    if response.status != 200 && response.status != 204 {
+        return Err(AppError::auth(format!(
+            "could not trust this browser: HTTP {} {}",
+            response.status,
+            auth_service::truncate(&response.body, photos_api::TRUNCATE_ERROR)
+        )));
+    }
+    Ok(())
+}
 
-    if let Err(error) = devices::account_login(session, true).await {
+pub async fn finish_2fa(manager: &SessionManager, session_id: &str, trust_browser: bool) -> PhotosLoginResult {
+    if session_id.trim().is_empty() {
+        return PhotosLoginResult::error("Missing session ID. Please sign in again.");
+    }
+    let handle = match manager.get(session_id).await {
+        Ok(handle) => handle,
+        Err(error) => return PhotosLoginResult::error(error.to_string()),
+    };
+    let mut session = handle.lock().await;
+    if !session.is_flag_set(TWO_FACTOR_VERIFIED) {
+        return PhotosLoginResult::error("Verification is not complete. Enter the verification code again.");
+    }
+
+    if trust_browser {
+        if let Err(error) = trust_current_browser(&mut session).await {
+            log::warn!("[PHOTOS] trusting this browser failed: {error}");
+            return PhotosLoginResult::error(error.to_string());
+        }
+    } else {
+        session.remove_session_data(TRUST_TOKEN);
+    }
+
+    if let Err(error) = devices::account_login(&mut session, true).await {
         log::warn!("[PHOTOS] service activation failed: {error}");
         return PhotosLoginResult::error(format!("Verification succeeded, but service activation failed: {error}"));
     }
     session.set_session_data(PHOTOS_VERIFIED, FLAG_TRUE);
-    log::info!("[PHOTOS] 2FA verification succeeded (dsid={:?}, photos={:?})", session.dsid(), session.photos_url());
-    ok_result(session)
+    log::info!(
+        "[PHOTOS] 2FA verification succeeded (trusted_browser={trust_browser}, dsid={:?}, photos={:?})",
+        session.dsid(),
+        session.photos_url()
+    );
+    ok_result(&session)
 }
 
 fn device_headers(session: &SrpSession) -> Vec<(&'static str, String)> {
@@ -461,9 +492,9 @@ pub async fn check_approval(manager: &SessionManager, session_id: &str) -> Photo
     session.set_session_data(PHOTOS_ACCESS_PROBE_AT, now.to_string());
     match photos_accessible(&mut session).await {
         Ok(true) => {
-            session.set_session_data(PHOTOS_VERIFIED, FLAG_TRUE);
-            log::info!("[PHOTOS] session is authorized; CloudKit Photos API is available");
-            ok_result(&session)
+            session.set_session_data(TWO_FACTOR_VERIFIED, FLAG_TRUE);
+            log::info!("[PHOTOS] session is authorized; waiting for the browser trust choice");
+            PhotosLoginResult::trust_browser_required(session.id().to_string())
         }
         Ok(false) => PhotosLoginResult::error(WAIT_2FA_MESSAGE),
         Err(error) => PhotosLoginResult::error(error.to_string()),
@@ -656,16 +687,9 @@ pub async fn verify_phone_2fa(
         return PhotosLoginResult::error(extract_verify_error(&response.body));
     }
 
-    if let Err(error) = devices::account_login(&mut session, false).await {
-        return PhotosLoginResult::error(error.to_string());
-    }
-    session.set_session_data(PHOTOS_VERIFIED, FLAG_TRUE);
-    log::info!(
-        "[PHOTOS] SMS 2FA verification succeeded (dsid={:?}, photos={:?})",
-        session.dsid(),
-        session.photos_url()
-    );
-    ok_result(&session)
+    session.set_session_data(TWO_FACTOR_VERIFIED, FLAG_TRUE);
+    log::info!("[PHOTOS] SMS 2FA code verified; waiting for the browser trust choice");
+    PhotosLoginResult::trust_browser_required(session.id().to_string())
 }
 
 pub async fn list(
@@ -2215,6 +2239,23 @@ impl VerifyErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::PhotosFinish2faRequest;
+
+    #[test]
+    fn trust_required_result_keeps_the_session_id() {
+        let result = PhotosLoginResult::trust_browser_required("session-1".to_string());
+        assert_eq!(result.status, statuses::TRUST_BROWSER_REQUIRED);
+        assert_eq!(result.session_id.as_deref(), Some("session-1"));
+        assert!(result.message.as_deref().unwrap_or_default().contains("trust this browser"));
+    }
+
+    #[test]
+    fn finish_2fa_request_deserializes_the_trust_choice() {
+        let request: PhotosFinish2faRequest =
+            serde_json::from_str(r#"{"sessionId":"session-1","trustBrowser":true}"#).expect("解析 trust 选择失败");
+        assert_eq!(request.session_id, "session-1");
+        assert!(request.trust_browser);
+    }
 
     fn sample_body() -> String {
         json!({

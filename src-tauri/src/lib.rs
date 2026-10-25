@@ -50,6 +50,7 @@ pub fn run() {
             commands::session::session_logout,
             commands::photos::photos_login,
             commands::photos::photos_verify_2fa,
+            commands::photos::photos_finish_2fa,
             commands::photos::photos_send_code,
             commands::photos::photos_list,
             commands::photos::photos_total,

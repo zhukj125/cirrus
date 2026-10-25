@@ -322,6 +322,10 @@ impl SrpSession {
         self.session_data.insert(key.to_string(), value.into());
     }
 
+    pub fn remove_session_data(&mut self, key: &str) {
+        self.session_data.remove(key);
+    }
+
     pub fn is_flag_set(&self, key: &str) -> bool {
         self.session_data.get(key).map(String::as_str) == Some(FLAG_TRUE)
     }

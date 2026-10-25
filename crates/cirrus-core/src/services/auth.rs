@@ -138,7 +138,7 @@ pub async fn complete_srp_auth(handle: &SessionHandle, session_id: &str) -> AppR
     let complete_headers = session.auth_headers();
     let complete_headers: Vec<(&str, &str)> =
         complete_headers.iter().map(|(name, value)| (*name, value.as_str())).collect();
-    let url = format!("{}{}", session.auth_base(), api::auth::SIGNIN_COMPLETE);
+    let url = format!("{}{}?isRememberMeEnabled=true", session.auth_base(), api::auth::SIGNIN_COMPLETE);
     let response = session.request(Method::POST, &url, Some(&payload), &complete_headers).await?;
 
     session.clear_password();

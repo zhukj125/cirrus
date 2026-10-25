@@ -42,6 +42,17 @@ fn sessions<'a, 'r>(state: &'a State<'r, Arc<AppState>>) -> &'a SessionManager {
     &state.inner().sessions
 }
 
+async fn persist_authenticated_session(state: &AppState, session_id: &str) {
+    match state.sessions.get(session_id).await {
+        Ok(handle) => {
+            if let Err(error) = state.sessions.persist(&handle).await {
+                log::warn!("[PHOTOS] failed to persist session after 2FA; current sign-in remains valid: {error}");
+            }
+        }
+        Err(error) => log::warn!("[PHOTOS] failed to read session after 2FA; skipping persistence: {error}"),
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavePhotoRequest {
@@ -96,16 +107,20 @@ pub async fn photos_login(state: SharedState<'_>, payload: CredentialsRequest) -
 #[tauri::command]
 pub async fn photos_verify_2fa(state: SharedState<'_>, payload: PhotosVerifyRequest) -> AppResult<PhotosLoginResult> {
     let result = photos::verify_2fa(sessions(&state), &payload.session_id, &payload.code).await;
-
     if result.status == statuses::OK {
-        match state.sessions.get(&payload.session_id).await {
-            Ok(handle) => {
-                if let Err(error) = state.sessions.persist(&handle).await {
-                    log::warn!("[PHOTOS] failed to persist session after 2FA; current sign-in remains valid: {error}");
-                }
-            }
-            Err(error) => log::warn!("[PHOTOS] failed to read session after 2FA; skipping persistence: {error}"),
-        }
+        persist_authenticated_session(state.inner(), &payload.session_id).await;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn photos_finish_2fa(
+    state: SharedState<'_>,
+    payload: PhotosFinish2faRequest,
+) -> AppResult<PhotosLoginResult> {
+    let result = photos::finish_2fa(sessions(&state), &payload.session_id, payload.trust_browser).await;
+    if result.status == statuses::OK {
+        persist_authenticated_session(state.inner(), &payload.session_id).await;
     }
     Ok(result)
 }

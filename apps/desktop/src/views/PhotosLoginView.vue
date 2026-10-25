@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { ArrowRight, MapPin, ShieldCheck } from "@lucide/vue";
 
 import { Status } from "@/constants";
-import { photos2faOptions, photosCheckApproval, photosLogin, photosSendCode, photosStatus, photosVerify2fa } from "@/lib/api";
+import { photos2faOptions, photosCheckApproval, photosFinish2fa, photosLogin, photosSendCode, photosStatus, photosVerify2fa } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
 import Spinner from "@/components/ui/Spinner.vue";
@@ -56,6 +56,8 @@ const polling = ref(false);
 const statusError = ref<string | null>(null);
 const deviceCount = ref<number | null>(null);
 const pollCount = ref(0);
+const awaitingTrust = ref(false);
+const finishingTrust = ref<boolean | null>(null);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const showReloginPrompt = computed(() => props.loginContext.mode === "relogin-expired" && !reloginConfirmed.value && !pendingSessionId.value);
@@ -116,6 +118,7 @@ function finish(sessionId: string): void {
 }
 
 async function pollOnce(sessionId: string): Promise<void> {
+  if (awaitingTrust.value) return;
   pollCount.value += 1;
   if (pollCount.value > POLL_LIMIT) {
     stopPolling();
@@ -134,10 +137,18 @@ async function pollOnce(sessionId: string): Promise<void> {
 
   const approval = await photosCheckApproval(sessionId).catch(() => null);
   if (approval === null || pendingSessionId.value !== sessionId) return;
+  if (approval.status === Status.trustBrowserRequired) {
+    stopPolling();
+    polling.value = false;
+    awaitingTrust.value = true;
+    return;
+  }
   if (approval.status === Status.ok) finish(sessionId);
 }
 
 watch(pendingSessionId, (sessionId) => {
+  awaitingTrust.value = false;
+  finishingTrust.value = null;
   if (!sessionId) return;
   void photos2faOptions(sessionId)
     .then((options) => {
@@ -302,11 +313,36 @@ async function handleVerify(): Promise<void> {
       return;
     }
     toast.success(locale.t("login.verificationSuccess"));
+    if (result.status === Status.trustBrowserRequired) {
+      stopPolling();
+      polling.value = false;
+      awaitingTrust.value = true;
+      return;
+    }
     finish(sessionId);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : locale.t("login.requestFailed"));
   } finally {
     verifying.value = false;
+  }
+}
+
+async function handleTrustDecision(trustBrowser: boolean): Promise<void> {
+  const sessionId = pendingSessionId.value;
+  if (!sessionId || finishingTrust.value !== null) return;
+  finishingTrust.value = trustBrowser;
+  try {
+    const result = await photosFinish2fa({ sessionId, trustBrowser });
+    if (result.status === Status.error) {
+      toast.error(result.message ?? locale.t("login.trustChoiceFailed"));
+      return;
+    }
+    toast.success(locale.t("login.verificationSuccess"));
+    finish(sessionId);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : locale.t("login.requestFailed"));
+  } finally {
+    finishingTrust.value = null;
   }
 }
 
@@ -330,6 +366,8 @@ async function handleResend(): Promise<void> {
 
 function resetToLogin(): void {
   pendingSessionId.value = null;
+  awaitingTrust.value = false;
+  finishingTrust.value = null;
   codeDigits.value = Array.from({ length: CODE_LENGTH }, () => "");
   statusError.value = null;
   deviceCount.value = null;
@@ -397,6 +435,29 @@ function switchToOtherAccount(): void {
 
             <button v-if="loginContext.mode === 'relogin-expired'" type="button" class="rounded-md py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="switchToOtherAccount">{{ locale.t("login.switchOther") }}</button>
           </form>
+
+          <div v-else-if="awaitingTrust" class="flex flex-col gap-4" data-testid="trust-browser-prompt">
+            <div class="flex items-start gap-3">
+              <span class="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck :size="18" /></span>
+              <div>
+                <p class="text-sm font-medium">{{ locale.t("login.trustBrowserTitle") }}</p>
+                <p class="mt-0.5 text-xs leading-5 text-muted-foreground">{{ locale.t("login.trustBrowserDescription") }}</p>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-border bg-secondary/45 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
+              {{ locale.t("login.trustBrowserPrivateHint") }}
+            </div>
+
+            <Button class="h-10 w-full rounded-lg" :disabled="finishingTrust !== null" @click="handleTrustDecision(true)">
+              <Spinner v-if="finishingTrust === true" :size="13" />
+              {{ finishingTrust === true ? locale.t("login.finishingTrustChoice") : locale.t("login.trustBrowser") }}
+            </Button>
+            <Button variant="outline" class="h-10 w-full rounded-lg" :disabled="finishingTrust !== null" @click="handleTrustDecision(false)">
+              <Spinner v-if="finishingTrust === false" :size="13" />
+              {{ finishingTrust === false ? locale.t("login.finishingTrustChoice") : locale.t("login.dontTrustBrowser") }}
+            </Button>
+          </div>
 
           <div v-else class="flex flex-col gap-4">
             <div class="flex items-center gap-3">

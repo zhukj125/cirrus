@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({
   accountStoreSave: vi.fn(async () => undefined),
   photosLogin: vi.fn(),
   photosVerify2fa: vi.fn(),
+  photosFinish2fa: vi.fn(),
   photosSendCode: vi.fn(),
   photos2faOptions: vi.fn(async () => ({ status: "OK", message: null, trustedDevice: true, trustedDeviceCount: 1, phones: [] })),
   photosCheckApproval: vi.fn(),

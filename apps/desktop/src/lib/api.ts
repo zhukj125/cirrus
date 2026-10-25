@@ -71,6 +71,10 @@ export function photosVerify2fa(payload: { sessionId: string; code: string }): P
   return call<PhotosLoginResult>("photos_verify_2fa", payload);
 }
 
+export function photosFinish2fa(payload: { sessionId: string; trustBrowser: boolean }): Promise<PhotosLoginResult> {
+  return call<PhotosLoginResult>("photos_finish_2fa", payload);
+}
+
 export function photosSendCode(sessionId: string): Promise<PhotosLoginResult> {
   return call<PhotosLoginResult>("photos_send_code", { sessionId });
 }

@@ -5,6 +5,7 @@ export const Status = {
   error: "ERROR",
   success: "SUCCESS",
   need2fa: "NEED_2FA",
+  trustBrowserRequired: "TRUST_BROWSER_REQUIRED",
   submitted: "SUBMITTED",
   authenticated: "AUTHENTICATED",
   pending: "PENDING",
