@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
-use tauri_plugin_opener::OpenerExt;
 
 use cirrus_core::models::*;
 use cirrus_core::services::{media, photos};
@@ -19,14 +18,24 @@ pub struct OpenDownloadFolderRequest {
 }
 
 #[tauri::command]
-pub fn open_download_folder(app: AppHandle, payload: OpenDownloadFolderRequest) -> AppResult<()> {
+pub fn open_download_folder(payload: OpenDownloadFolderRequest) -> AppResult<()> {
     let path = Path::new(payload.path.trim());
     if !path.is_absolute() || !path.is_dir() {
         return Err(cirrus_core::AppError::other("Download folder does not exist or is not accessible"));
     }
-    app.opener()
-        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
-        .map_err(|error| cirrus_core::AppError::other(format!("Could not open folder: {error}")))
+
+    #[cfg(target_os = "windows")]
+    let program = "explorer.exe";
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+
+    std::process::Command::new(program)
+        .arg(path)
+        .spawn()
+        .map_err(|error| cirrus_core::AppError::other(format!("Could not open folder: {error}")))?;
+    Ok(())
 }
 
 fn sessions<'a, 'r>(state: &'a State<'r, Arc<AppState>>) -> &'a SessionManager {

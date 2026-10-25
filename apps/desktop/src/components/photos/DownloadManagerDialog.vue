@@ -30,6 +30,18 @@ const settingsOpen = ref(false);
 const speedLimitMb = ref("");
 const downloadDirectory = ref(readStored(StorageKey.downloadDirectory) ?? "");
 const headerTitle = computed(() => (settingsOpen.value ? "Download Settings" : "Download Photos"));
+const headerSubtitle = computed(() => (settingsOpen.value ? "Bandwidth limits for all active downloads" : "Choose a photo range and destination"));
+const taskOverview = computed(() => {
+  let running = 0;
+  let paused = 0;
+  let completed = 0;
+  for (const task of downloads.tasks) {
+    if (task.status === "running") running += 1;
+    else if (task.status === "paused") paused += 1;
+    else if (task.status === "done") completed += 1;
+  }
+  return { running, paused, completed };
+});
 
 function openSettings(): void {
   speedLimitMb.value = downloads.speedLimitBytesPerSec > 0 ? String(Number((downloads.speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))) : "";
@@ -55,13 +67,21 @@ const SLOW_SEARCH_MS = 5000;
 
 const TASK_PAGE_SIZE = 10;
 const taskPage = ref(1);
+const queueTab = ref<"active" | "completed">("active");
 
 const detailsTaskId = ref<string | null>(null);
 const detailsTab = ref<"downloading" | "queued" | "completed">("downloading");
 
-const totalPages = computed(() => Math.max(1, Math.ceil(downloads.tasks.length / TASK_PAGE_SIZE)));
+const activeTasks = computed(() => downloads.tasks.filter((task) => task.status !== "done"));
+const completedTasks = computed(() => downloads.tasks.filter((task) => task.status === "done"));
+const visibleTasks = computed(() => (queueTab.value === "active" ? activeTasks.value : completedTasks.value));
+const totalPages = computed(() => Math.max(1, Math.ceil(visibleTasks.value.length / TASK_PAGE_SIZE)));
+const pagedTasks = computed(() => visibleTasks.value.slice((taskPage.value - 1) * TASK_PAGE_SIZE, taskPage.value * TASK_PAGE_SIZE));
 
-const pagedTasks = computed(() => downloads.tasks.slice((taskPage.value - 1) * TASK_PAGE_SIZE, taskPage.value * TASK_PAGE_SIZE));
+function selectQueueTab(tab: "active" | "completed"): void {
+  queueTab.value = tab;
+  taskPage.value = 1;
+}
 const detailsTask = computed(() => downloads.tasks.find((task) => task.id === detailsTaskId.value) ?? null);
 const detailsQueue = computed(() => (detailsTask.value ? queueView(detailsTask.value, Number.MAX_SAFE_INTEGER) : null));
 
@@ -118,6 +138,10 @@ function openTaskDetails(task: DownloadTask): void {
   else detailsTab.value = "completed";
 }
 
+function folderLabel(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
 function formatTaskCreatedAt(createdAt: number): string {
   return new Date(createdAt).toLocaleString("en-US", {
     year: "numeric",
@@ -142,9 +166,23 @@ watch(totalPages, (pages) => {
   if (taskPage.value > pages) taskPage.value = pages;
 });
 
+watch(queueTab, () => {
+  taskPage.value = 1;
+});
+
+watch(
+  () => downloads.dialogOpen,
+  (open) => {
+    if (!open) return;
+    queueTab.value = activeTasks.value.length > 0 || completedTasks.value.length === 0 ? "active" : "completed";
+    taskPage.value = 1;
+  },
+);
+
 watch(
   () => downloads.tasks[0]?.id,
   () => {
+    queueTab.value = "active";
     taskPage.value = 1;
   },
 );
@@ -576,185 +614,221 @@ watch(
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[1900] grid place-items-center bg-black/35 p-6">
-    <div class="flex h-[min(720px,calc(100vh-48px))] w-[min(920px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-      <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4 select-none">
-        <Download :size="16" class="text-primary" />
-        <h2 class="text-sm font-semibold tracking-tight">{{ headerTitle }}</h2>
-        <div class="ml-auto flex items-center gap-2">
-          <span v-if="!settingsOpen && downloads.downloadSpeed > 0" class="tabular flex items-center gap-1 text-xs font-medium text-primary">↓ {{ formatSpeed(downloads.downloadSpeed) }}</span>
-          <button v-if="!settingsOpen" type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Download settings" aria-label="Download settings" @click="openSettings">
+  <div class="fixed inset-0 z-[1900] grid place-items-center bg-black/40 p-5 backdrop-blur-[1px]">
+    <div class="flex h-[min(760px,calc(100vh-40px))] w-[min(1000px,calc(100vw-40px))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <header class="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-5 select-none">
+        <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+          <Download :size="16" />
+        </span>
+        <div class="min-w-0">
+          <h2 class="truncate text-sm font-semibold tracking-tight">{{ headerTitle }}</h2>
+          <p class="truncate text-2xs text-muted-foreground">{{ headerSubtitle }}</p>
+        </div>
+        <div class="ml-auto flex items-center gap-1.5">
+          <span v-if="!settingsOpen && downloads.downloadSpeed > 0" class="tabular mr-1 flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-2xs font-medium text-primary">↓ {{ formatSpeed(downloads.downloadSpeed) }}</span>
+          <button v-if="!settingsOpen" type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Download settings" aria-label="Download settings" @click="openSettings">
             <Settings2 :size="15" />
           </button>
-          <button v-else type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Back to downloads" aria-label="Back to downloads" @click="settingsOpen = false">
+          <button v-else type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Back to downloads" aria-label="Back to downloads" @click="settingsOpen = false">
             <ArrowLeft :size="15" />
           </button>
-          <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Close" aria-label="Close" @click="close">
+          <button type="button" class="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" title="Close" aria-label="Close" @click="close">
             <X :size="16" />
           </button>
         </div>
       </header>
 
       <template v-if="!settingsOpen">
-        <div class="shrink-0 border-b border-border bg-muted/20 px-4 py-3">
-          <div v-if="selectionMode" class="rounded-xl border border-border bg-background/70 p-3">
+        <div class="shrink-0 border-b border-border bg-muted/20 p-3">
+          <div v-if="selectionMode" class="rounded-xl border border-border bg-card p-3 shadow-sm">
             <div class="flex min-w-0 items-center gap-3">
               <span class="flex shrink-0 items-center gap-1.5 text-sm font-medium"><Check :size="14" class="text-primary" />{{ selectedItems.length }} selected</span>
-              <div class="flex min-w-0 items-center gap-1 overflow-hidden">
-                <img v-for="item in selectedItems.slice(0, 8)" :key="item.id" :src="item.thumbUrl" alt="" class="size-8 shrink-0 rounded-md object-cover" draggable="false" />
+              <div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                <img v-for="item in selectedItems.slice(0, 8)" :key="item.id" :src="item.thumbUrl" alt="" class="size-8 shrink-0 rounded-md border border-border/60 object-cover" draggable="false" />
                 <span v-if="selectedItems.length > 8" class="shrink-0 text-xs text-muted-foreground">+{{ selectedItems.length - 8 }}</span>
               </div>
-            </div>
-            <div class="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
               <button
                 type="button"
-                class="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                class="flex h-8 min-w-0 max-w-56 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 :title="downloadDirectory || 'Choose download folder'"
                 @click="chooseDownloadDirectory"
               >
                 <FolderOpen :size="13" class="shrink-0" />
-                <span class="truncate">{{ downloadDirectory || "Choose download folder" }}</span>
+                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : "Choose folder" }}</span>
               </button>
-              <Button class="h-8 shrink-0 px-5" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
+              <Button class="h-8 shrink-0 px-4 text-xs" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
             </div>
           </div>
 
-          <div v-else class="rounded-xl border border-border bg-background/70 p-3">
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <span class="shrink-0 text-sm text-muted-foreground">Range</span>
-              <div class="flex shrink-0 items-center gap-0.5 rounded-lg bg-secondary/75 p-1">
-                <button v-for="option in RANGE_OPTIONS" :key="option.key" type="button" class="h-8 rounded-md px-3 text-sm transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
+          <div v-else class="rounded-xl border border-border bg-card p-3 shadow-sm">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+              <span class="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground">Range</span>
+              <div class="flex shrink-0 items-center gap-0.5 rounded-lg bg-secondary/80 p-1">
+                <button v-for="option in RANGE_OPTIONS" :key="option.key" type="button" class="h-7 rounded-md px-2.5 text-xs transition-colors" :class="range === option.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'" @click="selectRange(option.key)">
                   {{ option.label }}
                 </button>
               </div>
               <DateRangePicker v-if="range === 'custom'" :model-value="customBounds" :show-clear="false" @update:model-value="onCustomChange" />
-            </div>
-
-            <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
-              <span v-if="showFoundStatus" class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span v-if="showFoundStatus" class="flex min-w-28 flex-1 items-center gap-1.5 truncate text-xs text-muted-foreground">
                 <Spinner v-if="searching" :size="12" />
                 <span class="truncate">{{ foundLabel }}</span>
                 <AlertTriangle v-if="searchSlow || truncated" :size="12" class="shrink-0 text-warning" :title="searchSlow ? 'Search is slow; the task will continue while downloading' : 'Only recent photos were scanned'" />
               </span>
+              <div v-else class="flex-1" />
               <button
                 type="button"
-                class="ml-auto flex h-8 min-w-0 max-w-72 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                class="flex h-8 min-w-0 max-w-56 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 :title="downloadDirectory || 'Choose download folder'"
                 @click="chooseDownloadDirectory"
               >
                 <FolderOpen :size="13" class="shrink-0" />
-                <span class="truncate">{{ downloadDirectory || "Choose download folder" }}</span>
+                <span class="truncate">{{ downloadDirectory ? folderLabel(downloadDirectory) : "Choose folder" }}</span>
               </button>
-              <Button class="h-8 shrink-0 px-5" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
+              <Button class="h-8 shrink-0 px-4 text-xs" :disabled="!canCreate" @click="createTask">{{ createLabel }}</Button>
             </div>
           </div>
 
-          <div v-if="downloads.persistenceWarning" class="mt-2 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-warning">
+          <div v-if="downloads.persistenceWarning" class="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             <AlertTriangle :size="13" class="mt-0.5 shrink-0" />
             <span>{{ downloads.persistenceWarning }}</span>
           </div>
         </div>
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div class="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-card/95 px-4 py-2.5 backdrop-blur">
-            <h3 class="text-sm font-medium">Download queue</h3>
-            <span class="rounded-full bg-secondary px-2 py-0.5 text-2xs tabular text-muted-foreground">{{ downloads.tasks.length }} tasks</span>
-            <button v-if="downloads.tasks.some((task) => task.status === 'done' || task.status === 'cancelled')" type="button" class="ml-auto rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">
-              Clear completed
-            </button>
+          <div class="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
+            <div class="grid w-64 grid-cols-2 rounded-lg bg-secondary/80 p-1" role="tablist" aria-label="Download tasks">
+              <button
+                type="button"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
+                :class="queueTab === 'active' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                role="tab"
+                :aria-selected="queueTab === 'active'"
+                @click="selectQueueTab('active')"
+              >
+                Active <span class="tabular text-2xs">{{ activeTasks.length }}</span>
+              </button>
+              <button
+                type="button"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs transition-colors"
+                :class="queueTab === 'completed' ? 'bg-card font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                role="tab"
+                :aria-selected="queueTab === 'completed'"
+                @click="selectQueueTab('completed')"
+              >
+                Completed <span class="tabular text-2xs">{{ completedTasks.length }}</span>
+              </button>
+            </div>
+            <div class="ml-auto flex items-center gap-3 text-2xs">
+              <template v-if="queueTab === 'active'">
+                <span v-if="taskOverview.running" class="font-medium text-primary">{{ taskOverview.running }} running</span>
+                <span v-if="taskOverview.paused" class="font-medium text-warning">{{ taskOverview.paused }} paused</span>
+              </template>
+              <button v-else-if="completedTasks.length" type="button" class="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="downloads.clearFinished()">Clear finished</button>
+            </div>
           </div>
 
           <DownloadEmptyState v-if="downloads.tasks.length === 0" />
-          <div v-else class="flex flex-col gap-2 p-3">
-            <article v-for="task in pagedTasks" :key="task.id" class="cursor-pointer rounded-lg border border-border/80 bg-card p-3 shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/20" @click="openTaskDetails(task)">
-              <div class="flex items-start gap-3">
-                <span
-                  class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full"
-                  :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'"
-                >
-                  <Check v-if="task.status === 'done' && !task.error && task.failed.length === 0" :size="14" :stroke-width="3" />
-                  <AlertTriangle v-else-if="task.status === 'cancelled' || task.error || task.failed.length > 0" :size="14" />
-                  <span v-else class="size-2 rounded-full bg-primary" :class="task.status === 'running' ? 'animate-pulse' : ''" />
-                </span>
+          <div v-else-if="visibleTasks.length === 0" class="grid min-h-0 flex-1 place-items-center p-6 text-center">
+            <div>
+              <span class="mx-auto grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">
+                <Check v-if="queueTab === 'completed'" :size="17" />
+                <Download v-else :size="17" />
+              </span>
+              <p class="mt-3 text-sm font-medium">{{ queueTab === "active" ? "No active downloads" : "No completed downloads" }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ queueTab === "active" ? "New tasks will appear here." : "Finished downloads will appear here." }}</p>
+            </div>
+          </div>
+          <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <div class="flex flex-col gap-2">
+              <article v-for="task in pagedTasks" :key="task.id" class="group relative cursor-pointer overflow-hidden rounded-xl border border-border/80 bg-card transition-all hover:border-primary/40 hover:shadow-sm" :title="`${task.title} · View task details`" @click="openTaskDetails(task)">
+                <span class="absolute inset-y-3 left-0 w-0.5 rounded-r-full" :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary'" />
+                <div class="p-3.5 pl-4">
+                  <div class="flex min-w-0 items-start gap-3">
+                    <span
+                      class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full"
+                      :class="task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : task.status === 'paused' || task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'"
+                    >
+                      <Check v-if="task.status === 'done' && !task.error && task.failed.length === 0" :size="14" :stroke-width="3" />
+                      <AlertTriangle v-else-if="task.status === 'cancelled' || task.error || task.failed.length > 0" :size="14" />
+                      <Pause v-else-if="task.status === 'paused'" :size="14" />
+                      <span v-else class="size-2 animate-pulse rounded-full bg-primary" />
+                    </span>
 
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-start gap-2">
                     <div class="min-w-0 flex-1">
-                      <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                        <button type="button" class="min-w-0 truncate text-left text-sm font-medium transition-colors hover:text-primary" :title="`${task.title} · View task details`" @click.stop="openTaskDetails(task)">{{ task.title }}</button>
-                        <span v-if="task.speedBytesPerSec" class="tabular text-2xs font-medium text-primary">{{ formatSpeed(task.speedBytesPerSec) }}</span>
-                        <span v-if="task.failed.length" class="flex items-center gap-1 text-2xs text-warning" :title="task.failed.join('\n')"><AlertTriangle :size="11" />{{ task.failed.length }} failed</span>
+                      <div class="flex min-w-0 items-center gap-2">
+                        <h4 class="truncate text-sm font-semibold">{{ task.title }}</h4>
+                        <span class="shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium" :class="task.status === 'running' ? 'bg-primary/10 text-primary' : task.status === 'done' && !task.error && task.failed.length === 0 ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">{{
+                          taskStatusLabel(task)
+                        }}</span>
+                        <span v-if="task.speedBytesPerSec" class="tabular shrink-0 text-2xs font-medium text-primary">{{ formatSpeed(task.speedBytesPerSec) }}</span>
                       </div>
+                      <p class="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                        <span
+                          >{{ task.done + task.failed.length }}<template v-if="totalOf(task) !== null"> / {{ totalOf(task) }}</template> files</span
+                        >
+                        <span>·</span>
+                        <span>{{ percentOf(task) ?? 0 }}%</span>
+                        <span>·</span>
+                        <span class="truncate">Created {{ formatTaskCreatedAt(task.createdAt) }}</span>
+                        <button type="button" class="ml-auto flex min-w-0 max-w-64 shrink items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-primary" :title="task.directory" @click.stop="openTaskFolder(task.directory)">
+                          <FolderOpen :size="11" class="shrink-0" />
+                          <span class="shrink-0">Open folder</span>
+                          <span class="text-muted-foreground/60">·</span>
+                          <span class="truncate">{{ folderLabel(task.directory) }}</span>
+                        </button>
+                      </p>
                     </div>
 
-                    <div class="flex shrink-0 items-center gap-1">
-                      <Button variant="outline" class="h-7 gap-1 px-2 text-xs" title="View task details" aria-label="View task details" @click.stop="openTaskDetails(task)">
-                        <ListChecks :size="13" />
-                        Details
+                    <div class="flex shrink-0 items-center gap-0.5" @click.stop>
+                      <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="ghost" size="icon" class="size-7 rounded-full" title="Retry failed files" aria-label="Retry failed files" @click="downloads.retryFailed(task.id)">
+                        <RotateCcw :size="13" />
                       </Button>
-                      <Button v-if="(task.failedItems?.length ?? 0) > 0 && task.status !== 'running'" variant="outline" class="h-7 gap-1 px-2 text-xs" title="Retry failed files" aria-label="Retry failed files" @click.stop="downloads.retryFailed(task.id)">
-                        <RotateCcw :size="12" />
-                        Retry failed
-                      </Button>
-                      <Button v-if="task.status === 'running'" size="icon" variant="outline" class="size-7" title="Pause task" aria-label="Pause task" @click.stop="downloads.pause(task.id)">
+                      <Button v-if="task.status === 'running'" variant="ghost" size="icon" class="size-7 rounded-full" title="Pause task" aria-label="Pause task" @click="downloads.pause(task.id)">
                         <Pause :size="14" />
                       </Button>
                       <Button
                         v-else-if="task.status === 'paused' || task.status === 'cancelled' || task.error"
+                        variant="ghost"
                         size="icon"
-                        variant="outline"
-                        class="size-7"
+                        class="size-7 rounded-full"
                         :disabled="!canResumeTasks"
                         :title="canResumeTasks ? (task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task') : 'Sign in again to resume'"
                         :aria-label="task.status === 'cancelled' || task.error ? 'Restore task' : 'Resume task'"
-                        @click.stop="downloads.resume(task.id)"
+                        @click="downloads.resume(task.id)"
                       >
                         <Play :size="14" />
                       </Button>
-                      <Button size="icon" variant="outline" class="size-7 hover:text-destructive" title="Remove from list (keeps files)" aria-label="Remove from list" @click.stop="downloads.remove(task.id)">
-                        <Trash :size="14" />
+                      <Button variant="ghost" size="icon" class="size-7 rounded-full text-muted-foreground hover:text-destructive" title="Remove from list (keeps files)" aria-label="Remove from list" @click="downloads.remove(task.id)">
+                        <Trash :size="13" />
                       </Button>
                     </div>
                   </div>
 
-                  <div class="mt-2 flex items-center gap-3">
+                  <div class="mt-3 flex items-center gap-3">
                     <div class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
-                      <div class="h-full rounded-full transition-[width] duration-200" :class="[task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : 'bg-primary', totalOf(task) === null ? 'animate-pulse' : '']" :style="{ width: `${percentOf(task) ?? 0}%` }" />
+                      <div class="h-full rounded-full transition-[width] duration-200" :class="task.status === 'cancelled' || task.error || task.failed.length > 0 ? 'bg-warning' : task.status === 'done' ? 'bg-success' : 'bg-primary'" :style="{ width: `${percentOf(task) ?? 0}%` }" />
                     </div>
-                    <span class="tabular min-w-[72px] shrink-0 text-right text-xs text-muted-foreground">
-                      {{ task.done + task.failed.length }}<template v-if="totalOf(task) !== null"> / {{ totalOf(task) }}</template>
-                    </span>
+                    <span class="tabular w-9 shrink-0 text-right text-2xs text-muted-foreground">{{ percentOf(task) ?? 0 }}%</span>
                   </div>
 
-                  <div class="mt-2 flex min-w-0 items-center justify-between gap-3">
-                    <div class="min-w-0 flex-1">
-                      <p v-if="task.activeFiles?.length" class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                        <span class="shrink-0 text-primary">Downloading</span>
-                        <span class="truncate font-medium text-foreground" :title="task.activeFiles.join('\n')">{{ task.activeFiles[0] }}</span>
-                        <span v-if="task.activeFiles.length > 1" class="shrink-0">and {{ task.activeFiles.length }} files</span>
-                      </p>
-                      <p v-else-if="task.lastFile" class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                        <span class="shrink-0">Recent files</span>
-                        <span class="truncate" :title="task.lastFile">{{ task.lastFile }}</span>
-                      </p>
-                      <p class="mt-0.5 text-2xs text-muted-foreground">Created {{ formatTaskCreatedAt(task.createdAt) }}</p>
-                      <p class="mt-0.5 truncate text-2xs text-muted-foreground" :title="task.directory">{{ task.directory }}</p>
-                    </div>
-                    <button type="button" class="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-primary" :title="task.directory" @click.stop="openTaskFolder(task.directory)">
-                      <FolderOpen :size="12" />
-                      Open folder
-                    </button>
+                  <div v-if="task.activeFiles?.length || task.lastFile" class="mt-2 flex min-w-0 items-center text-2xs text-muted-foreground">
+                    <span v-if="task.activeFiles?.length" class="flex min-w-0 flex-1 items-center gap-1.5 text-primary">
+                      <Spinner :size="11" class="shrink-0" />
+                      <span class="truncate" :title="task.activeFiles[0]">{{ task.activeFiles[0] }}</span>
+                      <span v-if="task.activeFiles.length > 1" class="shrink-0">+{{ task.activeFiles.length - 1 }}</span>
+                    </span>
+                    <span v-else-if="task.lastFile" class="min-w-0 flex-1 truncate" :title="task.lastFile">Last: {{ task.lastFile }}</span>
                   </div>
-                  <p v-if="task.status === 'paused' && !canResumeTasks" class="mt-1 text-xs text-muted-foreground">Sign in to this account again to resume this task</p>
-                  <p v-if="task.error" class="mt-1 text-xs text-warning">{{ task.error }}</p>
+                  <p v-if="task.status === 'paused' && !canResumeTasks" class="mt-1.5 text-2xs text-muted-foreground">Sign in to this account again to resume this task</p>
+                  <p v-if="task.error" class="mt-1.5 line-clamp-2 text-2xs text-warning">{{ task.error }}</p>
                 </div>
-              </div>
-            </article>
+              </article>
+            </div>
           </div>
 
-          <div v-if="totalPages > 1" class="sticky bottom-0 flex items-center justify-center gap-2 border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">
-            <button type="button" class="rounded-md border border-border px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage <= 1" @click="goToPage(taskPage - 1)">Previous</button>
+          <div v-if="totalPages > 1" class="flex h-10 shrink-0 items-center justify-center gap-2 border-t border-border bg-card px-4 text-2xs text-muted-foreground">
+            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage <= 1" @click="goToPage(taskPage - 1)">Previous</button>
             <span class="tabular">Page {{ taskPage }} / {{ totalPages }}</span>
-            <button type="button" class="rounded-md border border-border px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage >= totalPages" @click="goToPage(taskPage + 1)">Next</button>
+            <button type="button" class="rounded-md px-2 py-1 transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:opacity-40" :disabled="taskPage >= totalPages" @click="goToPage(taskPage + 1)">Next</button>
           </div>
         </div>
       </template>
