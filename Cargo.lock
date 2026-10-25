@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cirrus-core",
  "log",
@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

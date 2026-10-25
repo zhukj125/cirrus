@@ -112,7 +112,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.0.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" @back="toggleSettings" />
+      <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.1.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" @back="toggleSettings" />
 
       <AppShell
         v-else-if="signedIn"

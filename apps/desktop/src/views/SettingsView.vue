@@ -22,7 +22,7 @@ const props = withDefaults(
     vaultEnabled?: boolean | null;
   }>(),
   {
-    version: "1.0.0",
+    version: "1.1.0",
     ttlMinutes: null,
     vaultEnabled: null,
   },
