@@ -44,6 +44,18 @@ export function runtimeInfo(): Promise<RuntimeInfo> {
   return call<RuntimeInfo>("runtime_info");
 }
 
+export function isTrayAvailable(): Promise<boolean> {
+  return call<boolean>("tray_available");
+}
+
+export async function quitApp(): Promise<void> {
+  await call<void>("quit_app");
+}
+
+export function setTrayLabels(payload: { show: string; quit: string; tooltip: string }): Promise<void> {
+  return call<void>("set_tray_labels", payload);
+}
+
 export function accountStoreLoad(): Promise<AccountStoreSnapshot> {
   return call<AccountStoreSnapshot>("account_store_load");
 }

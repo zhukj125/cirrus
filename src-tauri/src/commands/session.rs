@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use cirrus_core::models::session_keys::PHOTOS_VERIFIED;
 use cirrus_core::models::*;
@@ -14,6 +14,16 @@ type SharedState<'a> = State<'a, Arc<AppState>>;
 #[tauri::command]
 pub async fn runtime_info(state: SharedState<'_>) -> AppResult<RuntimeInfo> {
     Ok(state.runtime_info())
+}
+
+#[tauri::command]
+pub fn tray_available(state: SharedState<'_>) -> bool {
+    state.tray_available()
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]

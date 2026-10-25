@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { RefreshCw } from "@lucide/vue";
-import { defaultWindowIcon } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import { Menu } from "@tauri-apps/api/menu";
-import { TrayIcon } from "@tauri-apps/api/tray";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import AppShell from "@/components/layout/AppShell.vue";
@@ -23,6 +21,7 @@ import { useDownloadsStore } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 import { devMockEnabled, mockDevicesResponse } from "@/dev/mock";
+import { isTrayAvailable, quitApp, setTrayLabels } from "@/lib/api";
 import { readStored, writeStored } from "@/lib/common/storage";
 import type { DevicesResponse } from "@/types";
 import { StorageKey, type ShellView } from "@/constants";
@@ -90,8 +89,8 @@ function openMapSettings(): void {
 }
 
 let unlistenClose: (() => void) | null = null;
+let unlistenTrayQuit: (() => void) | null = null;
 let closeFlushing = false;
-let tray: TrayIcon | null = null;
 const trayAvailable = ref(false);
 const closePromptOpen = ref(false);
 const inTauri = isTauri();
@@ -106,19 +105,12 @@ function shouldPromptCloseChoice(): boolean {
   return readStored(StorageKey.closeBehaviorPrompted) !== "1";
 }
 
-async function showMainWindow(): Promise<void> {
-  const window = getCurrentWindow();
-  await window.show();
-  await window.unminimize();
-  await window.setFocus();
-}
-
 async function requestQuit(): Promise<void> {
   closePromptOpen.value = false;
   closeFlushing = true;
   try {
     await flushBeforeExit();
-    await getCurrentWindow().destroy();
+    await quitApp();
   } catch {
     closeFlushing = false;
   }
@@ -156,31 +148,23 @@ function cancelClosePrompt(): void {
   closeFlushing = false;
 }
 
-async function setupTray(): Promise<void> {
-  if (!inTauri || tray) return;
-  try {
-    const menu = await Menu.new({
-      items: [
-        { id: "show", text: i18n.t("tray.show"), action: () => void showMainWindow() },
-        { id: "quit", text: i18n.t("tray.quit"), action: () => void requestQuit() },
-      ],
-    });
-    tray = await TrayIcon.new({
-      id: "main-tray",
-      icon: (await defaultWindowIcon()) ?? undefined,
-      menu,
-      tooltip: i18n.t("tray.tooltip"),
-      showMenuOnLeftClick: false,
-      action: (event) => {
-        if (event.type === "Click" && event.button === "Left") void showMainWindow();
-      },
-    });
-    trayAvailable.value = true;
-  } catch (error) {
-    trayAvailable.value = false;
-    console.warn("Failed to create system tray", error);
-  }
+async function refreshTrayAvailability(): Promise<void> {
+  trayAvailable.value = inTauri && (await isTrayAvailable().catch(() => false));
 }
+
+async function syncTrayLabels(): Promise<void> {
+  if (!trayAvailable.value) return;
+  await setTrayLabels({
+    show: i18n.t("tray.show"),
+    quit: i18n.t("tray.quit"),
+    tooltip: i18n.t("tray.tooltip"),
+  }).catch(() => undefined);
+}
+
+watch(
+  () => i18n.locale,
+  () => void syncTrayLabels(),
+);
 
 async function flushBeforeExit(): Promise<void> {
   await Promise.race([Promise.all([downloads.flushPersistence(), store.flushAccountPersistence()]), new Promise<void>((resolve) => setTimeout(resolve, 3000))]);
@@ -188,8 +172,11 @@ async function flushBeforeExit(): Promise<void> {
 
 onMounted(async () => {
   void downloads.initDownloadTracking();
-  void setupTray();
+  void refreshTrayAvailability().then(syncTrayLabels);
   if (!devMockEnabled) void store.restore();
+  try {
+    unlistenTrayQuit = await listen("tray-quit-requested", () => void requestQuit());
+  } catch {}
   try {
     const window = getCurrentWindow();
     unlistenClose = await window.onCloseRequested(async (event) => {
@@ -213,9 +200,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenClose?.();
+  unlistenTrayQuit?.();
   downloads.disposeDownloadTracking();
-  void tray?.close();
-  tray = null;
   trayAvailable.value = false;
 });
 </script>

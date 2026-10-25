@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +21,7 @@ pub struct AppState {
     data_dir: Option<PathBuf>,
 
     pub started_at: AtomicI64,
+    tray_available: AtomicBool,
 }
 
 impl AppState {
@@ -37,6 +38,7 @@ impl AppState {
             download_transfers: DownloadTransferRegistry::default(),
             data_dir: Some(data_dir.to_path_buf()),
             started_at: AtomicI64::new(now_millis()),
+            tray_available: AtomicBool::new(false),
         }
     }
 
@@ -51,11 +53,20 @@ impl AppState {
             download_transfers: DownloadTransferRegistry::default(),
             data_dir: None,
             started_at: AtomicI64::new(now_millis()),
+            tray_available: AtomicBool::new(false),
         }
     }
 
     pub fn data_dir(&self) -> Option<&Path> {
         self.data_dir.as_deref()
+    }
+
+    pub fn set_tray_available(&self, available: bool) {
+        self.tray_available.store(available, Ordering::Relaxed);
+    }
+
+    pub fn tray_available(&self) -> bool {
+        self.tray_available.load(Ordering::Relaxed)
     }
 }
 
@@ -107,5 +118,13 @@ mod tests {
 
         let no_persistence = AppState::without_persistence();
         assert!(!no_persistence.runtime_info().download_task_persistence_enabled);
+    }
+
+    #[test]
+    fn tray_availability_defaults_off_and_can_be_enabled() {
+        let state = AppState::without_persistence();
+        assert!(!state.tray_available());
+        state.set_tray_available(true);
+        assert!(state.tray_available());
     }
 }
