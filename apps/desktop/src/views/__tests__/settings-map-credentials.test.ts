@@ -46,4 +46,11 @@ describe("SettingsView map credentials", () => {
     expect(localStorage.getItem(StorageKey.downloadTaskConcurrency)).toBe("3");
     expect(localStorage.getItem(StorageKey.downloadConcurrency)).toBe("10");
   });
+
+
+  it("can open directly on the maps section", () => {
+    localStorage.clear();
+    const wrapper = mount(SettingsView, { props: { initialCategory: "maps" }, global: { plugins: [createPinia()] } });
+    expect(wrapper.find("#map-credential-apiKey").exists()).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { RefreshCw } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -65,6 +65,7 @@ function onNavigate(next: ShellView): void {
 }
 
 let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" = "photos-login";
+const settingsInitialCategory = ref("appearance");
 
 function toggleSettings(): void {
   if (view.value === "settings") {
@@ -72,6 +73,13 @@ function toggleSettings(): void {
     return;
   }
   settingsReturnView = view.value;
+  settingsInitialCategory.value = "appearance";
+  store.goTo("settings");
+}
+
+function openMapSettings(): void {
+  if (view.value !== "settings") settingsReturnView = view.value;
+  settingsInitialCategory.value = "maps";
   store.goTo("settings");
 }
 
@@ -112,7 +120,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.1.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" @back="toggleSettings" />
+      <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.1.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
 
       <AppShell
         v-else-if="signedIn"
@@ -140,7 +148,7 @@ onUnmounted(() => {
 
         <PhotosGalleryView v-if="shellView === 'photos-gallery' && photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
-        <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="toggleSettings" />
+        <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
 
         <div v-else class="grid h-full place-items-center">
           <div class="flex flex-col items-center gap-2.5">

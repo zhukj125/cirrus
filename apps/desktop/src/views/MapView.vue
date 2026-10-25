@@ -699,6 +699,7 @@ function onCompassPointerUp(): void {
 }
 
 function describeError(error: unknown): string {
+  if (error instanceof Error && /api key is not configured/i.test(error.message)) return t("map.keyMissing");
   if (error instanceof Error && error.message.startsWith("Could not load AMap")) return t("map.loadFailed");
   return error instanceof Error ? error.message : t("map.initFailed");
 }

@@ -54,6 +54,7 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "map.off": { zh: "关", en: "Off" },
   "map.playSound": { zh: "播放声音", en: "Play Sound" },
   "map.initFailed": { zh: "地图初始化失败", en: "Map failed to initialize" },
+  "map.keyMissing": { zh: "尚未配置高德 API Key", en: "AMap API key is not configured" },
   "map.loadFailed": { zh: "地图加载失败，请检查网络连接与 API Key 白名单。", en: "Could not load the map. Check your network connection and API key allowlist." },
   "common.close": { zh: "关闭", en: "Close" },
   "common.cancel": { zh: "取消", en: "Cancel" },

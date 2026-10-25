@@ -20,11 +20,13 @@ const props = withDefaults(
     version?: string;
     ttlMinutes?: number | null;
     vaultEnabled?: boolean | null;
+    initialCategory?: string;
   }>(),
   {
     version: "1.1.0",
     ttlMinutes: null,
     vaultEnabled: null,
+    initialCategory: "appearance",
   },
 );
 
@@ -32,7 +34,14 @@ const emit = defineEmits<{ back: [] }>();
 const theme = useThemeStore();
 const locale = useLocaleStore();
 const query = ref("");
-const active = ref("appearance");
+const active = ref(props.initialCategory);
+
+watch(
+  () => props.initialCategory,
+  (value) => {
+    active.value = value;
+  },
+);
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; labelKey: string; icon: typeof Sun }> = [
   { value: "system", labelKey: "theme.system", icon: Monitor },
