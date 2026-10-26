@@ -347,6 +347,42 @@ pub struct PhotoItem {
     pub height: Option<i64>,
 
     pub size_bytes: Option<i64>,
+
+    pub added_at: Option<i64>,
+    pub duration_seconds: Option<f64>,
+    pub frame_rate: Option<f64>,
+    pub codec: Option<String>,
+    pub time_zone_offset_seconds: Option<i64>,
+    pub is_favorite: Option<bool>,
+    pub is_hidden: Option<bool>,
+    pub keywords: Vec<String>,
+    pub metadata: Option<PhotoMetadata>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotoMetadata {
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+    pub lens_model: Option<String>,
+    pub lens_specification: Option<String>,
+
+    pub date_taken: Option<String>,
+    pub exposure_time: Option<String>,
+    pub f_number: Option<String>,
+    pub iso: Option<String>,
+    pub focal_length: Option<String>,
+    pub focal_length_35mm: Option<String>,
+    pub exposure_bias: Option<String>,
+
+    pub metering_mode: Option<String>,
+    pub flash: Option<String>,
+    pub white_balance: Option<String>,
+    pub color_space: Option<String>,
+    pub software: Option<String>,
+
+    pub gps_latitude: Option<f64>,
+    pub gps_longitude: Option<f64>,
+    pub gps_altitude: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

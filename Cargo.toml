@@ -33,6 +33,7 @@ keyring = { version = "3.6.3", default-features = false, features = ["apple-nati
 
 cookie = "0.18"
 cookie_store = { version = "0.22", features = ["serde_json"] }
+plist = "1.10.1"
 
 
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

@@ -3,7 +3,12 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 
 import PhotoViewer from "@/components/PhotoViewer.vue";
+import { openExternal } from "@/lib/api";
 import type { PhotoItem } from "@/types";
+
+vi.mock("@/lib/geocode", () => ({
+  reverseGeocode: vi.fn(async () => ({ full: "Hangzhou, Zhejiang, China", short: "Hangzhou" })),
+}));
 
 vi.mock("@/lib/api", () => ({
   accountStoreLoad: vi.fn(async () => ({ accounts: [], activeAccountKey: null, avatars: {} })),
@@ -16,6 +21,7 @@ vi.mock("@/lib/api", () => ({
   setDownloadSpeedLimit: vi.fn(async () => undefined),
   listenDownloadProgress: vi.fn(async () => () => undefined),
   cancelDownloadTransfer: vi.fn(async () => undefined),
+  openExternal: vi.fn(async () => undefined),
 }));
 
 const stillPhoto: PhotoItem = {
@@ -28,6 +34,32 @@ const stillPhoto: PhotoItem = {
   originalUrl: null,
   videoUrl: null,
   isLivePhoto: false,
+  width: 1200,
+  height: 800,
+  sizeBytes: 2_097_152,
+  addedAt: 1_710_000_000_000,
+  timeZoneOffset: 28_800,
+  metadata: {
+    cameraMake: "Apple",
+    cameraModel: "iPhone 15 Pro",
+    lensModel: "Main Camera 24mm f/1.78",
+    lensSpecification: null,
+    dateTaken: "2024:03:25 11:59:00",
+    exposureTime: "1/120 s",
+    fNumber: "f/1.8",
+    iso: "100",
+    focalLength: "24 mm",
+    focalLength35mm: "24 mm",
+    exposureBias: "0 EV",
+    meteringMode: "Pattern",
+    flash: "No flash",
+    whiteBalance: "Auto",
+    colorSpace: "sRGB",
+    software: "17.3.1",
+    gpsLatitude: 31.2304,
+    gpsLongitude: 121.4737,
+    gpsAltitude: 8.4,
+  },
 };
 
 const livePhoto: PhotoItem = {
@@ -44,6 +76,7 @@ const livePhoto: PhotoItem = {
 
 describe("PhotoViewer · 实况", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   });
 
@@ -54,6 +87,55 @@ describe("PhotoViewer · 实况", () => {
     expect(wrapper.find("video").exists()).toBe(true);
     expect(wrapper.find("video").attributes("src")).toBe(livePhoto.videoUrl);
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+  });
+
+  it("信息按钮会显示当前照片的完整信息", async () => {
+    const wrapper = mount(PhotoViewer, { props: { photos: [stillPhoto], index: 0 }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    await wrapper.get('button[title="Info"]').trigger("click");
+    await flushPromises();
+    const panel = wrapper.get('[role="dialog"][aria-label="Info"]');
+    expect(panel.text()).toContain("Apple iPhone 15 Pro");
+    expect(panel.text()).toContain("Main Camera 24mm f/1.78");
+    expect(panel.text()).toContain("f/1.8");
+    expect(panel.text()).toContain("1/120 s");
+    expect(panel.text()).toContain("31.230400, 121.473700");
+    expect(panel.text()).toContain("still.jpeg");
+    expect(panel.text()).toContain("1200 × 800");
+    expect(panel.text()).toContain("Hangzhou, Zhejiang, China");
+    expect(panel.text()).toContain("Added");
+    expect(panel.text()).toContain("2.0 MB");
+    expect(panel.text()).toContain("JPEG");
+    await panel.get('button[title="Open in map"]').trigger("click");
+    expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("uri.amap.com/marker?position=121.4737,31.2304"));
+  });
+
+  it("视频信息直接使用列表数据，不请求原图", async () => {
+    const video: PhotoItem = {
+      ...stillPhoto,
+      id: "video-1",
+      fileName: "clip.mov",
+      isVideo: true,
+      videoUrl: "https://example.com/clip.mov",
+      durationSeconds: 14.4,
+      frameRate: 60,
+      codec: "HEVC",
+      addedAt: 1_710_000_000_000,
+      metadata: { ...stillPhoto.metadata!, cameraModel: "iPhone 13", lensModel: null, lensSpecification: null },
+    };
+    const wrapper = mount(PhotoViewer, { props: { photos: [video], index: 0 }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    await wrapper.get('button[title="Info"]').trigger("click");
+    await flushPromises();
+
+    const panel = wrapper.get('[role="dialog"][aria-label="Info"]');
+    expect(panel.text()).toContain("00:14");
+    expect(panel.text()).toContain("60 fps");
+    expect(panel.text()).toContain("Apple iPhone 13");
+    expect(panel.text()).toContain("No lens information");
+    expect(panel.text()).toContain("HEVC");
   });
 
   it("底部缩略图栏显示当前照片并可点击切换", async () => {

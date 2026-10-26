@@ -42,7 +42,19 @@ function buildAddress(result: RegeoResponse): AddressInfo | null {
   return full ? { full, short } : null;
 }
 
-export async function reverseGeocode(lnglat: [number, number]): Promise<AddressInfo | null> {
+const cache = new Map<string, Promise<AddressInfo | null>>();
+
+export function reverseGeocode(lnglat: [number, number]): Promise<AddressInfo | null> {
+  const [lng, lat] = lnglat;
+  const key = `${lng.toFixed(5)},${lat.toFixed(5)}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const request = fetchAddress(lnglat);
+  cache.set(key, request);
+  return request;
+}
+
+async function fetchAddress(lnglat: [number, number]): Promise<AddressInfo | null> {
   const { key } = getAmapConfig();
   if (!key) return null;
   const [lng, lat] = lnglat;

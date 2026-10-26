@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, Info as InfoIcon, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
 
 import { downloadPhoto } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import Spinner from "@/components/ui/Spinner.vue";
+import PhotoInfoPanel from "@/components/photos/PhotoInfoPanel.vue";
 import { Button } from "@/components/ui/button";
 import { useLocaleStore } from "@/stores/locale";
 import type { PhotoItem } from "@/types";
@@ -63,6 +64,7 @@ function filmstripItemWidth(photo: PhotoItem): string {
 }
 
 const saving = ref(false);
+const infoOpen = ref(false);
 
 const photo = computed<PhotoItem | null>(() => {
   const item: PhotoItem | undefined = props.photos[props.index];
@@ -223,8 +225,10 @@ function go(delta: number): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") emit("close");
-  else if (event.key === "ArrowLeft") go(-1);
+  if (event.key === "Escape") {
+    if (infoOpen.value) infoOpen.value = false;
+    else emit("close");
+  } else if (event.key === "ArrowLeft") go(-1);
   else if (event.key === "ArrowRight") go(1);
   else if (event.key === "+" || event.key === "=") zoomStep(1);
   else if (event.key === "-" || event.key === "_") zoomStep(-1);
@@ -232,6 +236,7 @@ function onKeydown(event: KeyboardEvent): void {
   else if (event.key === "[") rotateBy(-90);
   else if (event.key === "]") rotateBy(90);
   else if (event.key.toLowerCase() === "f") toggleFlip();
+  else if (event.key.toLowerCase() === "i") infoOpen.value = !infoOpen.value;
 }
 
 watch(
@@ -318,6 +323,10 @@ async function handleDownload(): Promise<void> {
         <Button v-if="canPlayLive" variant="ghost" size="icon" :title="t(playingLive ? 'viewer.pauseLive' : 'viewer.playLive')" :aria-label="t(playingLive ? 'viewer.pauseLive' : 'viewer.playLive')" @click="playingLive = !playingLive">
           <Pause v-if="playingLive" :size="15" />
           <Play v-else :size="15" />
+        </Button>
+
+        <Button variant="ghost" size="icon" class="size-8" :class="infoOpen ? 'bg-accent text-foreground' : ''" :title="t('viewer.info')" :aria-label="t('viewer.info')" :aria-pressed="infoOpen" @click="infoOpen = !infoOpen">
+          <InfoIcon :size="15" />
         </Button>
 
         <Button v-if="originalUrl" variant="ghost" size="icon" :disabled="saving" :title="t(isVideo ? 'photos.downloadVideo' : 'photos.downloadOriginal')" :aria-label="t(isVideo ? 'photos.downloadVideo' : 'photos.downloadOriginal')" @click="handleDownload">
@@ -422,6 +431,25 @@ async function handleDownload(): Promise<void> {
         <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>
         <div class="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>
       </div>
+
+      <Transition name="photo-info">
+        <PhotoInfoPanel v-if="infoOpen" :photo="photo" :position="index + 1" :total="photos.length" @close="infoOpen = false" />
+      </Transition>
     </div>
   </div>
 </template>
+
+<style scoped>
+.photo-info-enter-active,
+.photo-info-leave-active {
+  transition:
+    opacity 150ms ease,
+    transform 180ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+.photo-info-enter-from,
+.photo-info-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+</style>

@@ -13,10 +13,12 @@ use crate::error::{AppError, AppResult};
 use crate::models::session_keys::*;
 use crate::models::{
     statuses, AssetBucketDto, AssetDistributionDto, LibraryTotal, MonthEntryDto, MonthExactDto, PhoneOption, PhotoItem,
-    Photos2faOptions, PhotosLoginResult, PhotosPage, PhotosTimelineDto, SrpAuthRequest, TimelineDto, YearEntryDto,
+    PhotoMetadata, Photos2faOptions, PhotosLoginResult, PhotosPage, PhotosTimelineDto, SrpAuthRequest, TimelineDto,
+    YearEntryDto,
 };
 use crate::services::auth as auth_service;
 use crate::services::devices;
+use crate::services::photo_metadata as metadata_parser;
 use crate::session::{now_millis, SrpSession};
 use crate::session_manager::SessionManager;
 
@@ -86,12 +88,23 @@ pub mod cloud_kit_schema {
     pub const FIELD_RECORD_ID: &str = "recordId";
 
     pub const FIELD_ASSET_DATE: &str = "assetDate";
+    pub const FIELD_ADDED_DATE: &str = "addedDate";
     pub const FIELD_MASTER_REF: &str = "masterRef";
     pub const FIELD_FILENAME: &str = "filename";
+    pub const FIELD_FILENAME_ENC: &str = "filenameEnc";
     pub const FIELD_ITEM_NAME: &str = "itemName";
     pub const FIELD_DURATION: &str = "duration";
     pub const FIELD_DURATION_ENC: &str = "durationEnc";
     pub const FIELD_VIDEO_COMPLEMENT_DURATION: &str = "vidComplDurValue";
+    pub const FIELD_VIDEO_FRAME_RATE: &str = "videoFrameRate";
+    pub const FIELD_MEDIA_METADATA_ENC: &str = "mediaMetaDataEnc";
+    pub const FIELD_ADJUSTED_MEDIA_METADATA_ENC: &str = "adjustedMediaMetaDataEnc";
+    pub const FIELD_LOCATION_ENC: &str = "locationEnc";
+    pub const FIELD_KEYWORDS_ENC: &str = "keywordsEnc";
+    pub const FIELD_IS_FAVORITE: &str = "isFavorite";
+    pub const FIELD_IS_HIDDEN: &str = "isHidden";
+    pub const FIELD_TIME_ZONE_OFFSET: &str = "timeZoneOffset";
+    pub const FIELD_CODEC: &str = "codec";
     pub const FIELD_RECORD_NAME: &str = "recordName";
 
     pub const WRAPPER_VALUE: &str = "value";
@@ -102,19 +115,19 @@ pub mod cloud_kit_schema {
     pub const THUMB_FIELDS: &[&str] = &["resJPEGThumbRes", "resJpegSmallThumb", "resJPEGMedRes"];
 
     pub const VIDEO_SIZE_FIELDS: &[(&str, &str)] = &[
-        ("resVidComplWidth", "resVidComplHeight"),
-        ("resVidMedWidth", "resVidMedHeight"),
-        ("resVidSmallWidth", "resVidSmallHeight"),
-        ("resVidFullWidth", "resVidFullHeight"),
-        ("resVidHDRMedWidth", "resVidHDRMedHeight"),
         ("resOriginalWidth", "resOriginalHeight"),
+        ("resVidComplWidth", "resVidComplHeight"),
+        ("resVidLargeWidth", "resVidLargeHeight"),
+        ("resVidFullWidth", "resVidFullHeight"),
+        ("resVidMedWidth", "resVidMedHeight"),
+        ("resVidHDRMedWidth", "resVidHDRMedHeight"),
+        ("resVidSmallWidth", "resVidSmallHeight"),
     ];
     pub const THUMB_SIZE_FIELDS: &[(&str, &str)] = &[
-        ("resJPEGThumbWidth", "resJPEGThumbHeight"),
-        ("resJPEGMedWidth", "resJPEGMedHeight"),
         ("resOriginalWidth", "resOriginalHeight"),
+        ("resJPEGMedWidth", "resJPEGMedHeight"),
+        ("resJPEGThumbWidth", "resJPEGThumbHeight"),
     ];
-
     pub const DISPLAY_FIELDS: &[&str] = &["resJPEGMedRes", "resJPEGFullRes", "resJpegMediumThumb", "resOriginalRes"];
 
     pub const ORIGINAL_FIELDS: &[&str] = &["resOriginalRes", "resJPEGFullRes"];
@@ -149,17 +162,31 @@ pub mod cloud_kit_schema {
 
     pub const DESIRED_KEYS: &[&str] = &[
         "filename",
+        "filenameEnc",
         "itemName",
         "assetDate",
         "addedDate",
+        "mostRecentAddedDate",
+        "originalCreationDate",
         "masterRef",
         "duration",
         "durationEnc",
         "vidComplDurValue",
+        "vidComplDurScale",
         "videoFrameRate",
         "itemType",
         "itemTypeEnc",
         "codec",
+        "mediaMetaDataEnc",
+        "mediaMetaDataType",
+        "adjustedMediaMetaDataEnc",
+        "adjustedMediaMetaDataStrType",
+        "locationEnc",
+        "keywordsEnc",
+        "isFavorite",
+        "isHidden",
+        "timeZoneOffset",
+        "orientation",
         "resJPEGThumbRes",
         "resJPEGMedRes",
         "resJPEGFullRes",
@@ -167,14 +194,50 @@ pub mod cloud_kit_schema {
         "resJpegSmallThumb",
         "resJpegMediumThumb",
         "resVidComplRes",
+        "resVidLargeRes",
         "resVidFullRes",
         "resVidMedRes",
         "resVidHDRMedRes",
         "resVidSmallRes",
         "resVidSmallThumb",
         "resVidMedThumb",
+        "resOriginalWidth",
+        "resOriginalHeight",
+        "resOriginalFileSize",
+        "resOriginalFileType",
+        "resJPEGThumbWidth",
+        "resJPEGThumbHeight",
+        "resJPEGThumbFileSize",
+        "resJPEGThumbFileType",
+        "resJPEGMedWidth",
+        "resJPEGMedHeight",
+        "resJPEGMedFileSize",
+        "resJPEGMedFileType",
+        "resVidComplWidth",
+        "resVidComplHeight",
+        "resVidComplFileSize",
+        "resVidComplFileType",
+        "resVidLargeWidth",
+        "resVidLargeHeight",
+        "resVidLargeFileSize",
+        "resVidLargeFileType",
+        "resVidFullWidth",
+        "resVidFullHeight",
+        "resVidFullFileSize",
+        "resVidFullFileType",
+        "resVidMedWidth",
+        "resVidMedHeight",
+        "resVidMedFileSize",
+        "resVidMedFileType",
+        "resVidHDRMedWidth",
+        "resVidHDRMedHeight",
+        "resVidHDRMedFileSize",
+        "resVidHDRMedFileType",
+        "resVidSmallWidth",
+        "resVidSmallHeight",
+        "resVidSmallFileSize",
+        "resVidSmallFileType",
     ];
-
     pub const FILE_TYPE_PLACEHOLDER: &str = "${f}";
 
     pub const IMAGE_FILE_TYPE: &str = "unknown.jpeg";
@@ -1812,7 +1875,9 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
         let file_name = text(master, ck::FIELD_FILENAME)
             .or_else(|| text(fields, ck::FIELD_FILENAME))
             .or_else(|| text(master, ck::FIELD_ITEM_NAME))
-            .or_else(|| text(fields, ck::FIELD_ITEM_NAME));
+            .or_else(|| text(fields, ck::FIELD_ITEM_NAME))
+            .or_else(|| text(master, ck::FIELD_FILENAME_ENC).and_then(|value| metadata_parser::decode_text(&value)))
+            .or_else(|| text(fields, ck::FIELD_FILENAME_ENC).and_then(|value| metadata_parser::decode_text(&value)));
 
         let duration = number_value(fields, master, &[ck::FIELD_DURATION, ck::FIELD_DURATION_ENC]);
         let live_photo = number_value(fields, master, &[ck::FIELD_VIDEO_COMPLEMENT_DURATION]) > 0.0;
@@ -1856,12 +1921,33 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
         }
 
         let taken_at = long_value(fields, ck::FIELD_ASSET_DATE);
-        let (width, height) = first_size(
-            master,
-            fields,
-            if is_video || live_photo { ck::VIDEO_SIZE_FIELDS } else { ck::THUMB_SIZE_FIELDS },
-        )
-        .map_or((None, None), |(width, height)| (Some(width), Some(height)));
+        let (width, height) =
+            first_size(master, fields, if is_video { ck::VIDEO_SIZE_FIELDS } else { ck::THUMB_SIZE_FIELDS })
+                .map_or((None, None), |(width, height)| (Some(width), Some(height)));
+        let added_at = Some(long_value(fields, ck::FIELD_ADDED_DATE)).filter(|value| *value > 0);
+        let duration_seconds = (duration > 0.0).then_some(duration / 1_000.0);
+        let frame_rate = number_value(fields, master, &[ck::FIELD_VIDEO_FRAME_RATE]);
+        let codec = text(master, ck::FIELD_CODEC).or_else(|| text(fields, ck::FIELD_CODEC));
+        let time_zone_offset_seconds = optional_long_value(fields, ck::FIELD_TIME_ZONE_OFFSET);
+        let is_favorite = optional_long_value(fields, ck::FIELD_IS_FAVORITE).map(|value| value != 0);
+        let is_hidden = optional_long_value(fields, ck::FIELD_IS_HIDDEN).map(|value| value != 0);
+        let keywords = text(fields, ck::FIELD_KEYWORDS_ENC)
+            .map(|value| metadata_parser::parse_keywords(&value))
+            .unwrap_or_default();
+        let mut metadata = text(master, ck::FIELD_MEDIA_METADATA_ENC)
+            .or_else(|| text(fields, ck::FIELD_ADJUSTED_MEDIA_METADATA_ENC))
+            .or_else(|| text(fields, ck::FIELD_MEDIA_METADATA_ENC))
+            .and_then(|value| metadata_parser::parse_media_metadata(&value));
+        if let Some(location) =
+            text(fields, ck::FIELD_LOCATION_ENC).and_then(|value| metadata_parser::parse_location(&value))
+        {
+            let value = metadata.get_or_insert_with(PhotoMetadata::default);
+            value.gps_latitude.get_or_insert(location.latitude);
+            value.gps_longitude.get_or_insert(location.longitude);
+            if let Some(altitude) = location.altitude {
+                value.gps_altitude.get_or_insert(altitude);
+            }
+        }
         let size_bytes = if is_video {
             first_file_size(master, fields, &[ck::ORIGINAL_RES])
                 .or_else(|| first_file_size(master, fields, ck::VIDEO_FIELDS))
@@ -1884,6 +1970,15 @@ fn parse_records_value(root: &Value, raw: &str) -> PhotosPage {
             width,
             height,
             size_bytes,
+            added_at,
+            duration_seconds,
+            frame_rate: (frame_rate > 0.0).then_some(frame_rate),
+            codec,
+            time_zone_offset_seconds,
+            is_favorite,
+            is_hidden,
+            keywords,
+            metadata,
         });
     }
 
@@ -2008,6 +2103,12 @@ fn long_value(fields: &Value, key: &str) -> i64 {
     let node = field(fields, key);
     let value = field(node, ck::WRAPPER_VALUE);
     as_long(value).or_else(|| as_long(node)).unwrap_or(0)
+}
+
+fn optional_long_value(fields: &Value, key: &str) -> Option<i64> {
+    let node = field(fields, key);
+    let value = field(node, ck::WRAPPER_VALUE);
+    as_long(value).or_else(|| as_long(node))
 }
 
 fn number_value(primary: &Value, secondary: &Value, keys: &[&str]) -> f64 {
@@ -2315,7 +2416,10 @@ mod tests {
                     "recordType": "CPLAsset",
                     "fields": {
                         "assetDate": {"value": 1711339200000i64},
-                        "duration": {"value": 3.5},
+                        "addedDate": {"value": 1711339260000i64},
+                        "duration": {"value": 3500},
+                        "videoFrameRate": {"value": 59.94},
+                        "codec": {"value": "hvc1"},
                         "masterRef": {"value": {"recordName": "Master/MASTER-VIDEO"}}
                     }
                 },
@@ -2329,6 +2433,8 @@ mod tests {
                         "resVidComplRes": {
                             "value": {"downloadURL": "https://cvws.icloud-content.com.cn/B/HHH/${f}"}
                         },
+                        "resJPEGThumbWidth": {"value": 1440},
+                        "resJPEGThumbHeight": {"value": 1080},
                         "resVidComplWidth": {"value": 1440},
                         "resVidComplHeight": {"value": 1080}
                     }
@@ -2378,6 +2484,10 @@ mod tests {
         assert_eq!(video.original_url.as_deref(), Some("https://cvws.icloud-content.com.cn/B/EEE/unknown.mp4"));
         assert_eq!(video.video_url.as_deref(), Some("https://cvws.icloud-content.com.cn/B/FFF/unknown.mp4"));
         assert_eq!((video.width, video.height), (Some(1080), Some(1920)));
+        assert_eq!(video.added_at, Some(1_711_339_260_000));
+        assert_eq!(video.duration_seconds, Some(3.5));
+        assert_eq!(video.frame_rate, Some(59.94));
+        assert_eq!(video.codec.as_deref(), Some("hvc1"));
 
         let live = &page.photos[2];
         assert_eq!(live.id, "ASSET-LIVE");

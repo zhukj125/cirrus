@@ -132,6 +132,46 @@ export interface PhotoItem {
   height?: number | null;
 
   sizeBytes?: number | null;
+
+  addedAt?: number | null;
+
+  durationSeconds?: number | null;
+
+  frameRate?: number | null;
+
+  codec?: string | null;
+
+  timeZoneOffset?: number | null;
+
+  isFavorite?: boolean | null;
+
+  isHidden?: boolean | null;
+
+  keywords?: string[];
+
+  metadata?: PhotoMetadata | null;
+}
+
+export interface PhotoMetadata {
+  cameraMake: string | null;
+  cameraModel: string | null;
+  lensModel: string | null;
+  lensSpecification: string | null;
+  dateTaken: string | null;
+  exposureTime: string | null;
+  fNumber: string | null;
+  iso: string | null;
+  focalLength: string | null;
+  focalLength35mm: string | null;
+  exposureBias: string | null;
+  meteringMode: string | null;
+  flash: string | null;
+  whiteBalance: string | null;
+  colorSpace: string | null;
+  software: string | null;
+  gpsLatitude: number | null;
+  gpsLongitude: number | null;
+  gpsAltitude: number | null;
 }
 
 export interface SavedPhotoResult {
