@@ -149,12 +149,55 @@ describe("PhotoViewer · 实况", () => {
     await flushPromises();
 
     const strip = wrapper.get('div[aria-label="Photo thumbnails"]');
-    expect(strip.findAll("[data-filmstrip-index]")).toHaveLength(80);
+    expect(strip.findAll("[data-filmstrip-index]").length).toBeGreaterThan(0);
+    expect(strip.findAll("[data-filmstrip-index]").length).toBeLessThan(80);
     expect(strip.get('[data-filmstrip-index="0"]').attributes("aria-current")).toBe("true");
 
-    await strip.get('[data-filmstrip-index="78"]').trigger("click");
-    expect(wrapper.emitted("update:index")?.[0]).toEqual([78]);
+    await strip.get('[data-filmstrip-index="1"]').trigger("click");
+    expect(wrapper.emitted("update:index")?.[0]).toEqual([1]);
+  });
+
+  it("横向滚动缩略图会切换照片并预加载后续页", async () => {
+    const photos = Array.from({ length: 80 }, (_, index) => ({
+      ...stillPhoto,
+      id: `scroll-${index}`,
+      fileName: `scroll-${index}.jpeg`,
+      thumbUrl: `https://example.com/scroll-${index}-thumb.jpeg`,
+    }));
+    const wrapper = mount(PhotoViewer, { props: { photos, index: 0, hasMore: true }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    const strip = wrapper.get('div[aria-label="Photo thumbnails"]');
+    const stripElement = strip.element as HTMLElement;
+    let scrollLeft = 3_340;
+    Object.defineProperties(stripElement, {
+      scrollLeft: { get: () => scrollLeft, set: (value: number) => (scrollLeft = value), configurable: true },
+      clientWidth: { value: 400, configurable: true },
+      scrollWidth: { value: 8_000, configurable: true },
+    });
+    window.dispatchEvent(new Event("resize"));
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    stripElement.scrollLeft = 0;
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    await strip.trigger("pointerdown", { button: 0, pointerId: 1, clientX: 8_000 });
+    await strip.trigger("pointermove", { pointerId: 1, clientX: 200 });
+    await flushPromises();
+    animationFrame.mockRestore();
+    await strip.trigger("pointerup", { pointerId: 1, clientX: 200 });
+
+    expect(wrapper.emitted("update:index")?.[0]).toEqual([79]);
     expect(wrapper.emitted("needMore")).toHaveLength(1);
+
+    scrollLeft = 1_000;
+    await strip.trigger("pointerdown", { button: 0, pointerId: 2, clientX: 500 });
+    await strip.trigger("pointermove", { pointerId: 2, clientX: 400 });
+    expect(scrollLeft).toBe(1_100);
+    await strip.trigger("pointerup", { pointerId: 2, clientX: 400 });
+    wrapper.unmount();
   });
 
   it("普通照片支持旋转和水平翻转", async () => {

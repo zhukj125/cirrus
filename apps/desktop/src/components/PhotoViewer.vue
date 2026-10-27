@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, Info as InfoIcon, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, ImageOff, Info as InfoIcon, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
 
 import { downloadPhoto } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
@@ -48,21 +48,94 @@ const stage = ref<HTMLElement | null>(null);
 const stageSize = ref({ width: 0, height: 0 });
 const filmstrip = ref<HTMLElement | null>(null);
 
-const FILMSTRIP_RADIUS = 60;
-const FILMSTRIP_SIZE = FILMSTRIP_RADIUS * 2 + 1;
+const FILMSTRIP_SETTLE_MS = 140;
+const FILMSTRIP_PREFETCH_PX = 600;
+const FILMSTRIP_OVERSCAN_PX = 700;
+const PHOTO_PREFETCH_COUNT = 24;
+const WARM_IMAGE_LIMIT = 18;
+const NEED_MORE_COOLDOWN_MS = 1_000;
+const FILMSTRIP_GAP_PX = 1;
 
-const filmstripItems = computed(() => {
-  const maxStart = Math.max(0, props.photos.length - FILMSTRIP_SIZE);
-  const start = Math.min(Math.max(0, props.index - FILMSTRIP_RADIUS), maxStart);
-  const end = Math.min(props.photos.length, start + FILMSTRIP_SIZE);
-  return props.photos.slice(start, end).map((item, offset) => ({ photo: item, index: start + offset }));
-});
+let filmstripFrame: number | null = null;
+let filmstripSettleTimer: number | null = null;
+let filmstripProgrammaticTimer: number | null = null;
+let filmstripUserScrolling = false;
+let filmstripProgrammaticScroll = false;
+let needMoreTimer: number | null = null;
+let displayLoadToken = 0;
+let displayLoadTimer: number | null = null;
+let activeDisplayPreloader: HTMLImageElement | null = null;
+const warmedImages = new Map<string, HTMLImageElement>();
+const filmstripDragging = ref(false);
+const filmstripFailed = reactive(new Set<string>());
+const filmstripScrollLeft = ref(0);
+const filmstripViewportWidth = ref(0);
+let filmstripDrag: { pointerId: number; originX: number; lastX: number; moved: boolean } | null = null;
+let suppressFilmstripClick = false;
 
-function filmstripItemWidth(photo: PhotoItem): string {
-  const ratio = photo.width && photo.height ? photo.width / photo.height : 0.65;
-  return `${Math.round(Math.min(72, Math.max(20, 46 * ratio)))}px`;
+function filmstripImageUrl(photo: PhotoItem): string {
+  return photo.thumbUrl || photo.displayUrl || "";
 }
 
+function onFilmstripImageError(event: Event, photo: PhotoItem): void {
+  const image = event.currentTarget;
+  if (!(image instanceof HTMLImageElement)) return;
+  const fallback = photo.displayUrl;
+  if (fallback && image.dataset.usedFallback !== "true") {
+    image.dataset.usedFallback = "true";
+    image.src = fallback;
+    return;
+  }
+  filmstripFailed.add(photo.id);
+}
+
+function filmstripItemWidth(photo: PhotoItem): number {
+  const ratio = photo.width && photo.height ? photo.width / photo.height : 0.65;
+  return Math.round(Math.min(72, Math.max(20, 46 * ratio)));
+}
+
+const filmstripLayout = computed(() => {
+  if (props.photos.length === 0) return [];
+  const firstWidth = filmstripItemWidth(props.photos[0]!);
+  let left = Math.max(0, (filmstripViewportWidth.value - firstWidth) / 2);
+  return props.photos.map((photo, index) => {
+    const width = filmstripItemWidth(photo);
+    const item = { photo, index, left, width };
+    left += width + FILMSTRIP_GAP_PX;
+    return item;
+  });
+});
+
+const filmstripTotalWidth = computed(() => {
+  const layout = filmstripLayout.value;
+  const last = layout[layout.length - 1];
+  if (!last) return filmstripViewportWidth.value;
+  const rightPadding = Math.max(0, (filmstripViewportWidth.value - last.width) / 2);
+  return Math.max(filmstripViewportWidth.value, last.left + last.width + rightPadding);
+});
+
+const filmstripItems = computed(() => {
+  const layout = filmstripLayout.value;
+  if (layout.length === 0) return [];
+  const from = Math.max(0, filmstripScrollLeft.value - FILMSTRIP_OVERSCAN_PX);
+  const to = filmstripScrollLeft.value + filmstripViewportWidth.value + FILMSTRIP_OVERSCAN_PX;
+  let low = 0;
+  let high = layout.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const item = layout[middle]!;
+    if (item.left + item.width < from) low = middle + 1;
+    else high = middle;
+  }
+  let end = low;
+  while (end < layout.length && layout[end]!.left <= to) end += 1;
+  return layout.slice(low, Math.min(layout.length, end + 1));
+});
+
+function updateFilmstripViewport(): void {
+  filmstripViewportWidth.value = filmstrip.value?.clientWidth ?? 0;
+  if (filmstrip.value) filmstripScrollLeft.value = filmstrip.value.scrollLeft;
+}
 const saving = ref(false);
 const infoOpen = ref(false);
 
@@ -121,11 +194,13 @@ function toggleFlip(): void {
 
 function updateStageSize(): void {
   const element = stage.value;
-  if (!element) return;
-  stageSize.value = {
-    width: Math.max(0, element.clientWidth - 32),
-    height: Math.max(0, element.clientHeight - 32),
-  };
+  if (element) {
+    stageSize.value = {
+      width: Math.max(0, element.clientWidth - 32),
+      height: Math.max(0, element.clientHeight - 32),
+    };
+  }
+  updateFilmstripViewport();
 }
 
 const quarterTurn = computed(() => rotation.value % 180 !== 0);
@@ -142,10 +217,58 @@ const imageStyle = computed(() => ({
   maxHeight: stageSize.value.height > 0 ? `${quarterTurn.value ? stageSize.value.width : stageSize.value.height}px` : undefined,
 }));
 
+function scheduleCurrentPhotoLoad(): void {
+  const token = ++displayLoadToken;
+  if (activeDisplayPreloader !== null) {
+    activeDisplayPreloader.onload = null;
+    activeDisplayPreloader.onerror = null;
+    activeDisplayPreloader.src = "";
+    activeDisplayPreloader = null;
+  }
+  if (displayLoadTimer !== null) {
+    window.clearTimeout(displayLoadTimer);
+    displayLoadTimer = null;
+  }
+  loaded.value = false;
+  displayLoadTimer = window.setTimeout(() => {
+    displayLoadTimer = null;
+    if (token !== displayLoadToken) return;
+    const item = photo.value;
+    if (!item || item.isVideo) {
+      loaded.value = true;
+      warmPhotoNeighborhood();
+      return;
+    }
+
+    const url = displayUrl.value;
+    if (!url) {
+      warmPhotoNeighborhood();
+      return;
+    }
+    const image = new Image();
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    activeDisplayPreloader = image;
+    image.onload = () => {
+      if (token !== displayLoadToken) return;
+      warmedImages.set(url, image);
+      activeDisplayPreloader = null;
+      loaded.value = true;
+      warmPhotoNeighborhood();
+    };
+    image.onerror = () => {
+      if (token !== displayLoadToken) return;
+      activeDisplayPreloader = null;
+      warmPhotoNeighborhood();
+    };
+    image.src = url;
+  }, 50);
+}
+
 watch(
   () => photo.value?.id,
   async () => {
-    loaded.value = false;
+    scheduleCurrentPhotoLoad();
     playingLive.value = canPlayLive.value;
     resetImageTransform();
     if (!playingLive.value) return;
@@ -190,15 +313,172 @@ function startDrag(event: MouseEvent): void {
   window.addEventListener("mouseup", endDrag);
 }
 
+function clearFilmstripSettle(): void {
+  if (filmstripSettleTimer !== null) {
+    window.clearTimeout(filmstripSettleTimer);
+    filmstripSettleTimer = null;
+  }
+}
+
+function prepareFilmstripUserScroll(): void {
+  filmstripProgrammaticScroll = false;
+  if (filmstripProgrammaticTimer !== null) {
+    window.clearTimeout(filmstripProgrammaticTimer);
+    filmstripProgrammaticTimer = null;
+  }
+  clearFilmstripSettle();
+}
+
+function beginFilmstripUserScroll(): void {
+  filmstripUserScrolling = true;
+  prepareFilmstripUserScroll();
+}
+
+function nearestFilmstripIndex(strip: HTMLElement): number {
+  const layout = filmstripLayout.value;
+  if (layout.length === 0) return props.index;
+  const center = strip.scrollLeft + strip.clientWidth / 2;
+  let low = 0;
+  let high = layout.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const item = layout[middle]!;
+    if (item.left + item.width / 2 < center) low = middle + 1;
+    else high = middle;
+  }
+  const candidates = [layout[low - 1], layout[low]].filter((item): item is (typeof layout)[number] => Boolean(item));
+  let nearest = props.index;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const item of candidates) {
+    const distance = Math.abs(item.left + item.width / 2 - center);
+    if (distance >= nearestDistance) continue;
+    nearest = item.index;
+    nearestDistance = distance;
+  }
+  return nearest;
+}
+
+function requestMorePhotos(): void {
+  if (!props.hasMore || needMoreTimer !== null) return;
+  emit("needMore");
+  needMoreTimer = window.setTimeout(() => {
+    needMoreTimer = null;
+  }, NEED_MORE_COOLDOWN_MS);
+}
+
+function requestMoreFromFilmstrip(strip: HTMLElement): void {
+  if (!props.hasMore) return;
+  const remaining = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
+  if (remaining <= FILMSTRIP_PREFETCH_PX) requestMorePhotos();
+}
+
 async function scrollFilmstrip(behavior: ScrollBehavior = "smooth"): Promise<void> {
   await nextTick();
   const strip = filmstrip.value;
-  const item = strip?.querySelector<HTMLElement>(`[data-filmstrip-index="${props.index}"]`);
-  if (!strip || !item || typeof strip.scrollTo !== "function") return;
-  const stripRect = strip.getBoundingClientRect();
-  const itemRect = item.getBoundingClientRect();
-  const centeredLeft = strip.scrollLeft + itemRect.left - stripRect.left - (stripRect.width - itemRect.width) / 2;
-  strip.scrollTo({ left: Math.max(0, centeredLeft), behavior });
+  const item = filmstripLayout.value[props.index];
+  if (!strip || !item || filmstripUserScrolling || typeof strip.scrollTo !== "function") return;
+
+  const centeredLeft = item.left + item.width / 2 - strip.clientWidth / 2;
+  const maxScroll = Math.max(0, strip.scrollWidth - strip.clientWidth);
+  filmstripProgrammaticScroll = true;
+  if (filmstripProgrammaticTimer !== null) window.clearTimeout(filmstripProgrammaticTimer);
+  filmstripProgrammaticTimer = window.setTimeout(
+    () => {
+      filmstripProgrammaticScroll = false;
+      filmstripProgrammaticTimer = null;
+    },
+    behavior === "smooth" ? 420 : 80,
+  );
+  strip.scrollTo({ left: Math.min(maxScroll, Math.max(0, centeredLeft)), behavior });
+}
+
+function finishFilmstripScroll(): void {
+  filmstripSettleTimer = null;
+  if (!filmstripUserScrolling) return;
+  filmstripUserScrolling = false;
+  void scrollFilmstrip("smooth");
+}
+
+function onFilmstripScroll(): void {
+  const strip = filmstrip.value;
+  if (!strip) return;
+  filmstripScrollLeft.value = strip.scrollLeft;
+  requestMoreFromFilmstrip(strip);
+  if (filmstripProgrammaticScroll) return;
+
+  beginFilmstripUserScroll();
+  clearFilmstripSettle();
+  filmstripSettleTimer = window.setTimeout(finishFilmstripScroll, FILMSTRIP_SETTLE_MS);
+  if (filmstripFrame !== null) return;
+  filmstripFrame = window.requestAnimationFrame(() => {
+    filmstripFrame = null;
+    const current = filmstrip.value;
+    if (!current) return;
+    const next = nearestFilmstripIndex(current);
+    if (next !== props.index) selectFilmstripPhoto(next);
+  });
+}
+function onFilmstripWheel(event: WheelEvent): void {
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+  if (event.deltaY === 0) return;
+  event.preventDefault();
+  const strip = filmstrip.value;
+  if (!strip) return;
+  prepareFilmstripUserScroll();
+  strip.scrollBy({ left: event.deltaY, behavior: "auto" });
+  onFilmstripScroll();
+}
+
+function onFilmstripPointerDown(event: PointerEvent): void {
+  const strip = filmstrip.value;
+  if (!strip || event.button !== 0) return;
+  prepareFilmstripUserScroll();
+  filmstripDrag = { pointerId: event.pointerId, originX: event.clientX, lastX: event.clientX, moved: false };
+  strip.setPointerCapture?.(event.pointerId);
+}
+
+function onFilmstripPointerMove(event: PointerEvent): void {
+  const strip = filmstrip.value;
+  const drag = filmstripDrag;
+  if (!strip || !drag || drag.pointerId !== event.pointerId) return;
+  if (!drag.moved && Math.abs(event.clientX - drag.originX) > 3) {
+    drag.moved = true;
+    filmstripDragging.value = true;
+  }
+  if (!drag.moved) return;
+
+  event.preventDefault();
+  const delta = event.clientX - drag.lastX;
+  drag.lastX = event.clientX;
+  if (delta !== 0) strip.scrollLeft -= delta;
+  onFilmstripScroll();
+}
+
+function finishFilmstripPointer(event: PointerEvent): void {
+  const strip = filmstrip.value;
+  const drag = filmstripDrag;
+  if (!strip || !drag || drag.pointerId !== event.pointerId) return;
+  filmstripDrag = null;
+  filmstripDragging.value = false;
+  if (strip.hasPointerCapture?.(event.pointerId)) strip.releasePointerCapture(event.pointerId);
+  if (!drag.moved) return;
+
+  suppressFilmstripClick = true;
+  window.setTimeout(() => {
+    suppressFilmstripClick = false;
+  }, 0);
+  if (filmstripUserScrolling) {
+    clearFilmstripSettle();
+    filmstripSettleTimer = window.setTimeout(finishFilmstripScroll, FILMSTRIP_SETTLE_MS);
+  }
+}
+
+function onFilmstripClick(event: MouseEvent, next: number): void {
+  if (suppressFilmstripClick) {
+    event.preventDefault();
+    return;
+  }
+  selectFilmstripPhoto(next);
 }
 
 function selectFilmstripPhoto(next: number): void {
@@ -207,14 +487,14 @@ function selectFilmstripPhoto(next: number): void {
   playingLive.value = false;
   resetImageTransform();
   emit("update:index", next);
-  if (props.hasMore && next >= props.photos.length - 12) emit("needMore");
+  if (next >= props.photos.length - PHOTO_PREFETCH_COUNT) requestMorePhotos();
 }
 
 function go(delta: number): void {
   const next = props.index + delta;
   if (next < 0) return;
   if (next >= props.photos.length) {
-    if (delta > 0 && props.hasMore) emit("needMore");
+    if (delta > 0) requestMorePhotos();
     return;
   }
 
@@ -224,6 +504,24 @@ function go(delta: number): void {
   emit("update:index", next);
 }
 
+function warmPhotoNeighborhood(): void {
+  for (const offset of [-1, 1, 2, 3, 4]) {
+    const item = props.photos[props.index + offset];
+    if (!item) continue;
+    const url = item.isVideo ? item.thumbUrl : item.displayUrl || item.thumbUrl;
+    if (!url || warmedImages.has(url)) continue;
+    const image = new Image();
+    image.decoding = "async";
+    image.fetchPriority = "low";
+    image.src = url;
+    warmedImages.set(url, image);
+  }
+  while (warmedImages.size > WARM_IMAGE_LIMIT) {
+    const oldest = warmedImages.keys().next().value;
+    if (oldest === undefined) break;
+    warmedImages.delete(oldest);
+  }
+}
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape") {
     if (infoOpen.value) infoOpen.value = false;
@@ -242,14 +540,23 @@ function onKeydown(event: KeyboardEvent): void {
 watch(
   () => props.index,
   (next) => {
-    if (props.hasMore && next >= props.photos.length - 12) emit("needMore");
+    if (next >= props.photos.length - PHOTO_PREFETCH_COUNT) requestMorePhotos();
     void scrollFilmstrip();
   },
 );
 
 watch(
   () => props.photos.length,
-  () => void scrollFilmstrip("auto"),
+  () => {
+    warmPhotoNeighborhood();
+  },
+);
+
+watch(
+  () => filmstripViewportWidth.value,
+  () => {
+    if (!filmstripUserScrolling) void scrollFilmstrip("auto");
+  },
 );
 
 onMounted(() => {
@@ -262,6 +569,18 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("resize", updateStageSize);
   endDrag();
+  if (filmstripFrame !== null) window.cancelAnimationFrame(filmstripFrame);
+  clearFilmstripSettle();
+  if (filmstripProgrammaticTimer !== null) window.clearTimeout(filmstripProgrammaticTimer);
+  if (needMoreTimer !== null) window.clearTimeout(needMoreTimer);
+  if (displayLoadTimer !== null) window.clearTimeout(displayLoadTimer);
+  displayLoadToken += 1;
+  if (activeDisplayPreloader !== null) {
+    activeDisplayPreloader.onload = null;
+    activeDisplayPreloader.onerror = null;
+    activeDisplayPreloader.src = "";
+  }
+  warmedImages.clear();
 });
 
 async function handleDownload(): Promise<void> {
@@ -372,18 +691,33 @@ async function handleDownload(): Promise<void> {
             preload="auto"
             @ended="playingLive = false"
           />
-          <img
-            v-else
-            class="relative max-h-full max-w-full rounded-md object-contain transition-opacity duration-200"
-            :class="[loaded ? 'opacity-100' : 'opacity-0', dragging ? '' : 'transition-transform duration-100']"
-            :style="imageStyle"
-            :src="displayUrl"
-            :alt="fileName || t('photos.photoNameFallback')"
-            draggable="false"
-            @load="loaded = true"
-            @mousedown.prevent="startDrag"
-            @dblclick="toggleZoom"
-          />
+          <template v-else>
+            <img
+              v-if="!loaded"
+              class="relative max-h-full max-w-full rounded-md object-contain opacity-80"
+              :class="dragging ? '' : 'transition-transform duration-100'"
+              :style="imageStyle"
+              :src="photo.thumbUrl"
+              :alt="fileName || t('photos.photoNameFallback')"
+              decoding="async"
+              draggable="false"
+              @mousedown.prevent="startDrag"
+              @dblclick="toggleZoom"
+            />
+            <img
+              v-else
+              class="relative max-h-full max-w-full rounded-md object-contain transition-opacity duration-150"
+              :class="dragging ? '' : 'transition-transform duration-100'"
+              :style="imageStyle"
+              :src="displayUrl"
+              :alt="fileName || t('photos.photoNameFallback')"
+              decoding="async"
+              fetchpriority="high"
+              draggable="false"
+              @mousedown.prevent="startDrag"
+              @dblclick="toggleZoom"
+            />
+          </template>
         </div>
 
         <button
@@ -408,25 +742,53 @@ async function handleDownload(): Promise<void> {
       </div>
 
       <div class="relative h-[62px] shrink-0 border-t border-border bg-elevated/95 shadow-[0_-6px_18px_rgba(0,0,0,0.07)]">
-        <div ref="filmstrip" class="relative flex h-full items-center gap-px overflow-x-auto px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" :aria-label="t('viewer.thumbnailStrip')">
-          <button
-            v-for="item in filmstripItems"
-            :key="item.photo.id"
-            type="button"
-            class="group relative h-[46px] flex-none overflow-hidden border bg-muted transition-[margin,border-color,opacity,box-shadow] duration-200"
-            :class="item.index === index ? 'mx-2 rounded-md border-foreground/30 opacity-100 shadow-sm' : 'rounded-[3px] border-border/70 opacity-65 hover:border-border hover:opacity-100'"
-            :style="{ width: filmstripItemWidth(item.photo) }"
-            :data-filmstrip-index="item.index"
-            :aria-label="t('viewer.selectPhoto', { index: item.index + 1 })"
-            :aria-current="item.index === index ? 'true' : undefined"
-            :title="item.photo.fileName || t('photos.photoNameFallback')"
-            @click="selectFilmstripPhoto(item.index)"
-          >
-            <img :src="item.photo.thumbUrl" alt="" class="h-full w-full object-cover" loading="lazy" decoding="async" draggable="false" />
-            <span v-if="item.photo.isVideo || item.photo.isLivePhoto" class="absolute right-0.5 bottom-0.5 grid size-3 place-items-center rounded-full bg-black/65 text-white shadow-sm">
-              <Play :size="7" fill="currentColor" />
-            </span>
-          </button>
+        <div
+          ref="filmstrip"
+          class="relative block h-full select-none overflow-x-auto overscroll-x-contain py-1 [scrollbar-width:none] [touch-action:pan-y] [&::-webkit-scrollbar]:hidden"
+          :class="filmstripDragging ? 'cursor-grabbing' : 'cursor-grab'"
+          role="group"
+          :aria-label="t('viewer.thumbnailStrip')"
+          @scroll.passive="onFilmstripScroll"
+          @wheel="onFilmstripWheel"
+          @pointerdown="onFilmstripPointerDown"
+          @pointermove="onFilmstripPointerMove"
+          @pointerup="finishFilmstripPointer"
+          @pointercancel="finishFilmstripPointer"
+          @dragstart.prevent
+        >
+          <div class="relative h-full" :style="{ width: `${filmstripTotalWidth}px` }">
+            <button
+              v-for="item in filmstripItems"
+              :key="item.photo.id"
+              type="button"
+              class="group absolute top-1/2 h-[46px] -translate-y-1/2 overflow-hidden border bg-muted transition-[border-color,opacity,box-shadow] duration-200"
+              :class="item.index === index ? 'rounded-md border-foreground/30 opacity-100 shadow-sm' : 'rounded-[3px] border-border/70 opacity-65 hover:border-border hover:opacity-100'"
+              :style="{ left: `${item.left}px`, width: `${item.width}px` }"
+              :data-filmstrip-index="item.index"
+              :aria-label="t('viewer.selectPhoto', { index: item.index + 1 })"
+              :aria-current="item.index === index ? 'true' : undefined"
+              :title="item.photo.fileName || t('photos.photoNameFallback')"
+              @click="onFilmstripClick($event, item.index)"
+            >
+              <img
+                v-if="!filmstripFailed.has(item.photo.id) && filmstripImageUrl(item.photo)"
+                :src="filmstripImageUrl(item.photo)"
+                alt=""
+                class="h-full w-full object-cover"
+                :loading="Math.abs(item.index - index) <= 12 ? 'eager' : 'lazy'"
+                :fetchpriority="item.index === index ? 'high' : Math.abs(item.index - index) <= 12 ? 'auto' : 'low'"
+                decoding="async"
+                draggable="false"
+                @error="onFilmstripImageError($event, item.photo)"
+              />
+              <div v-else class="grid h-full w-full place-items-center bg-muted text-muted-foreground">
+                <ImageOff :size="12" />
+              </div>
+              <span v-if="item.photo.isVideo || item.photo.isLivePhoto" class="absolute right-0.5 bottom-0.5 grid size-3 place-items-center rounded-full bg-black/65 text-white shadow-sm">
+                <Play :size="7" fill="currentColor" />
+              </span>
+            </button>
+          </div>
         </div>
         <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>
         <div class="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-elevated via-elevated/75 to-transparent" aria-hidden="true"></div>

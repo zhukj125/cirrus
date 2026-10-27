@@ -112,7 +112,8 @@ pub mod cloud_kit_schema {
     pub const ASSET_LEGACY_URL: &str = "url";
     pub const FILE_SIZE: &str = "size";
 
-    pub const THUMB_FIELDS: &[&str] = &["resJPEGThumbRes", "resJpegSmallThumb", "resJPEGMedRes"];
+    pub const THUMB_FIELDS: &[&str] =
+        &["resJPEGThumbRes", "resJpegSmallThumb", "resJPEGMedRes", "resVidSmallThumb", "resVidMedThumb"];
 
     pub const VIDEO_SIZE_FIELDS: &[(&str, &str)] = &[
         ("resOriginalWidth", "resOriginalHeight"),
