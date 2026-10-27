@@ -30,6 +30,7 @@ const locale = useLocaleStore();
 const t = locale.t;
 
 const PAGE_SIZE = 60;
+const VIEWER_PAGE_SIZE = 120;
 
 const storedPhotoView = readStored(StorageKey.photosView);
 const photoView = ref<PhotoViewMode>(isPhotoViewMode(storedPhotoView) ? storedPhotoView : "comfortable");
@@ -117,6 +118,12 @@ const error = ref<string | null>(null);
 const total = ref<LibraryTotal | null>(null);
 
 const viewerIndex = ref<number | null>(null);
+const viewerPhotos = ref<PhotoItem[] | null>(null);
+const viewerBaseRank = ref(0);
+let viewerSeekToken = 0;
+
+const viewerList = computed(() => viewerPhotos.value ?? visiblePhotos.value);
+const viewerTotalCount = computed(() => (isUnfiltered.value ? (total.value?.assets ?? null) : null));
 
 const sentinel = ref<HTMLElement | null>(null);
 
@@ -791,7 +798,45 @@ async function fillGallery(epoch = loadEpoch): Promise<void> {
 }
 
 function openViewer(index: number): void {
+  viewerSeekToken += 1;
+  viewerPhotos.value = [...visiblePhotos.value];
+  viewerBaseRank.value = 0;
   viewerIndex.value = index;
+}
+
+function closeViewer(): void {
+  viewerSeekToken += 1;
+  viewerIndex.value = null;
+  viewerPhotos.value = null;
+  viewerBaseRank.value = 0;
+}
+
+async function seekViewerRank(rank: number): Promise<void> {
+  const total = viewerTotalCount.value;
+  const target = Math.max(0, Math.min(rank, (total ?? 1) - 1));
+  const halfPage = Math.floor(VIEWER_PAGE_SIZE / 2);
+  const maxStart = Math.max(0, (total ?? VIEWER_PAGE_SIZE) - VIEWER_PAGE_SIZE);
+  const pageStart = Math.min(Math.max(0, target - halfPage), maxStart);
+  const token = ++viewerSeekToken;
+  try {
+    const page = await photosList({ sessionId: props.sessionId, startRank: pageStart, limit: VIEWER_PAGE_SIZE });
+    if (token !== viewerSeekToken) return;
+    if (page.status === Status.error) {
+      toast.error(page.message ?? t("photos.loadRankFailed"));
+      return;
+    }
+    if (page.photos.length === 0) {
+      toast.error(t("photos.loadRankFailed"));
+      return;
+    }
+    const targetIndex = Math.min(page.photos.length - 1, Math.max(0, target - pageStart));
+    viewerPhotos.value = page.photos;
+    viewerBaseRank.value = pageStart;
+    viewerIndex.value = targetIndex;
+  } catch (caught) {
+    if (token !== viewerSeekToken) return;
+    toast.error(t("photos.loadRankFailed"));
+  }
 }
 
 void startFromNewest(loadEpoch);
@@ -1152,6 +1197,18 @@ watch(
       </div>
     </div>
 
-    <PhotoViewer v-if="viewerIndex !== null" :photos="visiblePhotos" :index="viewerIndex" :has-more="hasMore" @update:index="viewerIndex = $event" @need-more="continueLoading" @close="viewerIndex = null" />
+    <PhotoViewer
+      v-if="viewerIndex !== null"
+      :photos="viewerList"
+      :index="viewerIndex"
+      :base-rank="viewerBaseRank"
+      :total-count="viewerTotalCount"
+      :session-id="sessionId"
+      :has-more="hasMore"
+      @update:index="viewerIndex = $event"
+      @need-more="continueLoading"
+      @seek-rank="seekViewerRank"
+      @close="closeViewer"
+    />
   </div>
 </template>

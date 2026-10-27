@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, ImageOff, Info as InfoIcon, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, Download, FlipHorizontal2, Info as InfoIcon, Maximize2, Pause, Play, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from "@lucide/vue";
 
-import { downloadPhoto } from "@/lib/api";
+import { downloadPhoto, photosList } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import Spinner from "@/components/ui/Spinner.vue";
 import PhotoInfoPanel from "@/components/photos/PhotoInfoPanel.vue";
@@ -15,8 +15,11 @@ const props = defineProps<{
   index: number;
 
   hasMore?: boolean;
+  baseRank?: number;
+  totalCount?: number | null;
+  sessionId?: string;
 }>();
-const emit = defineEmits<{ "update:index": [value: number]; close: []; needMore: [] }>();
+const emit = defineEmits<{ "update:index": [value: number]; close: []; needMore: []; seekRank: [rank: number] }>();
 const locale = useLocaleStore();
 const t = locale.t;
 
@@ -54,7 +57,10 @@ const FILMSTRIP_OVERSCAN_PX = 700;
 const PHOTO_PREFETCH_COUNT = 24;
 const WARM_IMAGE_LIMIT = 18;
 const NEED_MORE_COOLDOWN_MS = 1_000;
-const FILMSTRIP_GAP_PX = 1;
+const FILMSTRIP_PAGE_SIZE = 60;
+const FILMSTRIP_PREFETCH_DELAY_MS = 160;
+const FILMSTRIP_GAP_PX = 5;
+const FILMSTRIP_ITEM_WIDTH = 32;
 
 let filmstripFrame: number | null = null;
 let filmstripSettleTimer: number | null = null;
@@ -62,6 +68,7 @@ let filmstripProgrammaticTimer: number | null = null;
 let filmstripUserScrolling = false;
 let filmstripProgrammaticScroll = false;
 let needMoreTimer: number | null = null;
+let filmstripPrefetchTimer: number | null = null;
 let displayLoadToken = 0;
 let displayLoadTimer: number | null = null;
 let activeDisplayPreloader: HTMLImageElement | null = null;
@@ -69,12 +76,21 @@ const warmedImages = new Map<string, HTMLImageElement>();
 const filmstripDragging = ref(false);
 const filmstripFailed = reactive(new Set<string>());
 const filmstripScrollLeft = ref(0);
+const filmstripTargetRank = ref(0);
+const knownFilmstripPhotos = reactive(new Map<number, PhotoItem>());
+const knownFilmstripPages = reactive(new Set<number>());
+const pendingFilmstripPages = new Set<number>();
 const filmstripViewportWidth = ref(0);
 let filmstripDrag: { pointerId: number; originX: number; lastX: number; moved: boolean } | null = null;
 let suppressFilmstripClick = false;
 
 function filmstripImageUrl(photo: PhotoItem): string {
   return photo.thumbUrl || photo.displayUrl || "";
+}
+
+function filmstripItemStyle(item: { rank: number; left: number; width: number }): Record<string, string> {
+  const inset = item.rank === filmstripTargetRank.value ? -3 : 1;
+  return { left: `${item.left + inset}px`, width: `${item.width - inset * 2}px` };
 }
 
 function onFilmstripImageError(event: Event, photo: PhotoItem): void {
@@ -89,18 +105,20 @@ function onFilmstripImageError(event: Event, photo: PhotoItem): void {
   filmstripFailed.add(photo.id);
 }
 
-function filmstripItemWidth(photo: PhotoItem): number {
-  const ratio = photo.width && photo.height ? photo.width / photo.height : 0.65;
-  return Math.round(Math.min(72, Math.max(20, 46 * ratio)));
-}
+const baseRank = computed(() => props.baseRank ?? 0);
+const currentGlobalRank = computed(() => baseRank.value + props.index);
+const filmstripCount = computed(() => props.totalCount ?? props.photos.length);
+const atFirstPhoto = computed(() => (props.totalCount != null ? currentGlobalRank.value <= 0 : props.index <= 0));
+const atLastPhoto = computed(() => (props.totalCount != null ? currentGlobalRank.value >= props.totalCount - 1 : props.index >= props.photos.length - 1 && !props.hasMore));
 
 const filmstripLayout = computed(() => {
-  if (props.photos.length === 0) return [];
-  const firstWidth = filmstripItemWidth(props.photos[0]!);
-  let left = Math.max(0, (filmstripViewportWidth.value - firstWidth) / 2);
-  return props.photos.map((photo, index) => {
-    const width = filmstripItemWidth(photo);
-    const item = { photo, index, left, width };
+  const count = filmstripCount.value;
+  if (count === 0) return [];
+  let left = Math.max(0, (filmstripViewportWidth.value - FILMSTRIP_ITEM_WIDTH) / 2);
+  return Array.from({ length: count }, (_, rank) => {
+    const photo = knownFilmstripPhotos.get(rank);
+    const width = FILMSTRIP_ITEM_WIDTH;
+    const item = { photo, rank, left, width };
     left += width + FILMSTRIP_GAP_PX;
     return item;
   });
@@ -132,10 +150,53 @@ const filmstripItems = computed(() => {
   return layout.slice(low, Math.min(layout.length, end + 1));
 });
 
+watch(
+  [() => props.photos, () => props.baseRank],
+  ([items, base]) => {
+    const startRank = base ?? 0;
+    items.forEach((item, index) => {
+      const rank = startRank + index;
+      knownFilmstripPhotos.set(rank, item);
+      knownFilmstripPages.add(Math.floor(rank / FILMSTRIP_PAGE_SIZE) * FILMSTRIP_PAGE_SIZE);
+    });
+    if (!filmstripUserScrolling) filmstripTargetRank.value = Math.min(Math.max(0, currentGlobalRank.value), Math.max(0, filmstripCount.value - 1));
+  },
+  { immediate: true },
+);
+
 function updateFilmstripViewport(): void {
   filmstripViewportWidth.value = filmstrip.value?.clientWidth ?? 0;
   if (filmstrip.value) filmstripScrollLeft.value = filmstrip.value.scrollLeft;
 }
+async function prefetchFilmstripPage(rank: number): Promise<void> {
+  const sessionId = props.sessionId?.trim();
+  if (!sessionId || props.totalCount == null) return;
+  const pageStart = Math.floor(rank / FILMSTRIP_PAGE_SIZE) * FILMSTRIP_PAGE_SIZE;
+  if (knownFilmstripPages.has(pageStart) || pendingFilmstripPages.has(pageStart)) return;
+
+  pendingFilmstripPages.add(pageStart);
+  try {
+    const page = await photosList({ sessionId, startRank: pageStart, limit: FILMSTRIP_PAGE_SIZE });
+    if (page.status === "ERROR" || page.photos.length === 0) return;
+    knownFilmstripPages.add(pageStart);
+    page.photos.forEach((photo, offset) => {
+      const globalRank = pageStart + offset;
+      if (globalRank < filmstripCount.value) knownFilmstripPhotos.set(globalRank, photo);
+    });
+  } finally {
+    pendingFilmstripPages.delete(pageStart);
+  }
+}
+
+function scheduleFilmstripPrefetch(rank: number): void {
+  if (!props.sessionId || props.totalCount == null) return;
+  if (filmstripPrefetchTimer !== null) window.clearTimeout(filmstripPrefetchTimer);
+  filmstripPrefetchTimer = window.setTimeout(() => {
+    filmstripPrefetchTimer = null;
+    void prefetchFilmstripPage(rank);
+  }, FILMSTRIP_PREFETCH_DELAY_MS);
+}
+
 const saving = ref(false);
 const infoOpen = ref(false);
 
@@ -143,6 +204,8 @@ const photo = computed<PhotoItem | null>(() => {
   const item: PhotoItem | undefined = props.photos[props.index];
   return item ?? null;
 });
+
+const renderedFilmstripItems = computed(() => filmstripItems.value.map((item) => (item.rank === currentGlobalRank.value && photo.value ? { ...item, photo: photo.value } : item)));
 
 const isVideo = computed(() => photo.value?.isVideo === true);
 const isLivePhoto = computed(() => photo.value?.isLivePhoto === true && !isVideo.value);
@@ -336,7 +399,7 @@ function beginFilmstripUserScroll(): void {
 
 function nearestFilmstripIndex(strip: HTMLElement): number {
   const layout = filmstripLayout.value;
-  if (layout.length === 0) return props.index;
+  if (layout.length === 0) return currentGlobalRank.value;
   const center = strip.scrollLeft + strip.clientWidth / 2;
   let low = 0;
   let high = layout.length;
@@ -347,12 +410,12 @@ function nearestFilmstripIndex(strip: HTMLElement): number {
     else high = middle;
   }
   const candidates = [layout[low - 1], layout[low]].filter((item): item is (typeof layout)[number] => Boolean(item));
-  let nearest = props.index;
+  let nearest = currentGlobalRank.value;
   let nearestDistance = Number.POSITIVE_INFINITY;
   for (const item of candidates) {
     const distance = Math.abs(item.left + item.width / 2 - center);
     if (distance >= nearestDistance) continue;
-    nearest = item.index;
+    nearest = item.rank;
     nearestDistance = distance;
   }
   return nearest;
@@ -367,7 +430,7 @@ function requestMorePhotos(): void {
 }
 
 function requestMoreFromFilmstrip(strip: HTMLElement): void {
-  if (!props.hasMore) return;
+  if (!props.hasMore || props.totalCount != null) return;
   const remaining = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
   if (remaining <= FILMSTRIP_PREFETCH_PX) requestMorePhotos();
 }
@@ -375,7 +438,7 @@ function requestMoreFromFilmstrip(strip: HTMLElement): void {
 async function scrollFilmstrip(behavior: ScrollBehavior = "smooth"): Promise<void> {
   await nextTick();
   const strip = filmstrip.value;
-  const item = filmstripLayout.value[props.index];
+  const item = filmstripLayout.value[filmstripTargetRank.value];
   if (!strip || !item || filmstripUserScrolling || typeof strip.scrollTo !== "function") return;
 
   const centeredLeft = item.left + item.width / 2 - strip.clientWidth / 2;
@@ -396,6 +459,13 @@ function finishFilmstripScroll(): void {
   filmstripSettleTimer = null;
   if (!filmstripUserScrolling) return;
   filmstripUserScrolling = false;
+  const targetRank = filmstripTargetRank.value;
+  const localIndex = targetRank - baseRank.value;
+  if (localIndex >= 0 && localIndex < props.photos.length) {
+    if (localIndex !== props.index) selectFilmstripPhoto(localIndex);
+  } else {
+    emit("seekRank", targetRank);
+  }
   void scrollFilmstrip("smooth");
 }
 
@@ -414,8 +484,8 @@ function onFilmstripScroll(): void {
     filmstripFrame = null;
     const current = filmstrip.value;
     if (!current) return;
-    const next = nearestFilmstripIndex(current);
-    if (next !== props.index) selectFilmstripPhoto(next);
+    filmstripTargetRank.value = nearestFilmstripIndex(current);
+    scheduleFilmstripPrefetch(filmstripTargetRank.value);
   });
 }
 function onFilmstripWheel(event: WheelEvent): void {
@@ -434,7 +504,6 @@ function onFilmstripPointerDown(event: PointerEvent): void {
   if (!strip || event.button !== 0) return;
   prepareFilmstripUserScroll();
   filmstripDrag = { pointerId: event.pointerId, originX: event.clientX, lastX: event.clientX, moved: false };
-  strip.setPointerCapture?.(event.pointerId);
 }
 
 function onFilmstripPointerMove(event: PointerEvent): void {
@@ -444,6 +513,7 @@ function onFilmstripPointerMove(event: PointerEvent): void {
   if (!drag.moved && Math.abs(event.clientX - drag.originX) > 3) {
     drag.moved = true;
     filmstripDragging.value = true;
+    strip.setPointerCapture?.(event.pointerId);
   }
   if (!drag.moved) return;
 
@@ -473,12 +543,16 @@ function finishFilmstripPointer(event: PointerEvent): void {
   }
 }
 
-function onFilmstripClick(event: MouseEvent, next: number): void {
+function onFilmstripClick(event: MouseEvent, rank: number): void {
   if (suppressFilmstripClick) {
     event.preventDefault();
     return;
   }
-  selectFilmstripPhoto(next);
+  filmstripTargetRank.value = rank;
+  const localIndex = rank - baseRank.value;
+  if (localIndex >= 0 && localIndex < props.photos.length) selectFilmstripPhoto(localIndex);
+  else emit("seekRank", rank);
+  void scrollFilmstrip("smooth");
 }
 
 function selectFilmstripPhoto(next: number): void {
@@ -486,21 +560,29 @@ function selectFilmstripPhoto(next: number): void {
   loaded.value = false;
   playingLive.value = false;
   resetImageTransform();
+  filmstripTargetRank.value = baseRank.value + next;
   emit("update:index", next);
-  if (next >= props.photos.length - PHOTO_PREFETCH_COUNT) requestMorePhotos();
+  if (props.totalCount == null && next >= props.photos.length - PHOTO_PREFETCH_COUNT) requestMorePhotos();
 }
 
 function go(delta: number): void {
   const next = props.index + delta;
-  if (next < 0) return;
-  if (next >= props.photos.length) {
-    if (delta > 0) requestMorePhotos();
+  const globalTarget = currentGlobalRank.value + delta;
+  if (next < 0 || next >= props.photos.length) {
+    if (props.totalCount != null && globalTarget >= 0 && globalTarget < props.totalCount) {
+      filmstripTargetRank.value = globalTarget;
+      emit("seekRank", globalTarget);
+      void scrollFilmstrip("smooth");
+    } else if (delta > 0) {
+      requestMorePhotos();
+    }
     return;
   }
 
   loaded.value = false;
   playingLive.value = false;
   resetImageTransform();
+  filmstripTargetRank.value = baseRank.value + next;
   emit("update:index", next);
 }
 
@@ -573,6 +655,7 @@ onUnmounted(() => {
   clearFilmstripSettle();
   if (filmstripProgrammaticTimer !== null) window.clearTimeout(filmstripProgrammaticTimer);
   if (needMoreTimer !== null) window.clearTimeout(needMoreTimer);
+  if (filmstripPrefetchTimer !== null) window.clearTimeout(filmstripPrefetchTimer);
   if (displayLoadTimer !== null) window.clearTimeout(displayLoadTimer);
   displayLoadToken += 1;
   if (activeDisplayPreloader !== null) {
@@ -605,7 +688,7 @@ async function handleDownload(): Promise<void> {
   <div v-if="photo" class="fixed top-8 right-0 bottom-0 left-0 z-[2000] flex flex-col bg-background/95 backdrop-blur-sm">
     <header class="flex h-11 shrink-0 items-center gap-3 border-b border-border px-4 select-none">
       <div class="flex min-w-0 items-center gap-2.5 text-sm text-muted-foreground">
-        <span class="tabular shrink-0">{{ index + 1 }}/{{ photos.length }}</span>
+        <span class="tabular shrink-0">{{ filmstripTargetRank + 1 }}/{{ filmstripCount }}</span>
         <span v-if="time" class="truncate">{{ time }}</span>
         <span v-if="fileName" class="truncate">{{ fileName }}</span>
         <span v-if="isVideo" class="shrink-0">{{ t("common.video") }}</span>
@@ -724,7 +807,7 @@ async function handleDownload(): Promise<void> {
           type="button"
           class="absolute top-1/2 left-4 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
           :aria-label="t('viewer.previousPhoto')"
-          :disabled="index === 0"
+          :disabled="atFirstPhoto"
           @click="go(-1)"
         >
           <ChevronLeft :size="20" />
@@ -734,7 +817,7 @@ async function handleDownload(): Promise<void> {
           type="button"
           class="absolute top-1/2 right-4 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground backdrop-blur transition-colors enabled:hover:bg-elevated disabled:opacity-30"
           :aria-label="t('viewer.nextPhoto')"
-          :disabled="index >= photos.length - 1 && !hasMore"
+          :disabled="atLastPhoto"
           @click="go(1)"
         >
           <ChevronRight :size="20" />
@@ -758,33 +841,33 @@ async function handleDownload(): Promise<void> {
         >
           <div class="relative h-full" :style="{ width: `${filmstripTotalWidth}px` }">
             <button
-              v-for="item in filmstripItems"
-              :key="item.photo.id"
+              v-for="item in renderedFilmstripItems"
+              :key="item.rank"
               type="button"
               class="group absolute top-1/2 h-[46px] -translate-y-1/2 overflow-hidden border bg-muted transition-[border-color,opacity,box-shadow] duration-200"
-              :class="item.index === index ? 'rounded-md border-foreground/30 opacity-100 shadow-sm' : 'rounded-[3px] border-border/70 opacity-65 hover:border-border hover:opacity-100'"
-              :style="{ left: `${item.left}px`, width: `${item.width}px` }"
-              :data-filmstrip-index="item.index"
-              :aria-label="t('viewer.selectPhoto', { index: item.index + 1 })"
-              :aria-current="item.index === index ? 'true' : undefined"
-              :title="item.photo.fileName || t('photos.photoNameFallback')"
-              @click="onFilmstripClick($event, item.index)"
+              :class="item.rank === filmstripTargetRank ? 'rounded-sm border-foreground/30 opacity-100 shadow-sm' : 'rounded-[2px] border-border/70 opacity-65 hover:border-border hover:opacity-100'"
+              :style="filmstripItemStyle(item)"
+              :data-filmstrip-index="item.rank"
+              :aria-label="t('viewer.selectPhoto', { index: item.rank + 1 })"
+              :aria-current="item.rank === filmstripTargetRank ? 'true' : undefined"
+              :title="item.photo?.fileName || `#${item.rank + 1}`"
+              @click="onFilmstripClick($event, item.rank)"
             >
               <img
-                v-if="!filmstripFailed.has(item.photo.id) && filmstripImageUrl(item.photo)"
+                v-if="item.photo && !filmstripFailed.has(item.photo.id) && filmstripImageUrl(item.photo)"
                 :src="filmstripImageUrl(item.photo)"
                 alt=""
                 class="h-full w-full object-cover"
-                :loading="Math.abs(item.index - index) <= 12 ? 'eager' : 'lazy'"
-                :fetchpriority="item.index === index ? 'high' : Math.abs(item.index - index) <= 12 ? 'auto' : 'low'"
+                :loading="Math.abs(item.rank - filmstripTargetRank) <= 12 ? 'eager' : 'lazy'"
+                :fetchpriority="item.rank === filmstripTargetRank ? 'high' : Math.abs(item.rank - filmstripTargetRank) <= 12 ? 'auto' : 'low'"
                 decoding="async"
                 draggable="false"
                 @error="onFilmstripImageError($event, item.photo)"
               />
-              <div v-else class="grid h-full w-full place-items-center bg-muted text-muted-foreground">
-                <ImageOff :size="12" />
+              <div v-else class="grid h-full w-full place-items-center bg-muted">
+                <span class="size-1.5 rounded-full bg-muted-foreground/30" />
               </div>
-              <span v-if="item.photo.isVideo || item.photo.isLivePhoto" class="absolute right-0.5 bottom-0.5 grid size-3 place-items-center rounded-full bg-black/65 text-white shadow-sm">
+              <span v-if="item.photo?.isVideo || item.photo?.isLivePhoto" class="absolute right-0.5 bottom-0.5 grid size-3 place-items-center rounded-full bg-black/65 text-white shadow-sm">
                 <Play :size="7" fill="currentColor" />
               </span>
             </button>
@@ -795,7 +878,7 @@ async function handleDownload(): Promise<void> {
       </div>
 
       <Transition name="photo-info">
-        <PhotoInfoPanel v-if="infoOpen" :photo="photo" :position="index + 1" :total="photos.length" @close="infoOpen = false" />
+        <PhotoInfoPanel v-if="infoOpen" :photo="photo" :position="currentGlobalRank + 1" :total="filmstripCount" @close="infoOpen = false" />
       </Transition>
     </div>
   </div>

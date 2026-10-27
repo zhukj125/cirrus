@@ -188,6 +188,8 @@ describe("PhotoViewer · 实况", () => {
     await flushPromises();
     animationFrame.mockRestore();
     await strip.trigger("pointerup", { pointerId: 1, clientX: 200 });
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await flushPromises();
 
     expect(wrapper.emitted("update:index")?.[0]).toEqual([79]);
     expect(wrapper.emitted("needMore")).toHaveLength(1);
@@ -197,6 +199,43 @@ describe("PhotoViewer · 实况", () => {
     await strip.trigger("pointermove", { pointerId: 2, clientX: 400 });
     expect(scrollLeft).toBe(1_100);
     await strip.trigger("pointerup", { pointerId: 2, clientX: 400 });
+    wrapper.unmount();
+  });
+
+  it("全库缩略图拖到未加载位置会请求对应排名", async () => {
+    const photos = Array.from({ length: 5 }, (_, index) => ({
+      ...stillPhoto,
+      id: `rank-${100 + index}`,
+      fileName: `rank-${100 + index}.jpeg`,
+    }));
+    const wrapper = mount(PhotoViewer, {
+      props: { photos, index: 0, baseRank: 100, totalCount: 1_000, hasMore: false },
+      global: { plugins: [createPinia()] },
+    });
+    await flushPromises();
+
+    const strip = wrapper.get('div[aria-label="Photo thumbnails"]');
+    const stripElement = strip.element as HTMLElement;
+    let scrollLeft = 0;
+    Object.defineProperties(stripElement, {
+      scrollLeft: { get: () => scrollLeft, set: (value: number) => (scrollLeft = value), configurable: true },
+      clientWidth: { value: 400, configurable: true },
+      scrollWidth: { value: 40_000, configurable: true },
+    });
+    window.dispatchEvent(new Event("resize"));
+    await flushPromises();
+
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    await strip.trigger("pointerdown", { button: 0, pointerId: 4, clientX: 8_000 });
+    await strip.trigger("pointermove", { pointerId: 4, clientX: 200 });
+    animationFrame.mockRestore();
+    await strip.trigger("pointerup", { pointerId: 4, clientX: 200 });
+    await new Promise((resolve) => setTimeout(resolve, 180));
+
+    expect(wrapper.emitted("seekRank")?.[0]?.[0]).toBeGreaterThan(104);
     wrapper.unmount();
   });
 
