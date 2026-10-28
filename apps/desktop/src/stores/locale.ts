@@ -104,6 +104,7 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "photos.olderRangeHint": { zh: "该范围早于自动分页窗口，可能尚未加载到", en: "This range is older than the automatic pagination window, so it may not have been reached yet" },
   "photos.clearFilters": { zh: "清除筛选", en: "Clear filters" },
   "photos.photoCount": { zh: "{count} 张照片", en: "{count} photos" },
+  "photos.libraryCounts": { zh: "{photos} 张照片 · {videos} 个视频", en: "{photos} photos · {videos} videos" },
   "photos.selected": { zh: "已选 {count} 张", en: "{count} selected" },
   "photos.liveBadge": { zh: "实况", en: "LIVE" },
   "photos.typePhoto": { zh: "照片", en: "Photo" },

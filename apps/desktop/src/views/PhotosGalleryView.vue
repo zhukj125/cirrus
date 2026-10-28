@@ -267,6 +267,14 @@ const countLabel = computed(() => {
   );
 });
 
+const libraryCountLabel = computed(() => {
+  const counts = total.value;
+  if (!counts) return null;
+  return t("photos.libraryCounts", {
+    photos: counts.photos.toLocaleString(locale.locale),
+    videos: counts.videos.toLocaleString(locale.locale),
+  });
+});
 async function loadTotal(sessionId: string): Promise<void> {
   try {
     const result = await photosTotal(sessionId);
@@ -1011,16 +1019,14 @@ watch(
           {{ t("photos.download") }}
         </button>
         <span class="h-4 w-px shrink-0 bg-border" />
+        <span v-if="libraryCountLabel" data-testid="library-media-counts" class="tabular max-w-[320px] shrink-0 truncate rounded-md bg-secondary/70 px-2.5 py-1 text-xs" :title="libraryCountLabel">
+          {{ libraryCountLabel }}
+        </span>
         <span class="tabular max-w-[280px] shrink-0 truncate rounded-md bg-secondary/70 px-2.5 py-1 text-xs" :title="countLabel">{{ countLabel }}</span>
 
         <span v-if="error" class="flex min-w-0 items-center gap-2">
           <span class="truncate text-destructive" :title="error">{{ error }}</span>
           <button type="button" class="shrink-0 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="retry">{{ t("common.retry") }}</button>
-        </span>
-
-        <span v-if="busy" class="flex shrink-0 items-center gap-1.5">
-          <Spinner :size="12" />
-          {{ t("photos.loading") }}
         </span>
       </div>
     </div>

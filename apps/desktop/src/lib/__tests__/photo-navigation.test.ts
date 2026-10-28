@@ -121,6 +121,7 @@ describe("照片页 · 年/月导航", () => {
     expect(listPayload(0).startRank).toBeUndefined();
 
     expect(wrapper.find('[role="dialog"][aria-label="Select date range"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="library-media-counts"]').text()).toBe("20 photos · 2 videos");
     await openTimelinePicker(wrapper);
     expect(wrapper.text()).toContain("2024");
     expect(wrapper.text()).toContain("Feb");
