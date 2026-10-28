@@ -69,14 +69,14 @@ jobs:
 
             ### Highlights
 
+            - Full-library virtual photo filmstrip with smooth drag scrolling
+            - Jump to any photo rank with centered page loading
+            - Detailed photo information panel with EXIF, location, dimensions, codec, and frame rate
+            - Faster photo switching with prioritized thumbnail and preview loading
             - System tray background mode with a configurable first-close choice
-            - Close prompts can be changed or reset from Appearance settings
-            - Map Settings now opens the map configuration page directly
-            - Shared, editable download settings in the app and download manager
-            - Configurable concurrent tasks with automatic queueing
-            - Configurable photo concurrency per task
-            - Persistent download manager with a default download folder
-            - GitHub repository shortcut in the title bar
+            - Shared, editable download settings with concurrency and queue controls
+            - Persistent download manager with a configurable default folder
+            - Direct map settings navigation and GitHub repository shortcut
 
             Native iCloud Photos and Find My desktop client for Windows, macOS, and Linux.
 
