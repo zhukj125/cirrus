@@ -66,6 +66,57 @@ pub struct PlaySoundRequest {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CalendarCollection {
+    pub id: String,
+    pub title: String,
+    pub color: String,
+    pub enabled: bool,
+    pub read_only: bool,
+    pub is_default: bool,
+    pub order: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEvent {
+    pub id: String,
+    pub title: String,
+    pub calendar_id: String,
+    pub start: String,
+    pub end: String,
+    pub all_day: bool,
+    pub recurring: bool,
+    pub read_only: bool,
+    pub location: String,
+    pub notes: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarLoadResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub calendars: Vec<CalendarCollection>,
+    pub events: Vec<CalendarEvent>,
+}
+
+impl CalendarLoadResult {
+    pub fn ok(calendars: Vec<CalendarCollection>, events: Vec<CalendarEvent>) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, calendars, events }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: statuses::ERROR.to_string(),
+            message: Some(message.into()),
+            calendars: Vec::new(),
+            events: Vec::new(),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactField {
     pub label: String,
     pub value: String,

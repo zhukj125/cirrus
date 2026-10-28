@@ -12,6 +12,7 @@ import DownloadManagerDialog from "@/components/photos/DownloadManagerDialog.vue
 import Spinner from "@/components/ui/Spinner.vue";
 import Toaster from "@/components/ui/Toaster.vue";
 import { Button } from "@/components/ui/button";
+import CalendarView from "@/views/CalendarView.vue";
 import ContactsView from "@/views/ContactsView.vue";
 import MapView from "@/views/MapView.vue";
 import NotesView from "@/views/NotesView.vue";
@@ -47,12 +48,13 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
-const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" || view.value === "contacts" ? view.value : "findmy"));
+const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
 
 const headerTitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
   if (shellView.value === "notes") return i18n.t("nav.notes");
   if (shellView.value === "contacts") return i18n.t("nav.contacts");
+  if (shellView.value === "calendar") return i18n.t("nav.calendar");
   return i18n.t("nav.devices");
 });
 
@@ -60,6 +62,7 @@ const headerSubtitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("header.photosLibrary");
   if (shellView.value === "notes") return i18n.t("header.notes");
   if (shellView.value === "contacts") return i18n.t("header.contacts");
+  if (shellView.value === "calendar") return i18n.t("header.calendar");
   const count = devices.value?.result.deviceCount;
   return count ? i18n.t("header.deviceCount", { count }) : null;
 });
@@ -82,11 +85,15 @@ function onNavigate(next: ShellView): void {
     void store.openContacts();
     return;
   }
+  if (next === "calendar") {
+    void store.openCalendar();
+    return;
+  }
   void store.ensureDevices();
   store.goTo("findmy");
 }
 
-let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" | "contacts" = "photos-login";
+let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" | "contacts" | "calendar" = "photos-login";
 const settingsInitialCategory = ref("appearance");
 
 function toggleSettings(): void {
@@ -266,6 +273,8 @@ onUnmounted(() => {
         <NotesView v-else-if="shellView === 'notes' && photosSession" :key="'notes-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
         <ContactsView v-else-if="shellView === 'contacts' && photosSession" :key="'contacts-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+
+        <CalendarView v-else-if="shellView === 'calendar' && photosSession" :key="'calendar-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
         <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
 

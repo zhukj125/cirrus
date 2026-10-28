@@ -4,6 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  CalendarLoadResult,
   ContactsListResult,
   NoteDetailResult,
   NotesListResult,
@@ -93,6 +94,9 @@ export function contactsList(payload: { sessionId: string; locale: string }): Pr
   return call<ContactsListResult>("contacts_list", payload);
 }
 
+export function calendarLoad(payload: { sessionId: string; startDate: string; endDate: string; timezone: string; locale: string }): Promise<CalendarLoadResult> {
+  return call<CalendarLoadResult>("calendar_load", payload);
+}
 export function contactPhoto(payload: { sessionId: string; url: string }): Promise<AccountAvatar> {
   return call<AccountAvatar>("contact_photo", payload);
 }

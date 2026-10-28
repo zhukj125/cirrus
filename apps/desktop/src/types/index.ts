@@ -391,3 +391,33 @@ export interface ContactsListResult {
   message: string | null;
   contacts: ContactEntry[];
 }
+export interface CalendarCollection {
+  id: string;
+  title: string;
+  color: string;
+  enabled: boolean;
+  readOnly: boolean;
+  isDefault: boolean;
+  order: number;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  calendarId: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  recurring: boolean;
+  readOnly: boolean;
+  location: string;
+  notes: string;
+  url: string;
+}
+
+export interface CalendarLoadResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  calendars: CalendarCollection[];
+  events: CalendarEvent[];
+}

@@ -25,6 +25,11 @@ pub mod setup {
     pub const FMIP_WEB_AUTHENTICATE: &str = "/fmipWebAuthenticate";
 }
 
+pub mod calendar {
+    pub const ALL_COLLECTIONS: &str = "/ca/allcollections";
+    pub const EVENTS: &str = "/ca/events";
+}
+
 pub mod contacts {
     pub const MECARD: &str = "/co/mecard/";
     pub const ADDRESSBOOK: &str = "/co/addressbook";

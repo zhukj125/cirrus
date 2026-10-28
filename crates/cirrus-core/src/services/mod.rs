@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod avatar;
+pub mod calendar;
 pub mod contacts;
 pub mod devices;
 pub mod media;

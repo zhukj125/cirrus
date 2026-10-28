@@ -145,6 +145,7 @@ pub fn run() {
             commands::notes::notes_get,
             commands::contacts::contacts_list,
             commands::contacts::contact_photo,
+            commands::calendar::calendar_load,
             commands::photos::photos_login,
             commands::photos::photos_verify_2fa,
             commands::photos::photos_finish_2fa,
