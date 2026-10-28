@@ -110,3 +110,40 @@ describe("2FA browser trust choice", () => {
     wrapper.unmount();
   });
 });
+
+describe("登录区域回退", () => {
+  it("不显示中国大陆选项，国际站失败后自动回退", async () => {
+    vi.mocked(photosLogin).mockReset();
+    vi.mocked(photosLogin)
+      .mockResolvedValueOnce({
+        status: "ERROR",
+        message: "international sign-in failed",
+        sessionId: null,
+        authType: null,
+        firstName: null,
+        lastName: null,
+      })
+      .mockResolvedValueOnce(finished);
+
+    const wrapper = mountLogin();
+    expect(wrapper.find("#china-mainland").exists()).toBe(false);
+
+    await wrapper.get("#apple-id").setValue("user@example.com");
+    await wrapper.get("#apple-password").setValue("password");
+    await wrapper.get("form").trigger("submit");
+
+    await vi.waitFor(() => expect(vi.mocked(photosLogin)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(photosLogin)).toHaveBeenNthCalledWith(1, {
+      appleId: "user@example.com",
+      password: "password",
+      chinaMainland: false,
+    });
+    expect(vi.mocked(photosLogin)).toHaveBeenNthCalledWith(2, {
+      appleId: "user@example.com",
+      password: "password",
+      chinaMainland: true,
+    });
+    await vi.waitFor(() => expect(wrapper.emitted("success")?.[0]).toEqual(["session-1"]));
+    wrapper.unmount();
+  });
+});

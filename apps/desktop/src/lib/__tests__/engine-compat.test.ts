@@ -22,6 +22,7 @@ const polyfillSource = inlineScript("<script data-cirrus-polyfills>");
 
 type Capabilities = {
   layer: boolean;
+  layerConstructor?: boolean;
   oklch: boolean;
   colorMix: boolean;
   mediaRange: boolean;
@@ -35,6 +36,7 @@ const CHROME_120: Capabilities = { layer: true, oklch: true, colorMix: true, med
 const SAFARI_15_2_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.2 Safari/605.1.15";
 const SAFARI_16_2_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15";
 const CHROME_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const EDGE_155_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0";
 
 class FakeElement {
   tagName: string;
@@ -132,6 +134,7 @@ function runProbe(options: ProbeOptions) {
       return { getPropertyValue: (name: string) => (name === "--cirrus-layer-probe" && options.capabilities.layer ? "1" : "") };
     },
   };
+  if (options.capabilities.layerConstructor) windowStub.CSSLayerBlockRule = function () {};
   if (options.desktop) windowStub.__TAURI_INTERNALS__ = {};
 
   const css = {
@@ -198,6 +201,16 @@ describe("WebView compatibility guard", () => {
     expect(result.blocked).toBe(true);
   });
 
+  it("accepts a native CSS layer API when the computed-style probe is empty", () => {
+    const result = runProbe({
+      capabilities: { ...CHROME_120, layer: false, layerConstructor: true },
+      userAgent: EDGE_155_UA,
+      desktop: true,
+    });
+    expect(result.report.tier, result.warnings.join("\n")).toBe("ok");
+    expect(result.notice).toBe("none");
+    expect(result.blocked).toBe(false);
+  });
   it("shows a dismissible banner when only optional CSS capabilities are missing", () => {
     const result = runProbe({ capabilities: SAFARI_16_2, userAgent: SAFARI_16_2_UA, desktop: true, languages: ["en"] });
     expect(result.report.tier, result.warnings.join("\n")).toBe("degraded");

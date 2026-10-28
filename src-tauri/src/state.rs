@@ -88,7 +88,7 @@ impl AppState {
         RuntimeInfo {
             ttl_minutes: self.sessions.ttl_minutes(),
             session_limit: MAX_SESSIONS,
-            china_mainland_default: true,
+            china_mainland_default: false,
             version: env!("CARGO_PKG_VERSION").to_string(),
             vault_enabled: self.sessions.vault_enabled(),
             download_task_persistence_enabled: self.data_dir.is_some(),

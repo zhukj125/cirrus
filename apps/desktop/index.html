@@ -359,11 +359,21 @@
         }
 
         function supportsLayer() {
+          try {
+            if (typeof window.CSSLayerBlockRule !== "undefined" || typeof window.CSSLayerStatementRule !== "undefined") return true;
+          } catch (error) {
+            /* Fall back to stylesheet probing. */
+          }
           var style;
           try {
             style = document.createElement("style");
             style.textContent = "@layer cirrus-layer-probe{html{--cirrus-layer-probe:1}}";
             (document.head || document.documentElement).appendChild(style);
+            var sheet = style.sheet;
+            if (sheet && sheet.cssRules && sheet.cssRules.length) {
+              var rule = sheet.cssRules[0];
+              if (rule && /^CSSLayer(Block|Statement)Rule$/.test(String((rule.constructor && rule.constructor.name) || ""))) return true;
+            }
             var value = window.getComputedStyle(document.documentElement).getPropertyValue("--cirrus-layer-probe");
             return String(value).trim() === "1";
           } catch (error) {

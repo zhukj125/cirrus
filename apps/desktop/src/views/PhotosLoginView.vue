@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { ArrowRight, MapPin, ShieldCheck } from "@lucide/vue";
+import { ArrowRight, ShieldCheck } from "@lucide/vue";
 
 import { Status } from "@/constants";
 import { photos2faOptions, photosCheckApproval, photosFinish2fa, photosLogin, photosSendCode, photosStatus, photosVerify2fa } from "@/lib/api";
@@ -9,7 +9,6 @@ import { useLocaleStore } from "@/stores/locale";
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import type { KnownAccount, LoginContext } from "@/types";
 
 const props = withDefaults(
@@ -39,7 +38,6 @@ const POLL_LIMIT = 150;
 
 const appleId = ref(props.loginContext.appleId ?? "");
 const password = ref("");
-const chinaMainland = ref(true);
 const loading = ref(false);
 
 const reloginConfirmed = ref(false);
@@ -172,9 +170,14 @@ onUnmounted(() => {
   stopPolling();
 });
 
-function onSwitchRowClick(event: MouseEvent): void {
-  if (event.target instanceof HTMLElement && event.target.closest("button")) return;
-  chinaMainland.value = !chinaMainland.value;
+async function loginWithRegionFallback(id: string) {
+  try {
+    const result = await photosLogin({ appleId: id, password: password.value, chinaMainland: false });
+    if (result.status !== Status.error) return result;
+  } catch (error) {
+    /* The Mainland China retry below will surface any final failure. */
+  }
+  return photosLogin({ appleId: id, password: password.value, chinaMainland: true });
 }
 
 async function handleLogin(): Promise<void> {
@@ -189,7 +192,7 @@ async function handleLogin(): Promise<void> {
   }
   loading.value = true;
   try {
-    const result = await photosLogin({ appleId: id, password: password.value, chinaMainland: chinaMainland.value });
+    const result = await loginWithRegionFallback(id);
     if (result.status === Status.error) {
       toast.error(result.message ?? locale.t("login.signInFailed"));
       return;
@@ -420,11 +423,6 @@ function switchToOtherAccount(): void {
             <div>
               <label for="apple-password" class="mb-2 block text-sm font-medium">{{ locale.t("login.password") }}</label>
               <Input id="apple-password" v-model="password" class="h-10 rounded-lg" type="password" :placeholder="locale.t('login.passwordPlaceholder')" autocomplete="current-password" />
-            </div>
-
-            <div class="flex cursor-pointer items-center justify-between rounded-lg border border-border bg-secondary/45 px-3.5 py-2.5 text-sm select-none" @click="onSwitchRowClick">
-              <span class="flex items-center gap-2 text-muted-foreground"><MapPin :size="14" />{{ locale.t("login.china") }}</span>
-              <Switch id="china-mainland" v-model="chinaMainland" :aria-label="locale.t('login.china')" />
             </div>
 
             <Button type="submit" class="mt-1 h-10 w-full rounded-lg" :disabled="loading">
