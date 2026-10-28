@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ShellView } from "@/constants";
 import type { AccountInfo, KnownAccount } from "@/types";
-import { Images, MapPin } from "@lucide/vue";
+import { Images, MapPin, NotebookPen } from "@lucide/vue";
 
 import AppSidebar from "./AppSidebar.vue";
 
@@ -58,6 +58,7 @@ const emit = defineEmits<{
       <header class="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card/70 px-4 select-none">
         <span class="grid size-7 shrink-0 place-items-center rounded-md border border-border/70 bg-background text-muted-foreground">
           <Images v-if="view === 'photos-gallery'" :size="14" />
+          <NotebookPen v-else-if="view === 'notes'" :size="14" />
           <MapPin v-else :size="14" />
         </span>
         <div class="flex min-w-0 items-baseline gap-2">

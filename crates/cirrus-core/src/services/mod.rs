@@ -2,5 +2,8 @@ pub mod auth;
 pub mod avatar;
 pub mod devices;
 pub mod media;
+pub(crate) mod note_content;
+pub(crate) mod note_paper;
+pub mod notes;
 pub mod photo_metadata;
 pub mod photos;

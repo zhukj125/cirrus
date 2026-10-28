@@ -594,6 +594,7 @@ dependencies = [
  "base64 0.22.1",
  "cookie",
  "cookie_store",
+ "flate2",
  "futures-util",
  "hmac",
  "keyring",

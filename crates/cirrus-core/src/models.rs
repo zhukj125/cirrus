@@ -64,6 +64,99 @@ pub struct PlaySoundRequest {
     pub session_id: String,
     pub device_id: String,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFolder {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSummary {
+    pub id: String,
+    pub title: String,
+    pub snippet: String,
+    pub folder_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub modified_at: Option<i64>,
+    pub pinned: bool,
+    pub deleted: bool,
+    pub first_attachment_uti: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesListResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub folders: Vec<NoteFolder>,
+    pub notes: Vec<NoteSummary>,
+    pub next_cursor: Option<String>,
+}
+
+impl NotesListResult {
+    pub fn ok(folders: Vec<NoteFolder>, notes: Vec<NoteSummary>, next_cursor: Option<String>) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, folders, notes, next_cursor }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: statuses::ERROR.to_string(),
+            message: Some(message.into()),
+            folders: Vec::new(),
+            notes: Vec::new(),
+            next_cursor: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteAttachment {
+    pub id: String,
+    pub name: String,
+    pub uti: Option<String>,
+    pub preview_url: Option<String>,
+    pub dark_preview_url: Option<String>,
+    pub fallback_url: Option<String>,
+    pub download_url: Option<String>,
+    pub render_url: Option<String>,
+    pub table: Option<Vec<Vec<String>>>,
+    pub file_size: Option<u64>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteDetail {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub body_html: String,
+    pub folder_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub modified_at: Option<i64>,
+    pub attachments: Vec<NoteAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteDetailResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub note: Option<NoteDetail>,
+}
+
+impl NoteDetailResult {
+    pub fn ok(note: NoteDetail) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, note: Some(note) }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self { status: statuses::ERROR.to_string(), message: Some(message.into()), note: None }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

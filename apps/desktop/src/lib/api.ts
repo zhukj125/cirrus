@@ -4,6 +4,8 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  NoteDetailResult,
+  NotesListResult,
   AccountAvatar,
   AccountStoreSnapshot,
   DeviceInfoResult,
@@ -79,6 +81,13 @@ export function photosLogin(payload: { appleId: string; password: string }): Pro
   return call<PhotosLoginResult>("photos_login", payload);
 }
 
+export function notesList(payload: { sessionId: string; cursor?: string | null }): Promise<NotesListResult> {
+  return call<NotesListResult>("notes_list", payload);
+}
+
+export function noteDetail(payload: { sessionId: string; noteId: string }): Promise<NoteDetailResult> {
+  return call<NoteDetailResult>("notes_get", payload);
+}
 export function photosVerify2fa(payload: { sessionId: string; code: string }): Promise<PhotosLoginResult> {
   return call<PhotosLoginResult>("photos_verify_2fa", payload);
 }

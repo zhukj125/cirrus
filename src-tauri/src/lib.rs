@@ -141,6 +141,8 @@ pub fn run() {
             commands::session::session_state,
             commands::session::session_avatar,
             commands::session::session_logout,
+            commands::notes::notes_list,
+            commands::notes::notes_get,
             commands::photos::photos_login,
             commands::photos::photos_verify_2fa,
             commands::photos::photos_finish_2fa,

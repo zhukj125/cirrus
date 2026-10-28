@@ -296,3 +296,58 @@ export interface LoginContext {
 
   appleId: string | null;
 }
+export interface NoteFolder {
+  id: string;
+  name: string;
+}
+
+export interface NoteSummary {
+  id: string;
+  title: string;
+  snippet: string;
+  folderId: string | null;
+  createdAt: number | null;
+  modifiedAt: number | null;
+  pinned: boolean;
+  deleted: boolean;
+  firstAttachmentUti: string | null;
+}
+
+export interface NotesListResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  folders: NoteFolder[];
+  notes: NoteSummary[];
+  nextCursor: string | null;
+}
+
+export interface NoteAttachment {
+  id: string;
+  name: string;
+  uti: string | null;
+  previewUrl: string | null;
+  darkPreviewUrl: string | null;
+  fallbackUrl: string | null;
+  downloadUrl: string | null;
+  renderUrl: string | null;
+  table: string[][] | null;
+  fileSize: number | null;
+  width: number | null;
+  height: number | null;
+}
+export interface NoteDetail {
+  id: string;
+  title: string;
+  body: string;
+  bodyHtml: string;
+  folderId: string | null;
+  createdAt: number | null;
+  modifiedAt: number | null;
+  attachments: NoteAttachment[];
+}
+
+export interface NoteDetailResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  note: NoteDetail | null;
+}

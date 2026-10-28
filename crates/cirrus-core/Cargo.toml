@@ -33,3 +33,4 @@ keyring = { workspace = true }
 cookie = { workspace = true }
 cookie_store = { workspace = true }
 plist = { workspace = true }
+flate2 = { workspace = true }

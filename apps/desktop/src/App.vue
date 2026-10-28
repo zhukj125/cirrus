@@ -13,6 +13,7 @@ import Spinner from "@/components/ui/Spinner.vue";
 import Toaster from "@/components/ui/Toaster.vue";
 import { Button } from "@/components/ui/button";
 import MapView from "@/views/MapView.vue";
+import NotesView from "@/views/NotesView.vue";
 import PhotosGalleryView from "@/views/PhotosGalleryView.vue";
 import PhotosLoginView from "@/views/PhotosLoginView.vue";
 import SettingsView from "@/views/SettingsView.vue";
@@ -45,12 +46,17 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
-const shellView = computed<ShellView>(() => (view.value === "photos-gallery" ? "photos-gallery" : "findmy"));
+const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" ? view.value : "findmy"));
 
-const headerTitle = computed(() => (shellView.value === "photos-gallery" ? i18n.t("nav.photos") : i18n.t("nav.devices")));
+const headerTitle = computed(() => {
+  if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
+  if (shellView.value === "notes") return i18n.t("nav.notes");
+  return i18n.t("nav.devices");
+});
 
 const headerSubtitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("header.photosLibrary");
+  if (shellView.value === "notes") return i18n.t("header.notes");
   const count = devices.value?.result.deviceCount;
   return count ? i18n.t("header.deviceCount", { count }) : null;
 });
@@ -65,11 +71,15 @@ function onNavigate(next: ShellView): void {
     void store.openPhotos();
     return;
   }
+  if (next === "notes") {
+    void store.openNotes();
+    return;
+  }
   void store.ensureDevices();
   store.goTo("findmy");
 }
 
-let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" = "photos-login";
+let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" = "photos-login";
 const settingsInitialCategory = ref("appearance");
 
 function toggleSettings(): void {
@@ -245,6 +255,8 @@ onUnmounted(() => {
         </template>
 
         <PhotosGalleryView v-if="shellView === 'photos-gallery' && photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+
+        <NotesView v-else-if="shellView === 'notes' && photosSession" :key="`notes-${photosSession}`" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
         <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
 
