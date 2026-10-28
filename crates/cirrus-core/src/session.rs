@@ -400,7 +400,7 @@ impl SrpSession {
     }
 
     pub fn oauth_headers(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut headers = vec![
             (hh::OAUTH_CLIENT_ID, hc::OAUTH_CLIENT_ID.to_string()),
             (hh::OAUTH_CLIENT_TYPE, hc::OAUTH_CLIENT_TYPE_FIRST_PARTY.to_string()),
             (hh::OAUTH_REDIRECT_URI, api::home::URL.to_string()),
@@ -414,7 +414,11 @@ impl SrpSession {
             (hh::FD_CLIENT_INFO, hc::FD_CLIENT_INFO.to_string()),
             (hh::PRIVACY_CONSENT, hc::PRIVACY_CONSENT_VALUE.to_string()),
             (hh::PRIVACY_CONSENT_ACCEPTED, hc::PRIVACY_CONSENT_VALUE.to_string()),
-        ]
+        ];
+        if let Some(token) = self.session_data(TRUST_TOKEN).filter(|value| !value.trim().is_empty()) {
+            headers.push((hh::TRUST_TOKEN, token.to_string()));
+        }
+        headers
     }
 
     pub fn auth_headers(&self) -> Vec<(&'static str, String)> {

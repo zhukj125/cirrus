@@ -120,6 +120,15 @@ pub async fn photos_finish_2fa(
 ) -> AppResult<PhotosLoginResult> {
     let result = photos::finish_2fa(sessions(&state), &payload.session_id, payload.trust_browser).await;
     if result.status == statuses::OK {
+        if payload.trust_browser {
+            match sessions(&state).remember_trusted_browser(&payload.session_id).await {
+                Ok(true) => log::info!("[PHOTOS] trusted-browser token saved"),
+                Ok(false) => log::warn!("[PHOTOS] Apple did not return a trusted-browser token to save"),
+                Err(error) => log::warn!("[PHOTOS] failed to save trusted-browser token: {error}"),
+            }
+        } else if let Err(error) = sessions(&state).forget_trusted_browser(&payload.session_id).await {
+            log::warn!("[PHOTOS] failed to forget trusted-browser token: {error}");
+        }
         persist_authenticated_session(state.inner(), &payload.session_id).await;
     }
     Ok(result)

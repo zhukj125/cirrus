@@ -46,7 +46,11 @@ impl SessionManager {
         password: String,
         china_mainland: bool,
     ) -> AppResult<Arc<SessionHandle>> {
-        let session = SrpSession::new(apple_id, Some(password), china_mainland)?;
+        let trusted_browser = self.vault.as_ref().and_then(|vault| vault.load_trusted_browser(&apple_id));
+        let mut session = SrpSession::new(apple_id, Some(password), china_mainland)?;
+        if let Some(token) = trusted_browser {
+            session.set_session_data(crate::models::session_keys::TRUST_TOKEN, token);
+        }
         let session_id = session.id().to_string();
         let handle = Arc::new(SessionHandle::new(session));
 
@@ -100,6 +104,30 @@ impl SessionManager {
         }
     }
 
+    pub async fn remember_trusted_browser(&self, session_id: &str) -> AppResult<bool> {
+        let Some(vault) = self.vault.as_ref() else {
+            return Ok(false);
+        };
+        let handle = self.get(session_id).await?;
+        let session = handle.lock().await;
+        let Some(token) =
+            session.session_data(crate::models::session_keys::TRUST_TOKEN).filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(false);
+        };
+        vault.save_trusted_browser(session.apple_id(), token)?;
+        Ok(true)
+    }
+
+    pub async fn forget_trusted_browser(&self, session_id: &str) -> AppResult<()> {
+        let Some(vault) = self.vault.as_ref() else {
+            return Ok(());
+        };
+        let handle = self.get(session_id).await?;
+        let apple_id = handle.lock().await.apple_id().to_string();
+        vault.remove_trusted_browser(&apple_id);
+        Ok(())
+    }
     pub async fn persist(&self, handle: &SessionHandle) -> AppResult<()> {
         let Some(vault) = self.vault.as_ref() else {
             handle.mark_persisted();
@@ -228,6 +256,29 @@ mod tests {
         manager.remove("no-such-session").await;
     }
 
+    #[tokio::test]
+    async fn new_sessions_reuse_and_update_the_persisted_trusted_browser() {
+        let (dir, file) = temp_vault_path();
+        let vault = Arc::new(SessionVault::open_with_key(file, [9u8; 32]));
+        vault.save_trusted_browser("tester@example.com", "TRUST-TOKEN-OLD").expect("seed trusted browser");
+
+        let manager = SessionManager::new(None, Some(Arc::clone(&vault)));
+        let handle = manager.create("tester@example.com".into(), "secret".into(), false).await.expect("create session");
+        let session_id = {
+            let mut session = handle.lock().await;
+            assert_eq!(session.session_data(crate::models::session_keys::TRUST_TOKEN), Some("TRUST-TOKEN-OLD"));
+            session.set_session_data(crate::models::session_keys::TRUST_TOKEN, "TRUST-TOKEN-NEW");
+            session.id().to_string()
+        };
+
+        assert!(manager.remember_trusted_browser(&session_id).await.expect("remember trusted browser"));
+        assert_eq!(vault.load_trusted_browser("tester@example.com").as_deref(), Some("TRUST-TOKEN-NEW"));
+        manager.forget_trusted_browser(&session_id).await.expect("forget trusted browser");
+        assert!(vault.load_trusted_browser("tester@example.com").is_none());
+
+        manager.remove(&session_id).await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[tokio::test]
     async fn restores_session_from_vault_after_restart() {
         let (dir, file) = temp_vault_path();

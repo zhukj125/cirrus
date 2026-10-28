@@ -132,7 +132,7 @@ pub async fn complete_srp_auth(handle: &SessionHandle, session_id: &str) -> AppR
         m1: BASE64.encode(&m1),
         m2: BASE64.encode(&m2),
         remember_me: true,
-        trust_tokens: Vec::new(),
+        trust_tokens: stored_trust_tokens(&session),
     };
     let payload = serde_json::to_value(&payload).map_err(AppError::from)?;
     let complete_headers = session.auth_headers();
@@ -186,6 +186,13 @@ pub async fn complete_srp_auth(handle: &SessionHandle, session_id: &str) -> AppR
     Ok(result)
 }
 
+fn stored_trust_tokens(session: &crate::session::SrpSession) -> Vec<String> {
+    session
+        .session_data(TRUST_TOKEN)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default()
+}
 pub async fn authenticate(
     manager: &crate::session_manager::SessionManager,
     request: &SrpAuthRequest,
@@ -276,6 +283,18 @@ pub fn timestamp_millis() -> i64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn stored_trust_token_is_sent_in_auth_headers_and_complete_payload() {
+        let mut session =
+            crate::session::SrpSession::new("tester@example.com".to_string(), None, false).expect("session");
+        session.set_session_data(TRUST_TOKEN, "TRUST-TOKEN-123");
+
+        assert!(session
+            .oauth_headers()
+            .iter()
+            .any(|(name, value)| *name == hh::TRUST_TOKEN && value == "TRUST-TOKEN-123"));
+        assert_eq!(stored_trust_tokens(&session), vec!["TRUST-TOKEN-123"]);
+    }
     #[test]
     fn extracts_push_token_from_bootstrap_html() {
         let html = r#"<script>var x = {"pushToken":"abc123","other":1};</script>"#;

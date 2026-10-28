@@ -8,6 +8,7 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 
@@ -15,6 +16,7 @@ const KEYRING_SERVICE: &str = "com.cirrus.session-vault.v1";
 const KEYRING_USER: &str = "local-encryption-key";
 const ENVELOPE_MAGIC: &[u8] = b"cirrus1";
 const NONCE_LEN: usize = 12;
+const TRUSTED_BROWSER_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +62,13 @@ pub struct SessionSnapshot {
     pub last_access: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrustedBrowserRecord {
+    apple_id: String,
+    token: String,
+    updated_at: i64,
+}
 struct SecretCodec {
     cipher: Aes256Gcm,
 }
@@ -123,6 +132,7 @@ pub struct SessionVault {
     path: Option<PathBuf>,
     codec: Option<SecretCodec>,
     records: Mutex<HashMap<String, SessionSnapshot>>,
+    trusted_browsers: Mutex<HashMap<String, TrustedBrowserRecord>>,
 }
 
 impl SessionVault {
@@ -131,7 +141,12 @@ impl SessionVault {
             Ok(codec) => codec,
             Err(error) => {
                 log::warn!("[VAULT] session persistence is unavailable: {error}");
-                return Self { path: None, codec: None, records: Mutex::new(HashMap::new()) };
+                return Self {
+                    path: None,
+                    codec: None,
+                    records: Mutex::new(HashMap::new()),
+                    trusted_browsers: Mutex::new(HashMap::new()),
+                };
             }
         };
         let records = match load_records(&database, &codec) {
@@ -141,15 +156,37 @@ impl SessionVault {
                 HashMap::new()
             }
         };
-        log::info!("[VAULT] session vault ready: {} encrypted records", records.len());
-        Self { path: Some(database), codec: Some(codec), records: Mutex::new(records) }
+        let trusted_browsers = match load_trusted_browsers(&database, &codec) {
+            Ok(records) => records,
+            Err(error) => {
+                log::warn!("[VAULT] trusted-browser data is unavailable; starting empty: {error}");
+                HashMap::new()
+            }
+        };
+        log::info!(
+            "[VAULT] session vault ready: {} encrypted sessions, {} trusted browsers",
+            records.len(),
+            trusted_browsers.len()
+        );
+        Self {
+            path: Some(database),
+            codec: Some(codec),
+            records: Mutex::new(records),
+            trusted_browsers: Mutex::new(trusted_browsers),
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn open_with_key(database: PathBuf, key: [u8; 32]) -> Self {
         let codec = SecretCodec::from_key(key);
         let records = load_records(&database, &codec).unwrap_or_default();
-        Self { path: Some(database), codec: Some(codec), records: Mutex::new(records) }
+        let trusted_browsers = load_trusted_browsers(&database, &codec).unwrap_or_default();
+        Self {
+            path: Some(database),
+            codec: Some(codec),
+            records: Mutex::new(records),
+            trusted_browsers: Mutex::new(trusted_browsers),
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -185,22 +222,88 @@ impl SessionVault {
         }
     }
 
+    pub fn save_trusted_browser(&self, apple_id: &str, token: &str) -> AppResult<()> {
+        if !self.is_enabled() {
+            return Ok(());
+        }
+        let key = trusted_browser_key(apple_id);
+        let token = token.trim();
+        if key.is_empty() || token.is_empty() {
+            return Ok(());
+        }
+        let record = TrustedBrowserRecord {
+            apple_id: apple_id.trim().to_string(),
+            token: token.to_string(),
+            updated_at: crate::session::now_millis(),
+        };
+        let mut records = self.trusted_lock();
+        records.insert(key, record);
+        self.flush_trusted(&records)
+    }
+
+    pub fn load_trusted_browser(&self, apple_id: &str) -> Option<String> {
+        if !self.is_enabled() {
+            return None;
+        }
+        let key = trusted_browser_key(apple_id);
+        let records = self.trusted_lock();
+        let record = records.get(&key)?;
+        if crate::session::now_millis().saturating_sub(record.updated_at) > TRUSTED_BROWSER_TTL_MS {
+            return None;
+        }
+        Some(record.token.clone())
+    }
+
+    pub fn remove_trusted_browser(&self, apple_id: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let key = trusted_browser_key(apple_id);
+        let mut records = self.trusted_lock();
+        if records.remove(&key).is_none() {
+            return;
+        }
+        if let Err(error) = self.flush_trusted(&records) {
+            log::warn!("[VAULT] failed to persist after removing a trusted browser: {error}");
+        }
+    }
     pub fn prune(&self, ttl: Duration) {
         if !self.is_enabled() {
             return;
         }
         let ttl_ms = ttl.as_millis() as i64;
         let now = crate::session::now_millis();
-        let mut records = self.lock();
-        let before = records.len();
-        records.retain(|_, snapshot| now.saturating_sub(snapshot.last_access) <= ttl_ms);
-        if records.len() == before {
-            return;
-        }
-        log::info!("[VAULT] pruned {} expired session records", before - records.len());
-        if let Err(error) = self.flush(&records) {
-            log::warn!("[VAULT] failed to persist after pruning expired sessions: {error}");
-        }
+        let sessions_changed = {
+            let mut records = self.lock();
+            let before = records.len();
+            records.retain(|_, snapshot| now.saturating_sub(snapshot.last_access) <= ttl_ms);
+            if records.len() == before {
+                false
+            } else {
+                log::info!("[VAULT] pruned {} expired session records", before - records.len());
+                if let Err(error) = self.flush(&records) {
+                    log::warn!("[VAULT] failed to persist after pruning expired sessions: {error}");
+                }
+                true
+            }
+        };
+
+        let trusted_changed = {
+            let mut records = self.trusted_lock();
+            let before = records.len();
+            records.retain(|_, record| now.saturating_sub(record.updated_at) <= TRUSTED_BROWSER_TTL_MS);
+            if records.len() == before {
+                false
+            } else {
+                log::info!("[VAULT] pruned {} expired trusted browsers", before - records.len());
+                if let Err(error) = self.flush_trusted(&records) {
+                    log::warn!("[VAULT] failed to persist after pruning trusted browsers: {error}");
+                }
+                true
+            }
+        };
+
+        let _ = (sessions_changed, trusted_changed);
     }
 
     fn flush(&self, records: &HashMap<String, SessionSnapshot>) -> AppResult<()> {
@@ -216,8 +319,67 @@ impl SessionVault {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, SessionSnapshot>> {
         self.records.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    fn trusted_lock(&self) -> MutexGuard<'_, HashMap<String, TrustedBrowserRecord>> {
+        self.trusted_browsers.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn flush_trusted(&self, records: &HashMap<String, TrustedBrowserRecord>) -> AppResult<()> {
+        let Some(path) = self.path.as_ref() else {
+            return Ok(());
+        };
+        let Some(codec) = self.codec.as_ref() else {
+            return Ok(());
+        };
+        write_trusted_browsers(path, codec, records)
+    }
 }
 
+fn trusted_browser_key(apple_id: &str) -> String {
+    let normalized = apple_id.trim().to_ascii_lowercase();
+    format!("{:x}", Sha256::digest(normalized.as_bytes()))
+}
+
+fn load_trusted_browsers(database: &Path, codec: &SecretCodec) -> AppResult<HashMap<String, TrustedBrowserRecord>> {
+    let connection = crate::database::open_database(database)?;
+    let mut statement = connection.prepare("SELECT apple_id_key, encrypted FROM trusted_browsers")?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))?;
+    let mut records = HashMap::new();
+    for row in rows {
+        let (key, envelope) = row?;
+        let Some(plain) = codec.decrypt(&envelope) else {
+            log::warn!("[VAULT] skipped an unreadable trusted-browser record");
+            continue;
+        };
+        match serde_json::from_slice::<TrustedBrowserRecord>(&plain) {
+            Ok(record) => {
+                records.insert(key, record);
+            }
+            Err(error) => log::warn!("[VAULT] skipped a malformed trusted-browser record: {error}"),
+        }
+    }
+    Ok(records)
+}
+
+fn write_trusted_browsers(
+    database: &Path,
+    codec: &SecretCodec,
+    records: &HashMap<String, TrustedBrowserRecord>,
+) -> AppResult<()> {
+    let mut connection = crate::database::open_database(database)?;
+    let transaction = connection.transaction()?;
+    transaction.execute("DELETE FROM trusted_browsers", [])?;
+    for (key, record) in records {
+        let plain = serde_json::to_vec(record)?;
+        let envelope = codec.encrypt(&plain)?;
+        transaction.execute(
+            "INSERT INTO trusted_browsers (apple_id_key, encrypted, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![key, envelope, record.updated_at],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
 fn load_records(database: &Path, codec: &SecretCodec) -> AppResult<HashMap<String, SessionSnapshot>> {
     let connection = crate::database::open_database(database)?;
     let mut statement = connection.prepare("SELECT session_id, encrypted FROM session_secrets")?;
@@ -344,16 +506,34 @@ mod tests {
     }
 
     #[test]
+    fn trusted_browser_token_roundtrips_and_can_be_removed() {
+        let (dir, file) = temp_vault();
+        let vault = SessionVault::open_with_key(file.clone(), TEST_KEY);
+        vault.save_trusted_browser("Tester@Example.com", "TRUST-TOKEN-123").expect("save trusted browser");
+
+        let reopened = SessionVault::open_with_key(file, TEST_KEY);
+        assert_eq!(reopened.load_trusted_browser("tester@example.com").as_deref(), Some("TRUST-TOKEN-123"));
+
+        reopened.remove_trusted_browser("TESTER@example.com");
+        assert!(reopened.load_trusted_browser("tester@example.com").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
     fn vault_file_never_contains_plaintext_secrets() {
         let (dir, file) = temp_vault();
         let vault = SessionVault::open_with_key(file.clone(), TEST_KEY);
         vault.save(&snapshot("session-secret", 1_700_000_000_000)).expect("save session");
+        vault.save_trusted_browser("tester@example.com", "TRUSTED-BROWSER-SECRET").expect("save trusted browser");
 
         let raw = std::fs::read(&file).expect("read database");
         let text = String::from_utf8_lossy(&raw);
-        for secret in
-            ["SUPER-SECRET-TOKEN-12345", "SUPER-SECRET-SCNT-67890", "server-context-token", "tester@example.com"]
-        {
+        for secret in [
+            "SUPER-SECRET-TOKEN-12345",
+            "SUPER-SECRET-SCNT-67890",
+            "server-context-token",
+            "TRUSTED-BROWSER-SECRET",
+            "tester@example.com",
+        ] {
             assert!(!text.contains(secret), "plaintext found in database: {secret}");
         }
         assert!(!text.contains("session_token"));
