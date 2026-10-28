@@ -67,19 +67,24 @@ jobs:
           releaseBody: |
             Cirrus ${{ github.ref_name }}
 
-            ### Highlights
+            ### 更新内容 / Highlights
 
+            - 全图库虚拟缩略图栏，支持平滑拖动和任意位置跳转
             - Full-library virtual photo filmstrip with smooth drag scrolling
-            - Jump to any photo rank with centered page loading
+            - 跳转时居中加载前后照片，缩略图与主图保持一致
+            - Centered page loading keeps thumbnails and the main photo in sync
+            - 新增照片详细信息面板：EXIF、位置、尺寸、编码、帧率
             - Detailed photo information panel with EXIF, location, dimensions, codec, and frame rate
-            - Faster photo switching with prioritized thumbnail and preview loading
-            - System tray background mode with a configurable first-close choice
-            - Shared, editable download settings with concurrency and queue controls
-            - Persistent download manager with a configurable default folder
+            - 优化快速切换和大图加载优先级
+            - Prioritized thumbnail and full-image loading for faster switching
+            - 系统托盘后台运行、下载队列并发和默认目录设置
+            - System tray background mode, download queue concurrency, and default folder settings
+            - 地图设置直达与 GitHub 仓库入口
             - Direct map settings navigation and GitHub repository shortcut
 
             Native iCloud Photos and Find My desktop client for Windows, macOS, and Linux.
 
+            这些构建未做 Apple 公证，macOS 可能显示 Gatekeeper 警告。
             These builds are not notarized. macOS may show a Gatekeeper warning.
           releaseDraft: true
           prerelease: false
