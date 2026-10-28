@@ -128,6 +128,52 @@ describe("照片页 · 年/月导航", () => {
     expect(wrapper.text()).not.toContain("approx.");
   });
 
+  it("右键详情显示完整的拍摄元数据", async () => {
+    api.photosAssetDistribution.mockResolvedValue(timelineResponse);
+    const detailed = {
+      ...photo("detailed", marchStart + 10 * WEEK),
+      metadata: {
+        cameraMake: "Apple",
+        cameraModel: "iPhone 15 Pro",
+        lensModel: "Main Camera",
+        lensSpecification: null,
+        dateTaken: null,
+        exposureTime: "1/120",
+        fNumber: "f/1.8",
+        iso: "ISO 100",
+        focalLength: "24 mm",
+        focalLength35mm: "24 mm",
+        exposureBias: null,
+        meteringMode: "Pattern",
+        flash: "Off",
+        whiteBalance: "Auto",
+        colorSpace: "Display P3",
+        software: "17.0",
+        gpsLatitude: null,
+        gpsLongitude: null,
+        gpsAltitude: null,
+      },
+      keywords: ["旅行", "杭州"],
+    };
+    api.photosList.mockResolvedValue(page([detailed]));
+
+    const wrapper = mountGallery();
+    await flushPromises();
+    await wrapper.get('figure[data-photo-id="detailed"]').trigger("contextmenu", { clientX: 20, clientY: 20 });
+    await flushPromises();
+    const detailsButton = wrapper.findAll("button").find((button) => button.text().includes("Photo details"));
+    expect(detailsButton).toBeTruthy();
+    await detailsButton?.trigger("click");
+    await flushPromises();
+
+    const text = wrapper.text();
+    expect(text).toContain("Apple iPhone 15 Pro");
+    expect(text).toContain("Main Camera");
+    expect(text).toContain("f/1.8");
+    expect(text).toContain("ISO 100");
+    expect(text).toContain("旅行");
+    expect(text).toContain("杭州");
+  });
   it("点某月 → 用那个月的落点名次取页；整周数据直接给出精确总数", async () => {
     api.photosAssetDistribution.mockResolvedValue(timelineResponse);
     api.photosList.mockImplementation(async (payload: { startRank?: number | null }) => {

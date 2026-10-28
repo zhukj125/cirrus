@@ -22,6 +22,7 @@ import PhotoDatePicker from "@/components/photos/PhotoDatePicker.vue";
 import { useDownloadsStore } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import PhotoViewer from "@/components/PhotoViewer.vue";
+import PhotoInfoPanel from "@/components/photos/PhotoInfoPanel.vue";
 import type { AssetDistribution, LibraryTotal, PhotoItem, Timeline } from "@/types";
 
 const props = defineProps<{ sessionId: string }>();
@@ -368,6 +369,12 @@ const selectedPhotoIds = reactive(new Set<string>());
 const selectionAnchorIndex = ref<number | null>(null);
 const contextMenu = ref<{ photo: PhotoItem; x: number; y: number } | null>(null);
 const detailsPhoto = ref<PhotoItem | null>(null);
+const detailsPhotoPosition = computed(() => {
+  if (!detailsPhoto.value) return 1;
+  const index = visiblePhotos.value.findIndex((item) => item.id === detailsPhoto.value?.id);
+  return index >= 0 ? index + 1 : 1;
+});
+const detailsPhotoTotal = computed(() => Math.max(1, visiblePhotos.value.length));
 const downloadingPhotoId = ref<string | null>(null);
 const selectedCount = computed(() => selectedPhotoIds.size);
 const selectedPhotos = computed(() => visiblePhotos.value.filter((photo) => selectedPhotoIds.has(photo.id)));
@@ -1233,32 +1240,9 @@ watch(
             <ImageOff v-else :size="30" class="text-muted-foreground" />
           </div>
 
-          <div class="flex min-h-0 flex-col p-5">
-            <div>
-              <p class="text-xs font-medium text-primary">{{ photoType(detailsPhoto) }}</p>
-              <h3 class="mt-1 break-all text-base font-semibold">{{ photoFileName(detailsPhoto) }}</h3>
-            </div>
-
-            <dl class="mt-5 divide-y divide-border text-sm">
-              <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">{{ t("photos.taken") }}</dt>
-                <dd>{{ formatPhotoTime(detailsPhoto.takenAt) }}</dd>
-              </div>
-              <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">{{ t("photos.dimensions") }}</dt>
-                <dd class="tabular">{{ photoDimensions(detailsPhoto) }}</dd>
-              </div>
-              <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">{{ t("photos.type") }}</dt>
-                <dd>{{ photoType(detailsPhoto) }}</dd>
-              </div>
-              <div class="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3">
-                <dt class="text-muted-foreground">{{ t("photos.original") }}</dt>
-                <dd>{{ t(detailsPhoto.originalUrl ? "common.available" : "common.unavailable") }}</dd>
-              </div>
-            </dl>
-
-            <div class="mt-auto flex items-center justify-end gap-2 pt-6">
+          <div class="flex min-h-0 flex-col">
+            <PhotoInfoPanel :photo="detailsPhoto" :position="detailsPhotoPosition" :total="detailsPhotoTotal" embedded />
+            <div class="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card p-3">
               <Button variant="outline" size="sm" class="h-8" @click="openViewerForPhoto(detailsPhoto)">{{ t("photos.viewFullSize") }}</Button>
               <Button size="sm" class="h-8 gap-1.5" :disabled="downloadingPhotoId === detailsPhoto.id" @click="downloadSinglePhoto(detailsPhoto)">
                 <Spinner v-if="downloadingPhotoId === detailsPhoto.id" :size="13" />

@@ -9,8 +9,9 @@ import type { PhotoItem } from "@/types";
 
 const props = defineProps<{
   photo: PhotoItem;
-  position: number;
-  total: number;
+  position?: number;
+  total?: number;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -179,8 +180,16 @@ const videoDetails = computed(() => {
 </script>
 
 <template>
-  <aside class="absolute top-3 right-3 z-30 flex max-h-[calc(100%-86px)] w-[320px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border bg-card/98 text-card-foreground shadow-2xl backdrop-blur-xl" role="dialog" :aria-label="t('viewer.info')">
-    <header class="flex h-12 shrink-0 items-center border-b border-border px-2">
+  <aside
+    :class="
+      embedded
+        ? 'flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-card text-card-foreground'
+        : 'absolute top-3 right-3 z-30 flex max-h-[calc(100%-86px)] w-[320px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border bg-card/98 text-card-foreground shadow-2xl backdrop-blur-xl'
+    "
+    :role="embedded ? undefined : 'dialog'"
+    :aria-label="t('viewer.info')"
+  >
+    <header v-if="!embedded" class="flex h-12 shrink-0 items-center border-b border-border px-2">
       <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('common.close')" @click="emit('close')">
         <X :size="16" />
       </button>
@@ -194,7 +203,7 @@ const videoDetails = computed(() => {
           <CalendarDays :size="16" class="mt-0.5 shrink-0 text-muted-foreground" />
           <div class="min-w-0">
             <p class="text-sm font-medium">{{ takenAt }}</p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ t("viewer.photoPosition", { index: position, total }) }}</p>
+            <p v-if="position != null && total != null" class="mt-1 text-xs text-muted-foreground">{{ t("viewer.photoPosition", { index: position, total }) }}</p>
           </div>
         </div>
       </section>
