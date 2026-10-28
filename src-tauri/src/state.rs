@@ -75,7 +75,6 @@ impl AppState {
 pub struct RuntimeInfo {
     pub ttl_minutes: i64,
     pub session_limit: usize,
-    pub china_mainland_default: bool,
     pub version: String,
 
     pub vault_enabled: bool,
@@ -88,7 +87,6 @@ impl AppState {
         RuntimeInfo {
             ttl_minutes: self.sessions.ttl_minutes(),
             session_limit: MAX_SESSIONS,
-            china_mainland_default: false,
             version: env!("CARGO_PKG_VERSION").to_string(),
             vault_enabled: self.sessions.vault_enabled(),
             download_task_persistence_enabled: self.data_dir.is_some(),

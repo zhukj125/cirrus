@@ -101,7 +101,7 @@ pub struct DownloadProgressEvent {
 
 #[tauri::command]
 pub async fn photos_login(state: SharedState<'_>, payload: CredentialsRequest) -> AppResult<PhotosLoginResult> {
-    Ok(photos::login(sessions(&state), &payload.apple_id, &payload.password, payload.china_mainland).await)
+    Ok(photos::login(sessions(&state), &payload.apple_id, &payload.password).await)
 }
 
 #[tauri::command]

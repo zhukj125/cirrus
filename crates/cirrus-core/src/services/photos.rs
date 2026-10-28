@@ -309,16 +309,52 @@ const VERIFY_FALLBACK_MESSAGE: &str = "Verification code is incorrect or expired
 
 const WAIT_2FA_MESSAGE: &str = "Waiting for two-factor authentication";
 
-pub async fn login(
+const LOGIN_REGION_ATTEMPTS: [bool; 2] = [false, true];
+
+pub async fn login(manager: &SessionManager, apple_id: &str, password: &str) -> PhotosLoginResult {
+    if apple_id.trim().is_empty() || password.trim().is_empty() {
+        return PhotosLoginResult::error("Enter your Apple ID and password");
+    }
+
+    let mut attempt = RegionalLogin { manager, apple_id, password };
+    login_with_fallback(&mut attempt).await
+}
+
+trait LoginAttempt {
+    async fn attempt(&mut self, china_mainland: bool) -> PhotosLoginResult;
+}
+
+struct RegionalLogin<'a> {
+    manager: &'a SessionManager,
+    apple_id: &'a str,
+    password: &'a str,
+}
+
+impl LoginAttempt for RegionalLogin<'_> {
+    async fn attempt(&mut self, china_mainland: bool) -> PhotosLoginResult {
+        login_with_region(self.manager, self.apple_id, self.password, china_mainland).await
+    }
+}
+
+async fn login_with_fallback<A: LoginAttempt>(attempt: &mut A) -> PhotosLoginResult {
+    let mut result = attempt.attempt(LOGIN_REGION_ATTEMPTS[0]).await;
+    if should_retry_in_mainland_china(&result) {
+        log::warn!("[PHOTOS] international sign-in failed; retrying with Mainland China endpoints");
+        result = attempt.attempt(LOGIN_REGION_ATTEMPTS[1]).await;
+    }
+    result
+}
+
+fn should_retry_in_mainland_china(result: &PhotosLoginResult) -> bool {
+    result.status == statuses::ERROR
+}
+
+async fn login_with_region(
     manager: &SessionManager,
     apple_id: &str,
     password: &str,
     china_mainland: bool,
 ) -> PhotosLoginResult {
-    if apple_id.trim().is_empty() || password.trim().is_empty() {
-        return PhotosLoginResult::error("Enter your Apple ID and password");
-    }
-
     let request = SrpAuthRequest { apple_id: apple_id.to_string(), password: password.to_string(), china_mainland };
     let auth = match auth_service::authenticate(manager, &request).await {
         Ok(result) => result,
@@ -351,12 +387,17 @@ pub async fn login(
             let mut session = handle.lock().await;
             if let Err(error) = devices::account_login(&mut session, false).await {
                 log::warn!("[PHOTOS] sign-in failed: {error}");
+                drop(session);
+                manager.remove(&session_id).await;
                 return PhotosLoginResult::error(error.to_string());
             }
             session.set_session_data(PHOTOS_VERIFIED, FLAG_TRUE);
             ok_result(&session)
         }
-        _ => PhotosLoginResult::error(auth.message.clone().unwrap_or_else(|| "Authentication failed".to_string())),
+        _ => {
+            manager.remove(&session_id).await;
+            PhotosLoginResult::error(auth.message.clone().unwrap_or_else(|| "Authentication failed".to_string()))
+        }
     }
 }
 
@@ -2343,6 +2384,47 @@ mod tests {
     use super::*;
     use crate::models::PhotosFinish2faRequest;
 
+    struct FakeLoginAttempt {
+        calls: Vec<bool>,
+        results: std::collections::VecDeque<PhotosLoginResult>,
+    }
+
+    impl FakeLoginAttempt {
+        fn new(results: Vec<PhotosLoginResult>) -> Self {
+            Self { calls: Vec::new(), results: results.into() }
+        }
+    }
+
+    impl LoginAttempt for FakeLoginAttempt {
+        async fn attempt(&mut self, china_mainland: bool) -> PhotosLoginResult {
+            self.calls.push(china_mainland);
+            self.results.pop_front().expect("fake login result")
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_mainland_china_after_an_international_error() {
+        let mut attempt = FakeLoginAttempt::new(vec![
+            PhotosLoginResult::error("international failure"),
+            PhotosLoginResult::ok("session-1".to_string(), None, None),
+        ]);
+
+        let result = login_with_fallback(&mut attempt).await;
+
+        assert_eq!(attempt.calls, LOGIN_REGION_ATTEMPTS);
+        assert_eq!(result.status, statuses::OK);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_international_session_when_two_factor_is_required() {
+        let mut attempt =
+            FakeLoginAttempt::new(vec![PhotosLoginResult::need_2fa("session-1".to_string(), Some("hsa2".to_string()))]);
+
+        let result = login_with_fallback(&mut attempt).await;
+
+        assert_eq!(attempt.calls, [false]);
+        assert_eq!(result.status, statuses::NEED_2FA);
+    }
     #[test]
     fn trust_required_result_keeps_the_session_id() {
         let result = PhotosLoginResult::trust_browser_required("session-1".to_string());

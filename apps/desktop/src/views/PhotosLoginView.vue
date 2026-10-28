@@ -170,16 +170,6 @@ onUnmounted(() => {
   stopPolling();
 });
 
-async function loginWithRegionFallback(id: string) {
-  try {
-    const result = await photosLogin({ appleId: id, password: password.value, chinaMainland: false });
-    if (result.status !== Status.error) return result;
-  } catch (error) {
-    /* The Mainland China retry below will surface any final failure. */
-  }
-  return photosLogin({ appleId: id, password: password.value, chinaMainland: true });
-}
-
 async function handleLogin(): Promise<void> {
   const id = lockAppleId.value ? (props.loginContext.appleId ?? "").trim() : appleId.value.trim();
   if (!id) {
@@ -192,7 +182,7 @@ async function handleLogin(): Promise<void> {
   }
   loading.value = true;
   try {
-    const result = await loginWithRegionFallback(id);
+    const result = await photosLogin({ appleId: id, password: password.value });
     if (result.status === Status.error) {
       toast.error(result.message ?? locale.t("login.signInFailed"));
       return;

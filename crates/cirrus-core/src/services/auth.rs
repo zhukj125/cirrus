@@ -191,15 +191,26 @@ pub async fn authenticate(
     request: &SrpAuthRequest,
 ) -> AppResult<SrpResult> {
     let handle = manager.create(request.apple_id.clone(), request.password.clone(), request.china_mainland).await?;
-    let init = start_srp_auth(&handle, request).await?;
-    let result = complete_srp_auth(&handle, &init.session_id).await?;
+    let session_id = handle.lock().await.id().to_string();
+    let result = async {
+        let init = start_srp_auth(&handle, request).await?;
+        complete_srp_auth(&handle, &init.session_id).await
+    }
+    .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            manager.remove(&session_id).await;
+            return Err(error);
+        }
+    };
     handle.touch();
 
     if result.status == statuses::CHALLENGE {
         return Ok(SrpResult {
             status: statuses::TWO_FA_REQUIRED.to_string(),
             message: Some("Two-factor authentication (hsa2) is enabled. Device queries do not require 2FA and can continue directly.".to_string()),
-            session_id: Some(init.session_id),
+            session_id: Some(session_id),
             auth_type: result.auth_type,
             session_token: result.session_token,
             trust_token: result.trust_token,

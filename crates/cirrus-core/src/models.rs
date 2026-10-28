@@ -50,8 +50,6 @@ pub mod session_keys {
 pub struct CredentialsRequest {
     pub apple_id: String,
     pub password: String,
-    #[serde(default)]
-    pub china_mainland: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

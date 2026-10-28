@@ -96,7 +96,6 @@ export interface DownloadProgressEvent {
 export interface RuntimeInfo {
   ttlMinutes: number;
   sessionLimit: number;
-  chinaMainlandDefault: boolean;
   version: string;
 
   vaultEnabled: boolean;

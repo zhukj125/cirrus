@@ -75,7 +75,7 @@ export function playSound(sessionId: string, deviceId: string): Promise<PlaySoun
   return call<PlaySoundResult>("play_sound", { sessionId, deviceId });
 }
 
-export function photosLogin(payload: { appleId: string; password: string; chinaMainland: boolean }): Promise<PhotosLoginResult> {
+export function photosLogin(payload: { appleId: string; password: string }): Promise<PhotosLoginResult> {
   return call<PhotosLoginResult>("photos_login", payload);
 }
 
