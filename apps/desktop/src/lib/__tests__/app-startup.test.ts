@@ -23,7 +23,7 @@ describe("App 启动分支", () => {
     expect(wrapper.find("h1").text()).toBe("Sign in to iCloud");
     expect(wrapper.text()).toContain("Sign in to view iCloud Photos and Find My devices");
     expect(wrapper.text()).toContain("Two-factor authentication is required");
-    expect(wrapper.text()).toContain("Mainland China account");
+    expect(wrapper.text()).not.toContain("Mainland China account");
 
     expect(wrapper.text()).not.toContain("Sign out");
     expect(wrapper.text()).not.toContain("Loading devices");

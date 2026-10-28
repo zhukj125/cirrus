@@ -19,7 +19,7 @@ const props = defineProps<{
   totalCount?: number | null;
   sessionId?: string;
 }>();
-const emit = defineEmits<{ "update:index": [value: number]; close: []; needMore: []; seekRank: [rank: number] }>();
+const emit = defineEmits<{ "update:index": [value: number]; close: []; needMore: []; seekRank: [rank: number]; mediaError: [photoId: string] }>();
 const locale = useLocaleStore();
 const t = locale.t;
 
@@ -103,6 +103,7 @@ function onFilmstripImageError(event: Event, photo: PhotoItem): void {
     return;
   }
   filmstripFailed.add(photo.id);
+  emit("mediaError", photo.id);
 }
 
 const baseRank = computed(() => props.baseRank ?? 0);
@@ -156,6 +157,8 @@ watch(
     const startRank = base ?? 0;
     items.forEach((item, index) => {
       const rank = startRank + index;
+      const previous = knownFilmstripPhotos.get(rank);
+      if (previous && previous.thumbUrl !== item.thumbUrl) filmstripFailed.delete(item.id);
       knownFilmstripPhotos.set(rank, item);
       knownFilmstripPages.add(Math.floor(rank / FILMSTRIP_PAGE_SIZE) * FILMSTRIP_PAGE_SIZE);
     });
@@ -322,11 +325,16 @@ function scheduleCurrentPhotoLoad(): void {
     image.onerror = () => {
       if (token !== displayLoadToken) return;
       activeDisplayPreloader = null;
+      emit("mediaError", item.id);
       warmPhotoNeighborhood();
     };
     image.src = url;
   }, 50);
 }
+
+watch(displayUrl, (next, previous) => {
+  if (next && next !== previous) scheduleCurrentPhotoLoad();
+});
 
 watch(
   () => photo.value?.id,

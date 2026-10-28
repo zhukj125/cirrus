@@ -12,6 +12,7 @@ import { UNBOUNDED, addDays, filterByRange, formatDateInput, groupByDay, presetR
 import { monthBounds, segmentLanding, yearBounds, type SegmentLanding } from "@/lib/photos/distribution";
 import { createExactRangeLoader, createExactRangeStore, type ExactRangeResult } from "@/lib/photos/exact";
 import { mapWithConcurrency } from "@/lib/photos/concurrency";
+import { photoPageStarts, photoUrlRefreshDelayMs, signedPhotoUrlExpiryMs } from "@/lib/photos/url-refresh";
 import { passedLowerBound, passedUpperBound } from "@/lib/photos/range";
 import { timelineSegment, timelineYearsDesc, type TimelineSelection } from "@/lib/photos/timeline";
 import { PHOTO_VIEW_MODES, galleryGridClass, gallerySkeletonClass, galleryTileClass, isPhotoViewMode, type PhotoViewMode } from "@/lib/photos/view";
@@ -107,6 +108,8 @@ const photos = ref<PhotoItem[]>([]);
 
 const loadedThumbUrls = reactive(new Set<string>());
 const failedThumbUrls = reactive(new Set<string>());
+let photoUrlRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let photoUrlRefreshing = false;
 const cursor = ref<string | null>(null);
 const hasMore = ref(true);
 const loading = ref(false);
@@ -578,6 +581,7 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onOverlayKeydown);
   document.removeEventListener("pointerdown", onDocumentPointerDown);
   stopSelectionTracking();
+  clearPhotoUrlRefreshTimer();
 });
 
 function markThumbnailLoaded(url: string): void {
@@ -585,10 +589,74 @@ function markThumbnailLoaded(url: string): void {
   loadedThumbUrls.add(url);
 }
 
-function markThumbnailFailed(url: string): void {
+function markThumbnailFailed(photo: PhotoItem): void {
+  const url = photo.thumbUrl;
   loadedThumbUrls.delete(url);
   failedThumbUrls.add(url);
+  const expiry = signedPhotoUrlExpiryMs(url);
+  if (expiry !== null && expiry <= Date.now()) void refreshLoadedPhotoUrls();
 }
+
+function clearPhotoUrlRefreshTimer(): void {
+  if (photoUrlRefreshTimer !== null) {
+    clearTimeout(photoUrlRefreshTimer);
+    photoUrlRefreshTimer = null;
+  }
+}
+
+function schedulePhotoUrlRefresh(): void {
+  clearPhotoUrlRefreshTimer();
+  const delay = photoUrlRefreshDelayMs(photos.value);
+  if (delay === null) return;
+  photoUrlRefreshTimer = setTimeout(() => {
+    photoUrlRefreshTimer = null;
+    void refreshLoadedPhotoUrls();
+  }, delay);
+}
+
+async function refreshLoadedPhotoUrls(): Promise<void> {
+  if (photoUrlRefreshing || sessionExpired.value || photos.value.length === 0) return;
+  photoUrlRefreshing = true;
+  clearPhotoUrlRefreshTimer();
+  const epoch = loadEpoch;
+  const sessionId = props.sessionId;
+  const starts = photoPageStarts(photos.value.length, PAGE_SIZE);
+
+  try {
+    const pages = await mapWithConcurrency(starts, 3, (startRank) => photosList({ sessionId, startRank, limit: PAGE_SIZE }));
+    if (epoch !== loadEpoch || sessionId !== props.sessionId) return;
+
+    const replacements = new Map<string, PhotoItem>();
+    for (const page of pages) {
+      if (page.status === Status.error) continue;
+      for (const item of page.photos) replacements.set(item.id, item);
+    }
+    if (replacements.size === 0) return;
+
+    const previous = new Map(photos.value.map((item) => [item.id, item]));
+    const applyReplacements = (items: PhotoItem[]): PhotoItem[] =>
+      items.map((item) => {
+        const next = replacements.get(item.id);
+        if (!next) return item;
+        const old = previous.get(item.id);
+        if (old?.thumbUrl && old.thumbUrl !== next.thumbUrl) {
+          loadedThumbUrls.delete(old.thumbUrl);
+          failedThumbUrls.delete(old.thumbUrl);
+        }
+        return next;
+      });
+
+    photos.value = applyReplacements(photos.value);
+    if (viewerPhotos.value) viewerPhotos.value = applyReplacements(viewerPhotos.value);
+  } catch (error) {
+    console.warn("[PHOTOS] could not refresh signed image URLs", error);
+  } finally {
+    photoUrlRefreshing = false;
+    schedulePhotoUrlRefresh();
+  }
+}
+
+watch(photos, () => schedulePhotoUrlRefresh(), { flush: "post" });
 
 function resetThumbnailState(): void {
   loadedThumbUrls.clear();
@@ -1043,7 +1111,7 @@ watch(
                     decoding="async"
                     draggable="false"
                     @load="markThumbnailLoaded(entry.photo.thumbUrl)"
-                    @error="markThumbnailFailed(entry.photo.thumbUrl)"
+                    @error="markThumbnailFailed(entry.photo)"
                   />
 
                   <span v-else class="grid size-full place-items-center text-muted-foreground">
@@ -1208,6 +1276,7 @@ watch(
       @update:index="viewerIndex = $event"
       @need-more="continueLoading"
       @seek-rank="seekViewerRank"
+      @media-error="refreshLoadedPhotoUrls"
       @close="closeViewer"
     />
   </div>
