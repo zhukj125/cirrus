@@ -351,3 +351,43 @@ export interface NoteDetailResult {
   message: string | null;
   note: NoteDetail | null;
 }
+export interface ContactField {
+  label: string;
+  value: string;
+}
+
+export interface ContactAddress {
+  label: string;
+  street: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+}
+
+export interface ContactEntry {
+  id: string;
+  displayName: string;
+  firstName: string;
+  lastName: string;
+  middleName: string;
+  nickname: string;
+  companyName: string;
+  department: string;
+  jobTitle: string;
+  phones: ContactField[];
+  emails: ContactField[];
+  addresses: ContactAddress[];
+  urls: ContactField[];
+  relatedNames: ContactField[];
+  birthday: string | null;
+  note: string | null;
+  photoUrl: string | null;
+  isCompany: boolean;
+}
+
+export interface ContactsListResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  contacts: ContactEntry[];
+}

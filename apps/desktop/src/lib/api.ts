@@ -4,6 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  ContactsListResult,
   NoteDetailResult,
   NotesListResult,
   AccountAvatar,
@@ -87,6 +88,13 @@ export function notesList(payload: { sessionId: string; cursor?: string | null }
 
 export function noteDetail(payload: { sessionId: string; noteId: string }): Promise<NoteDetailResult> {
   return call<NoteDetailResult>("notes_get", payload);
+}
+export function contactsList(payload: { sessionId: string; locale: string }): Promise<ContactsListResult> {
+  return call<ContactsListResult>("contacts_list", payload);
+}
+
+export function contactPhoto(payload: { sessionId: string; url: string }): Promise<AccountAvatar> {
+  return call<AccountAvatar>("contact_photo", payload);
 }
 export function photosVerify2fa(payload: { sessionId: string; code: string }): Promise<PhotosLoginResult> {
   return call<PhotosLoginResult>("photos_verify_2fa", payload);

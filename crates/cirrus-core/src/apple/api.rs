@@ -27,6 +27,7 @@ pub mod setup {
 
 pub mod contacts {
     pub const MECARD: &str = "/co/mecard/";
+    pub const ADDRESSBOOK: &str = "/co/addressbook";
 }
 
 pub mod home {

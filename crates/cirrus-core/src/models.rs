@@ -66,6 +66,65 @@ pub struct PlaySoundRequest {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ContactField {
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactAddress {
+    pub label: String,
+    pub street: String,
+    pub city: String,
+    pub region: String,
+    pub postal_code: String,
+    pub country: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactEntry {
+    pub id: String,
+    pub display_name: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub middle_name: String,
+    pub nickname: String,
+    pub company_name: String,
+    pub department: String,
+    pub job_title: String,
+    pub phones: Vec<ContactField>,
+    pub emails: Vec<ContactField>,
+    pub addresses: Vec<ContactAddress>,
+    pub urls: Vec<ContactField>,
+    pub related_names: Vec<ContactField>,
+    pub birthday: Option<String>,
+    pub note: Option<String>,
+    pub photo_url: Option<String>,
+    pub is_company: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactsListResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub contacts: Vec<ContactEntry>,
+}
+
+impl ContactsListResult {
+    pub fn ok(contacts: Vec<ContactEntry>) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, contacts }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self { status: statuses::ERROR.to_string(), message: Some(message.into()), contacts: Vec::new() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteFolder {
     pub id: String,
     pub name: String,

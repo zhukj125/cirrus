@@ -1,4 +1,5 @@
 pub mod account;
+pub mod contacts;
 pub mod devices;
 pub mod download_tasks;
 pub mod notes;

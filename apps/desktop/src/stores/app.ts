@@ -484,6 +484,26 @@ export const useAppStore = defineStore("app", () => {
     beginRelogin(current.key);
     toast.info(t("app.photosExpired"));
   }
+  async function openContacts(): Promise<void> {
+    const current = activeAccount.value;
+    const sessionId = sessionIdOf(current);
+    if (!current || !sessionId) {
+      beginSwitchAccount();
+      return;
+    }
+    const state = await sessionState(sessionId).catch(() => null);
+    if (state?.valid && state.verified) {
+      view.value = "contacts";
+      return;
+    }
+    if (!state) {
+      toast.error(t("app.photosVerifyFailed"));
+      return;
+    }
+    setAccountStatus(current.key, "expired");
+    beginRelogin(current.key);
+    toast.info(t("app.photosExpired"));
+  }
   async function refreshActiveDevices(): Promise<void> {
     const sessionId = devices.value?.sessionId ?? sessionIdOf(activeAccount.value);
     const expectedKey = activeAccountKey.value;
@@ -601,6 +621,7 @@ export const useAppStore = defineStore("app", () => {
     logoutCurrentAccount,
     openPhotos,
     openNotes,
+    openContacts,
     ensureDevices,
     refreshActiveDevices,
     playSoundOn,

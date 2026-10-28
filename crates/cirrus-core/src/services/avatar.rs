@@ -10,6 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::AccountAvatar;
 use crate::services::devices;
 use crate::session::SessionHandle;
+use crate::SessionManager;
 
 const MAX_AVATAR_BYTES: usize = 5 * 1024 * 1024;
 const DEFAULT_IMAGE_MIME: &str = "image/jpeg";
@@ -83,6 +84,35 @@ pub async fn fetch(handle: &SessionHandle) -> AppResult<AccountAvatar> {
     Ok(AccountAvatar { data_url })
 }
 
+pub async fn fetch_url(manager: &SessionManager, session_id: &str, url: &str) -> AppResult<AccountAvatar> {
+    if session_id.trim().is_empty() {
+        return Err(AppError::auth("Missing session ID"));
+    }
+    if !is_apple_avatar_url(url) {
+        return Err(AppError::other("Contact photo URL is not on an Apple domain"));
+    }
+    let handle = manager.get(session_id).await?;
+    let mut session = {
+        let shared = handle.lock().await;
+        let mut snapshot = shared.clone();
+        snapshot.clear_password();
+        snapshot
+    };
+    let image = session.request_bytes(Method::GET, url, None, &[(hh::ACCEPT, "image/*")]).await?;
+    if !image.is_success() {
+        return Err(AppError::other(format!("Could not download contact photo: HTTP {}", image.status)));
+    }
+    if image.bytes.len() > MAX_AVATAR_BYTES {
+        return Err(AppError::other("Contact photo is too large"));
+    }
+    let mime = image
+        .header(headers::CONTENT_TYPE)
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| value.starts_with("image/"))
+        .unwrap_or(DEFAULT_IMAGE_MIME);
+    Ok(AccountAvatar { data_url: format!("data:{mime};base64,{}", BASE64.encode(&image.bytes)) })
+}
 #[cfg(test)]
 mod tests {
     use super::*;

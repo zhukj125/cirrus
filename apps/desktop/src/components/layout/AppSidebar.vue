@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Check, ChevronUp, Download, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, PanelLeftClose, PanelLeftOpen, Plus, Sun } from "@lucide/vue";
+import { Check, ChevronUp, Download, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, Users, PanelLeftClose, PanelLeftOpen, Plus, Sun } from "@lucide/vue";
 
 import { StorageKey, type ShellView, type ThemeMode } from "@/constants";
 import { readStored, writeStored } from "@/lib/common/storage";
@@ -93,6 +93,7 @@ const NAV_ITEMS = computed<Array<{ value: ShellView; label: string; icon: typeof
   { value: "findmy", label: locale.t("nav.devices"), icon: MapPin },
   { value: "photos-gallery", label: locale.t("nav.photos"), icon: Images },
   { value: "notes", label: locale.t("nav.notes"), icon: NotebookPen },
+  { value: "contacts", label: locale.t("nav.contacts"), icon: Users },
 ]);
 
 const completedDownloadCount = computed(() => downloads.tasks.filter((task) => task.status === "done").length);

@@ -12,6 +12,7 @@ import DownloadManagerDialog from "@/components/photos/DownloadManagerDialog.vue
 import Spinner from "@/components/ui/Spinner.vue";
 import Toaster from "@/components/ui/Toaster.vue";
 import { Button } from "@/components/ui/button";
+import ContactsView from "@/views/ContactsView.vue";
 import MapView from "@/views/MapView.vue";
 import NotesView from "@/views/NotesView.vue";
 import PhotosGalleryView from "@/views/PhotosGalleryView.vue";
@@ -46,17 +47,19 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
-const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" ? view.value : "findmy"));
+const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" || view.value === "contacts" ? view.value : "findmy"));
 
 const headerTitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
   if (shellView.value === "notes") return i18n.t("nav.notes");
+  if (shellView.value === "contacts") return i18n.t("nav.contacts");
   return i18n.t("nav.devices");
 });
 
 const headerSubtitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("header.photosLibrary");
   if (shellView.value === "notes") return i18n.t("header.notes");
+  if (shellView.value === "contacts") return i18n.t("header.contacts");
   const count = devices.value?.result.deviceCount;
   return count ? i18n.t("header.deviceCount", { count }) : null;
 });
@@ -75,11 +78,15 @@ function onNavigate(next: ShellView): void {
     void store.openNotes();
     return;
   }
+  if (next === "contacts") {
+    void store.openContacts();
+    return;
+  }
   void store.ensureDevices();
   store.goTo("findmy");
 }
 
-let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" = "photos-login";
+let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" | "contacts" = "photos-login";
 const settingsInitialCategory = ref("appearance");
 
 function toggleSettings(): void {
@@ -256,7 +263,9 @@ onUnmounted(() => {
 
         <PhotosGalleryView v-if="shellView === 'photos-gallery' && photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
-        <NotesView v-else-if="shellView === 'notes' && photosSession" :key="`notes-${photosSession}`" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+        <NotesView v-else-if="shellView === 'notes' && photosSession" :key="'notes-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+
+        <ContactsView v-else-if="shellView === 'contacts' && photosSession" :key="'contacts-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
 
         <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
 

@@ -29,8 +29,8 @@ export const StorageKey = {
   photosView: "cirrus.photosView",
 } as const;
 
-export type View = "findmy" | "photos-login" | "photos-gallery" | "notes" | "settings";
+export type View = "findmy" | "photos-login" | "photos-gallery" | "notes" | "contacts" | "settings";
 
-export type ShellView = Extract<View, "findmy" | "photos-gallery" | "notes">;
+export type ShellView = Extract<View, "findmy" | "photos-gallery" | "notes" | "contacts">;
 
 export type ThemeMode = "system" | "light" | "dark";
