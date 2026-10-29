@@ -903,7 +903,7 @@ fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {
         let mut file = std::fs::OpenOptions::new().create(true).truncate(true).write(true).mode(0o600).open(path)?;
         file.write_all(value)?;
         file.flush()?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     {
