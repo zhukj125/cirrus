@@ -2,8 +2,8 @@
   <img src="docs/images/cirrus-icon.png" width="88" alt="Cirrus iCloud desktop client logo" />
   <h1>Cirrus</h1>
 
-  <p><strong>Open-source iCloud Photos downloader and Find My devices client for Windows, macOS, and Linux.</strong></p>
-  <p>Browse iCloud Photos, download originals, and locate Apple devices from one native desktop app.</p>
+  <p><strong>A local-first iCloud desktop workspace for photos, devices, notes, contacts, and calendar.</strong></p>
+  <p>Work directly with your iCloud data in a native window, with encrypted local sessions and configurable MCP access.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-4B5563" alt="Windows, macOS, and Linux" />
@@ -16,52 +16,65 @@
   <p>English | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-![Cirrus iCloud Photos and Find My desktop client](docs/images/cirrus-preview.png)
+![Cirrus devices workspace](docs/images/cirrus-devices.png)
+
+<p align="center"><sub>Screenshots use mock accounts, simulated coordinates, and AMap tiles. No personal account, device, media, or note content is shown.</sub></p>
 
 ## Why Cirrus
 
-Cirrus is a local-first **iCloud desktop client for Windows, macOS, and Linux**. It combines two workflows that are awkward to use from a browser: downloading **iCloud Photos** and finding **Apple devices with Find My**.
+Cirrus is a local-first desktop client for the iCloud services people use every day. It replaces a patchwork of browser tabs with one native workspace for photos, devices, notes, contacts, and calendar.
 
-- Native Tauri window with a loopback-only MCP bridge enabled by default
-- Multi-tab workspace for Devices, Photos, Notes, Contacts, Calendar, and Settings
-- One Apple ID + password + 2FA session for Photos and Find My
-- Original photos and videos, including Live Photos
-- Multi-account switching with cached avatars and account-scoped download tasks
-- AES-256-GCM session encryption with the key stored in the OS credential store
+| 5 | 19 | 13 | 3 |
+|:--:|:--:|:--:|:--:|
+| iCloud areas | MCP tools | client presets | desktop platforms |
+
+- Native Tauri app for Windows, macOS, and Linux.
+- One Apple ID and 2FA session across supported iCloud services.
+- Original photo and video downloads with account-scoped history.
+- Multi-account switching with encrypted local sessions.
+- Configurable MCP access with per-account and per-tool switches.
+- No Cirrus account, cloud relay, or telemetry.
 
 ## Features
 
-### iCloud Photos
+### Photos and video
 
-- Browse the iCloud Photo Library in a responsive grid
-- Open photos and videos in a full-screen viewer
-- Download original files instead of thumbnails
-- Download by date range with account-scoped task history
-- Configure download concurrency and bandwidth limits
+- Browse the iCloud Photo Library in a responsive grid.
+- Open photos and videos in a full-screen viewer.
+- Download original files instead of thumbnails.
+- Download by date range with account-scoped task history.
+- Configure download concurrency and bandwidth limits.
 
 ### Find My devices
 
-- View iPhone, iPad, Mac, AirPods, and other Apple devices
-- Live map with location, accuracy, and last-seen time
-- Battery, Activation Lock, and Lost Mode status
-- Device artwork in the device list and a direct **Play Sound** action
+- View iPhone, iPad, Mac, AirPods, and other Apple devices.
+- See device artwork, battery, availability, and location status.
+- Review Activation Lock and Lost Mode information.
+- Play a sound directly from the device detail view.
 
-### Desktop experience
+### Notes, contacts, and calendar
 
-- English and Simplified Chinese UI
-- Light, dark, and system themes
-- Multiple Apple accounts with session reuse
-- Local SQLite storage for accounts, avatars, sessions, and download history
+- Browse iCloud Notes with folders and search.
+- View contacts, phone numbers, email addresses, and postal addresses.
+- Read calendar events in day, week, and month views.
+- Keep each view ready when switching between workspace tabs.
+
+### Desktop workspace
+
+- English and Simplified Chinese UI.
+- Light, dark, and system themes.
+- Multiple Apple accounts with session reuse.
+- Local storage for accounts, avatars, encrypted sessions, and download history.
 
 ### MCP
 
-- Optional stdio MCP bridge for AI clients and automation
-- Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder
-- Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked
-- 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images
-- Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window
-- Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client
-- Loopback-only bridge with a per-run random bearer token
+- Optional stdio MCP bridge for AI clients and automation.
+- Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder.
+- Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
+- 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images.
+- Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
+- Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
+- Loopback-only bridge with a per-run random bearer token.
 
 ## Install
 
@@ -97,7 +110,7 @@ VITE_AMAP_SECURITY_CODE=
 
 1. Sign in with your Apple ID and password.
 2. Complete two-factor authentication.
-3. Open **Devices** for Find My or **Photos** for the iCloud Photo Library.
+3. Open **Devices**, **Photos**, **Notes**, **Contacts**, or **Calendar** from the sidebar or workspace tabs.
 
 To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 19 account, device, photo, download, note, contact, calendar, profile image, login, and logout tools.
 

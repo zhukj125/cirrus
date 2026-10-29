@@ -682,7 +682,26 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "settings.vaultOn": { zh: "已启用加密保存", en: "Encrypted storage enabled" },
   "settings.vaultOff": { zh: "仅本次运行", en: "This session only" },
   "settings.hours": { zh: "{count} 小时", en: "{count} hours" },
-  "settings.tagline": { zh: "iCloud 设备与照片，一处查看", en: "iCloud devices and photos, together" },
+  "settings.tagline": { zh: "在桌面上，直接使用你的 iCloud 数据。", en: "Your iCloud data, directly on the desktop." },
+  "settings.aboutDescription": {
+    zh: "绕过网页版，在原生窗口里浏览照片、下载原图、定位设备，并查看备忘录与联系人。多账号切换、原图下载和本机加密会话都在同一个应用里完成。",
+    en: "Skip the web app and browse photos, download originals, locate devices, and read notes and contacts in a native window. Account switching, original downloads, and encrypted local sessions all live in one app.",
+  },
+  "settings.aboutLocalFirst": { zh: "本地优先", en: "Local-first" },
+  "settings.aboutAccounts": { zh: "多账号切换", en: "Multi-account" },
+  "settings.aboutOriginalDownloads": { zh: "原图下载", en: "Original downloads" },
+  "settings.aboutMcp": { zh: "19 个 MCP 工具", en: "19 MCP tools" },
+  "settings.aboutPhotosTitle": { zh: "照片与视频", en: "Photos and videos" },
+  "settings.aboutPhotosDesc": { zh: "浏览图库、按日期筛选，并下载原图、视频和 Live Photo。", en: "Browse the library, filter by date, and download originals, videos, and Live Photos." },
+  "settings.aboutFindMyTitle": { zh: "设备与 Find My", en: "Devices and Find My" },
+  "settings.aboutFindMyDesc": { zh: "查看设备外观、电量、在线状态和位置状态，并直接播放声音。", en: "See device artwork, battery, availability, and location status, then play a sound directly." },
+  "settings.aboutLibraryTitle": { zh: "备忘录、联系人与日历", en: "Notes, contacts, and calendar" },
+  "settings.aboutLibraryDesc": { zh: "三个资料页面常驻在页签中，切换回来时保留搜索、筛选和选中状态。", en: "Keep all three reference views open, with search, filters, and selection preserved when you switch back." },
+  "settings.aboutRuntime": { zh: "运行信息", en: "Runtime information" },
+  "settings.aboutPrivacyTitle": { zh: "密码不落盘", en: "Passwords never touch disk" },
+  "settings.aboutPrivacyNote": { zh: "会话以 AES-256-GCM 加密，密钥保存在系统凭据库。MCP 客户端只获得业务结果，不会获得账号或双重认证凭据。", en: "Sessions use AES-256-GCM with keys stored in the OS credential store. MCP clients receive operation results, never account or two-factor credentials." },
+  "settings.aboutGithub": { zh: "查看 GitHub", en: "View on GitHub" },
+  "settings.aboutGithubOpenFailed": { zh: "无法打开 GitHub 项目", en: "Could not open the GitHub project" },
 };
 
 export const useLocaleStore = defineStore("locale", () => {

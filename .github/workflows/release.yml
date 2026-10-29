@@ -69,26 +69,26 @@ jobs:
 
             ### 更新内容
 
-            - 全图库虚拟缩略图栏，支持平滑拖动和任意位置跳转
-            - 跳转时自动加载目标前后照片，缩略图与主图保持一致
-            - 新增照片详细信息面板，展示 EXIF、位置、尺寸、编码和帧率
-            - 优化快速切换时的缩略图与大图加载优先级
-            - 系统托盘后台运行、下载队列并发和默认目录设置
-            - 地图设置直达与 GitHub 仓库入口
+            - 完整 MCP 集成：19 个工具、逐账户与逐工具权限控制、原生授权登录
+            - 多页签工作区，页面切换时保留搜索、筛选和选中状态
+            - 支持 Claude Code、Cursor、Codex、VS Code、Windsurf 等 13 个 MCP 客户端配置
+            - AMap 英文底图与英文地址解析，中英文界面分别使用对应地图语言
+            - 完善备忘录、联系人、日历、设备、照片和下载操作闭环
+            - 重新整理“关于”页面、README 文案和模拟数据产品截图
 
-            原生 iCloud 照片和查找桌面客户端，支持 Windows、macOS、Linux。
+            原生 iCloud 照片、设备与个人资料桌面客户端，支持 Windows、macOS、Linux。
             构建未做 Apple 公证，macOS 可能显示 Gatekeeper 警告。
 
             ### Highlights
 
-            - Full-library virtual photo filmstrip with smooth drag scrolling
-            - Centered loading around the selected rank keeps thumbnails and the main photo in sync
-            - Detailed photo information panel with EXIF, location, dimensions, codec, and frame rate
-            - Prioritized thumbnail and full-image loading for faster switching
-            - System tray background mode, download queue concurrency, and default folder settings
-            - Direct map settings navigation and GitHub repository shortcut
+            - Complete MCP integration with 19 tools, per-account and per-tool controls, and native authorization
+            - Multi-tab workspace that preserves search, filters, and selection state
+            - One-click MCP setup for Claude Code, Cursor, Codex, VS Code, Windsurf, and other clients
+            - English AMap tiles and English reverse-geocoded addresses alongside localized Chinese maps
+            - Complete workflows for devices, photos, downloads, notes, contacts, and calendar
+            - Refreshed About page, README copy, and simulated-data product screenshots
 
-            Native iCloud Photos and Find My desktop client for Windows, macOS, and Linux.
+            Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
           releaseDraft: true
           prerelease: false

@@ -2,8 +2,8 @@
   <img src="docs/images/cirrus-icon.png" width="88" alt="Cirrus iCloud 桌面客户端 Logo" />
   <h1>Cirrus</h1>
 
-  <p><strong>开源的 iCloud 照片下载与 Find My 设备客户端，支持 Windows、macOS 和 Linux。</strong></p>
-  <p>在一个原生桌面应用里浏览 iCloud 照片、下载原图，并定位 Apple 设备。</p>
+  <p><strong>本地优先的 iCloud 桌面工作区，覆盖照片、设备、备忘录、联系人与日历。</strong></p>
+  <p>在原生窗口里直接使用 iCloud 数据，会话本地加密，MCP 访问可以逐账户、逐工具授权。</p>
 
   <p>
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-4B5563" alt="Windows、macOS 和 Linux" />
@@ -16,52 +16,65 @@
   <p><a href="README.md">English</a> | 简体中文</p>
 </div>
 
-![Cirrus iCloud 照片与 Find My 桌面客户端](docs/images/cirrus-preview.png)
+![Cirrus 设备工作区](docs/images/cirrus-devices.zh-CN.png)
+
+<p align="center"><sub>截图使用模拟账号、模拟经纬度和 AMap 底图，不包含个人账号、真实设备、照片或备忘录内容。</sub></p>
 
 ## 为什么是 Cirrus
 
-Cirrus 是一个本地优先的 **Windows iCloud 桌面客户端**，把两个常用但浏览器体验不佳的流程放在一起：下载 **iCloud 照片**，以及通过 **Find My** 查找 Apple 设备。
+Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的照片、设备、备忘录、联系人和日历集中到一个原生工作区里，不必在多个网页之间来回切换。
 
-- 原生 Tauri 窗口；MCP 桥接默认开启，仅监听本机回环地址
-- 多页签工作区，可在设备、照片、备忘录、联系人、日历和设置之间快速切换
-- 一次 Apple ID、密码和双重认证，同时用于照片与设备
-- 支持原图、原视频和 Live Photo 下载
-- 多账号切换、头像缓存、按账号隔离下载任务
-- 使用 AES-256-GCM 加密会话，密钥保存在系统凭据存储
+| 5 | 19 | 13 | 3 |
+|:--:|:--:|:--:|:--:|
+| iCloud 功能域 | MCP 工具 | 客户端配置 | 桌面平台 |
+
+- 原生 Tauri 应用，支持 Windows、macOS 和 Linux。
+- 一次 Apple ID 与双重认证，覆盖已支持的 iCloud 服务。
+- 下载原图与原视频，并按账号保留下载历史。
+- 多账号切换，会话在本地加密保存。
+- MCP 支持逐账户、逐工具授权。
+- 没有 Cirrus 账号、云端中转或遥测服务。
 
 ## 功能
 
-### iCloud 照片
+### 照片与视频
 
-- 网格浏览 iCloud 照片图库
-- 全屏查看照片和视频
-- 下载原图，而不是缩略图
-- 按日期范围下载，并保留账号级任务历史
-- 设置下载并发数和带宽限制
+- 网格浏览 iCloud 照片图库。
+- 全屏查看照片和视频。
+- 下载原图，而不是缩略图。
+- 按日期范围下载，并保留账号级任务历史。
+- 设置下载并发数和带宽限制。
 
 ### Find My 设备
 
-- 查看 iPhone、iPad、Mac、AirPods 等 Apple 设备
-- 地图显示位置、精度和最后更新时间
-- 显示电量、激活锁和丢失模式状态
-- 显示设备图标，并支持播放声音
+- 查看 iPhone、iPad、Mac、AirPods 等 Apple 设备。
+- 查看设备外观、电量、在线状态和位置状态。
+- 查看激活锁与丢失模式信息。
+- 在设备详情页直接播放声音。
+
+### 备忘录、联系人与日历
+
+- 按文件夹浏览 iCloud 备忘录并搜索。
+- 查看联系人、电话、邮箱和地址。
+- 以日、周、月视图查看日历事件。
+- 切换工作区页签后保留各页面状态。
 
 ### 桌面体验
 
-- 英文和简体中文界面
-- 浅色、深色和跟随系统主题
-- 多 Apple 账号与会话复用
-- 使用本地 SQLite 保存账号、头像、会话和下载历史
+- 英文和简体中文界面。
+- 浅色、深色和跟随系统主题。
+- 多 Apple 账号与会话复用。
+- 在本地保存账号、头像、加密会话和下载历史。
 
 ### MCP
 
-- 可选的 stdio MCP 桥接，供 AI 客户端和自动化工具使用
-- 按其他主流桌面客户端方式提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签
-- iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用
-- 19 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、下载、备忘录、联系人、日历和头像图片
-- 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口
-- Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端
-- 仅监听本机回环地址，并使用每次启动随机生成的 Bearer Token
+- 可选的 stdio MCP 桥接，供 AI 客户端和自动化工具使用。
+- 提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签。
+- iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用。
+- 19 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、下载、备忘录、联系人、日历和头像图片。
+- 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口。
+- Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端。
+- 仅监听本机回环地址，并使用每次启动随机生成的 Bearer Token。
 
 ## 安装
 
@@ -97,7 +110,7 @@ VITE_AMAP_SECURITY_CODE=
 
 1. 输入 Apple ID 和密码。
 2. 完成双重认证。
-3. 打开 **Devices** 使用 Find My，或打开 **Photos** 浏览 iCloud 照片。
+3. 从侧栏或工作区页签打开 **设备**、**照片**、**备忘录**、**联系人** 或 **日历**。
 
 如需使用 MCP，打开 **设置 → MCP**，启用桥接，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 19 个账户、设备、照片、下载、备忘录、联系人、日历、头像、登录和退出工具。
 

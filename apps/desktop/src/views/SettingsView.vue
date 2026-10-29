@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowLeft, ChevronDown, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, HardDrive, Info, KeyRound, MapPin, Monitor, Moon, Palette, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
+import { ArrowLeft, ChevronDown, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, GitBranch, HardDrive, Images, Info, KeyRound, MapPin, Monitor, Moon, NotebookPen, Palette, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import McpIntegrationSettings from "@/components/mcp/McpIntegrationSettings.vue";
@@ -24,7 +24,7 @@ const props = withDefaults(
     initialCategory?: string;
   }>(),
   {
-    version: "1.3.0",
+    version: "1.4.0",
     ttlMinutes: null,
     vaultEnabled: null,
     initialCategory: "appearance",
@@ -122,6 +122,9 @@ function toggleMapCredential(fieldId: string): void {
 
 function openMapConsole(): void {
   void openExternal(mapProvider.value.consoleUrl).catch(() => toast.error(locale.t("settings.mapConsoleOpenFailed")));
+}
+function openProjectGithub(): void {
+  void openExternal("https://github.com/zhukj125/cirrus").catch(() => toast.error(locale.t("settings.aboutGithubOpenFailed")));
 }
 
 function onLocaleChange(event: Event): void {
@@ -311,38 +314,90 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         </section>
 
         <section v-else-if="active === 'about'" class="flex flex-col gap-5">
-          <div class="rounded-xl border border-border bg-card p-6">
-            <div class="flex items-center gap-4">
-              <span class="grid size-16 shrink-0 place-items-center rounded-[20px] bg-secondary text-foreground ring-1 ring-border">
-                <BrandMark class="size-9" />
-              </span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
-                  <BrandWordmark size="lg" />
-                  <span class="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium tabular text-muted-foreground">v{{ props.version }}</span>
+          <div class="overflow-hidden rounded-xl border border-border bg-card">
+            <div class="relative overflow-hidden border-b border-border bg-gradient-to-br from-primary/10 via-card to-card p-6">
+              <div class="pointer-events-none absolute -top-24 -right-20 size-64 rounded-full bg-primary/10 blur-3xl" />
+              <div class="relative flex flex-col gap-5 sm:flex-row sm:items-start">
+                <span class="grid size-16 shrink-0 place-items-center rounded-[20px] bg-secondary text-foreground ring-1 ring-border">
+                  <BrandMark class="size-9" />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <BrandWordmark size="lg" />
+                    <span class="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium tabular text-muted-foreground">v{{ props.version }}</span>
+                  </div>
+                  <p class="mt-3 max-w-2xl text-xl font-semibold leading-8 tracking-tight text-foreground">{{ locale.t("settings.tagline") }}</p>
+                  <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{{ locale.t("settings.aboutDescription") }}</p>
                 </div>
-                <p class="mt-1 text-sm text-muted-foreground">{{ locale.t("settings.tagline") }}</p>
               </div>
+
+              <div class="relative mt-5 flex flex-wrap items-center gap-3">
+                <span class="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground">{{ locale.t("settings.aboutLocalFirst") }}</span>
+                <span class="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground">{{ locale.t("settings.aboutOriginalDownloads") }}</span>
+                <span class="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs text-muted-foreground">{{ locale.t("settings.aboutAccounts") }}</span>
+                <Button class="ml-auto" variant="outline" size="sm" @click="openProjectGithub">
+                  <GitBranch :size="14" />
+                  {{ locale.t("settings.aboutGithub") }}
+                  <ExternalLink :size="11" />
+                </Button>
+              </div>
+            </div>
+
+            <div class="grid gap-px bg-border sm:grid-cols-3">
+              <article class="bg-card p-5">
+                <span class="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><Images :size="17" /></span>
+                <h3 class="mt-3 text-sm font-semibold">{{ locale.t("settings.aboutPhotosTitle") }}</h3>
+                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.aboutPhotosDesc") }}</p>
+              </article>
+              <article class="bg-card p-5">
+                <span class="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><MapPin :size="17" /></span>
+                <h3 class="mt-3 text-sm font-semibold">{{ locale.t("settings.aboutFindMyTitle") }}</h3>
+                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.aboutFindMyDesc") }}</p>
+              </article>
+              <article class="bg-card p-5">
+                <span class="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><NotebookPen :size="17" /></span>
+                <h3 class="mt-3 text-sm font-semibold">{{ locale.t("settings.aboutLibraryTitle") }}</h3>
+                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.aboutLibraryDesc") }}</p>
+              </article>
             </div>
           </div>
 
-          <dl class="divide-y divide-border rounded-xl border border-border bg-card px-5 text-sm">
-            <div class="flex items-center gap-3 py-4">
-              <Info :size="16" class="shrink-0 text-muted-foreground" />
-              <dt class="text-muted-foreground">{{ locale.t("settings.version") }}</dt>
-              <dd class="ml-auto tabular font-medium">v{{ props.version }}</dd>
+          <div class="overflow-hidden rounded-xl border border-border bg-card">
+            <div class="border-b border-border px-5 py-4">
+              <h3 class="text-sm font-semibold">{{ locale.t("settings.aboutRuntime") }}</h3>
             </div>
-            <div class="flex items-center gap-3 py-4">
-              <Clock3 :size="16" class="shrink-0 text-muted-foreground" />
-              <dt class="text-muted-foreground">{{ locale.t("settings.sessionTtl") }}</dt>
-              <dd class="ml-auto tabular font-medium">{{ props.ttlMinutes ? locale.t("settings.hours", { count: props.ttlMinutes / 60 }) : "—" }}</dd>
+            <dl class="grid divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              <div class="flex items-center gap-3 px-5 py-4">
+                <Info :size="16" class="shrink-0 text-muted-foreground" />
+                <div>
+                  <dt class="text-xs text-muted-foreground">{{ locale.t("settings.version") }}</dt>
+                  <dd class="mt-0.5 tabular text-sm font-medium">v{{ props.version }}</dd>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 px-5 py-4">
+                <Clock3 :size="16" class="shrink-0 text-muted-foreground" />
+                <div>
+                  <dt class="text-xs text-muted-foreground">{{ locale.t("settings.sessionTtl") }}</dt>
+                  <dd class="mt-0.5 tabular text-sm font-medium">{{ props.ttlMinutes ? locale.t("settings.hours", { count: props.ttlMinutes / 60 }) : "—" }}</dd>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 px-5 py-4">
+                <HardDrive :size="16" class="shrink-0 text-muted-foreground" />
+                <div>
+                  <dt class="text-xs text-muted-foreground">{{ locale.t("settings.vault") }}</dt>
+                  <dd class="mt-0.5 text-sm font-medium">{{ props.vaultEnabled === null ? "—" : props.vaultEnabled ? locale.t("settings.vaultOn") : locale.t("settings.vaultOff") }}</dd>
+                </div>
+              </div>
+            </dl>
+          </div>
+
+          <div class="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-5">
+            <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><ShieldCheck :size="17" /></span>
+            <div>
+              <h3 class="text-sm font-semibold">{{ locale.t("settings.aboutPrivacyTitle") }}</h3>
+              <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.aboutPrivacyNote") }}</p>
             </div>
-            <div class="flex items-center gap-3 py-4">
-              <HardDrive :size="16" class="shrink-0 text-muted-foreground" />
-              <dt class="text-muted-foreground">{{ locale.t("settings.vault") }}</dt>
-              <dd class="ml-auto font-medium">{{ props.vaultEnabled === null ? "—" : props.vaultEnabled ? locale.t("settings.vaultOn") : locale.t("settings.vaultOff") }}</dd>
-            </div>
-          </dl>
+          </div>
         </section>
       </div>
     </div>
