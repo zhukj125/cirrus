@@ -23,6 +23,7 @@
 Cirrus is a local-first **iCloud desktop client for Windows, macOS, and Linux**. It combines two workflows that are awkward to use from a browser: downloading **iCloud Photos** and finding **Apple devices with Find My**.
 
 - Native Tauri window with a loopback-only MCP bridge enabled by default
+- Multi-tab workspace for Devices, Photos, Notes, Contacts, Calendar, and Settings
 - One Apple ID + password + 2FA session for Photos and Find My
 - Original photos and videos, including Live Photos
 - Multi-account switching with cached avatars and account-scoped download tasks

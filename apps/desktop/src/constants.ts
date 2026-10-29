@@ -27,10 +27,19 @@ export const StorageKey = {
   amapKey: "cirrus.amapKey",
   amapSecurityCode: "cirrus.amapSecurityCode",
   photosView: "cirrus.photosView",
+  workspaceTabs: "cirrus.workspaceTabs",
 } as const;
 
-export type View = "findmy" | "photos-login" | "photos-gallery" | "notes" | "contacts" | "calendar" | "settings";
+export const SHELL_VIEWS = ["findmy", "photos-gallery", "notes", "contacts", "calendar"] as const;
 
-export type ShellView = Extract<View, "findmy" | "photos-gallery" | "notes" | "contacts" | "calendar">;
+export type ShellView = (typeof SHELL_VIEWS)[number];
+
+export type View = ShellView | "photos-login" | "settings";
+
+export type WorkspaceTab = ShellView | "settings";
+
+export function isShellView(value: string): value is ShellView {
+  return (SHELL_VIEWS as readonly string[]).includes(value);
+}
 
 export type ThemeMode = "system" | "light" | "dark";

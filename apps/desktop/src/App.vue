@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import AppShell from "@/components/layout/AppShell.vue";
+import AppTabBar from "@/components/layout/AppTabBar.vue";
 import TitleBar from "@/components/layout/TitleBar.vue";
 import DownloadManagerDialog from "@/components/photos/DownloadManagerDialog.vue";
 import Spinner from "@/components/ui/Spinner.vue";
@@ -28,7 +29,7 @@ import { isTrayAvailable, mcpAuthorize, mcpCancelLogin, mcpCompleteLogin, mcpPen
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import type { DevicesResponse, McpAuthorizationRequest } from "@/types";
-import { StorageKey, type ShellView } from "@/constants";
+import { StorageKey, isShellView, type ShellView, type View, type WorkspaceTab } from "@/constants";
 
 const store = useAppStore();
 
@@ -50,6 +51,47 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
 const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
+function isWorkspaceTab(value: unknown): value is WorkspaceTab {
+  return typeof value === "string" && (isShellView(value) || value === "settings");
+}
+
+function storedWorkspaceTabs(): WorkspaceTab[] {
+  const raw = readStored(StorageKey.workspaceTabs);
+  if (!raw) return ["findmy"];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const tabs = Array.isArray(parsed) ? [...new Set(parsed.filter(isWorkspaceTab))] : [];
+    if (!tabs.some(isShellView)) tabs.unshift("findmy");
+    return tabs;
+  } catch {
+    return ["findmy"];
+  }
+}
+
+const openWorkspaceTabs = ref<WorkspaceTab[]>(storedWorkspaceTabs());
+const lastShellTab = ref<ShellView>(openWorkspaceTabs.value.find(isShellView) ?? "findmy");
+const activeWorkspaceTab = computed<WorkspaceTab | null>(() => {
+  if (view.value === "settings") return "settings";
+  return isShellView(view.value) ? view.value : null;
+});
+
+watch(
+  view,
+  (next) => {
+    if (!signedIn.value || !isWorkspaceTab(next)) return;
+    if (!openWorkspaceTabs.value.includes(next)) openWorkspaceTabs.value.push(next);
+    if (isShellView(next)) lastShellTab.value = next;
+  },
+  { immediate: true },
+);
+
+watch(
+  openWorkspaceTabs,
+  (tabs) => {
+    writeStored(StorageKey.workspaceTabs, JSON.stringify(tabs));
+  },
+  { deep: true },
+);
 
 const headerTitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
@@ -73,33 +115,79 @@ const titleBarContext = computed(() => {
   return null;
 });
 
-function onNavigate(next: ShellView): void {
+async function activateWorkspaceTab(next: WorkspaceTab): Promise<void> {
+  if (next !== "settings" && view.value === next) return;
+  if (next === "settings") {
+    store.goTo("settings");
+    return;
+  }
   if (next === "photos-gallery") {
-    void store.openPhotos();
+    await store.openPhotos();
     return;
   }
   if (next === "notes") {
-    void store.openNotes();
+    await store.openNotes();
     return;
   }
   if (next === "contacts") {
-    void store.openContacts();
+    await store.openContacts();
     return;
   }
   if (next === "calendar") {
-    void store.openCalendar();
+    await store.openCalendar();
     return;
   }
-  void store.ensureDevices();
   store.goTo("findmy");
+  void store.ensureDevices();
 }
 
-let settingsReturnView: "photos-login" | "findmy" | "photos-gallery" | "notes" | "contacts" | "calendar" = "photos-login";
+function onNavigate(next: ShellView): void {
+  void activateWorkspaceTab(next);
+}
+
+let settingsReturnView: View = "photos-login";
 const settingsInitialCategory = ref("appearance");
+
+function settingsFallback(): View {
+  if (!signedIn.value) return settingsReturnView;
+  if (isShellView(settingsReturnView) && openWorkspaceTabs.value.includes(settingsReturnView)) return settingsReturnView;
+  return openWorkspaceTabs.value.find(isShellView) ?? lastShellTab.value;
+}
+
+function activateSettingsFallback(): void {
+  const fallback = settingsFallback();
+  if (isShellView(fallback)) {
+    void activateWorkspaceTab(fallback);
+    return;
+  }
+  store.goTo(fallback);
+}
+
+function closeSettingsTab(): void {
+  openWorkspaceTabs.value = openWorkspaceTabs.value.filter((tab) => tab !== "settings");
+  activateSettingsFallback();
+}
+
+function closeWorkspaceTab(tab: WorkspaceTab): void {
+  if (tab === "settings") {
+    closeSettingsTab();
+    return;
+  }
+  if (openWorkspaceTabs.value.filter(isShellView).length <= 1) return;
+
+  const index = openWorkspaceTabs.value.indexOf(tab);
+  if (index < 0) return;
+  openWorkspaceTabs.value = openWorkspaceTabs.value.filter((item) => item !== tab);
+  if (view.value !== tab) return;
+
+  const shellTabs = openWorkspaceTabs.value.filter(isShellView);
+  const fallback = shellTabs[Math.min(index, shellTabs.length - 1)];
+  if (fallback) void activateWorkspaceTab(fallback);
+}
 
 function toggleSettings(): void {
   if (view.value === "settings") {
-    store.goTo(settingsReturnView);
+    closeSettingsTab();
     return;
   }
   settingsReturnView = view.value;
@@ -336,80 +424,94 @@ onUnmounted(() => {
   <div class="flex h-full min-h-0 flex-col">
     <TitleBar :show-settings="true" :settings-active="view === 'settings'" :context-label="titleBarContext" @settings="toggleSettings" />
 
-    <div class="min-h-0 flex-1">
-      <div v-if="restoring" class="grid h-full place-items-center">
-        <div class="flex flex-col items-center gap-2.5">
-          <Spinner :size="22" />
-          <p class="text-sm text-muted-foreground">{{ i18n.t("app.restoring") }}</p>
-        </div>
-      </div>
+    <div class="flex min-h-0 flex-1 flex-col">
+      <AppTabBar v-if="signedIn && !restoring" :tabs="openWorkspaceTabs" :active="activeWorkspaceTab" @select="activateWorkspaceTab" @close="closeWorkspaceTab" @add="activateWorkspaceTab" />
 
-      <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.3.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
-
-      <AppShell
-        v-else-if="signedIn"
-        :view="shellView"
-        :title="headerTitle"
-        :subtitle="headerSubtitle"
-        :account="store.account"
-        :device-count="devices?.result.deviceCount ?? null"
-        :accounts="accounts"
-        :active-account-key="activeAccountKey"
-        :accounts-loading="accountsLoading"
-        :account-avatars="accountAvatars"
-        @navigate="onNavigate"
-        @logout="store.logoutCurrentAccount()"
-        @switch-account="store.switchAccount"
-        @add-account="store.beginSwitchAccount"
-        @validate-accounts="store.validateAccounts"
-      >
-        <template #actions>
-          <button v-if="shellView === 'findmy'" type="button" class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="devicesLoading" @click="store.refreshActiveDevices()">
-            <RefreshCw :size="13" :class="devicesLoading ? 'animate-spin' : ''" />
-            {{ i18n.t("app.refresh") }}
-          </button>
-        </template>
-
-        <PhotosGalleryView v-if="shellView === 'photos-gallery' && photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
-
-        <NotesView v-else-if="shellView === 'notes' && photosSession" :key="'notes-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
-
-        <ContactsView v-else-if="shellView === 'contacts' && photosSession" :key="'contacts-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
-
-        <CalendarView v-else-if="shellView === 'calendar' && photosSession" :key="'calendar-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
-
-        <MapView v-else-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
-
-        <div v-else class="grid h-full place-items-center">
+      <div class="min-h-0 flex-1">
+        <div v-if="restoring" class="grid h-full place-items-center">
           <div class="flex flex-col items-center gap-2.5">
-            <Spinner v-if="devicesLoading" :size="22" />
-            <p class="max-w-md px-4 text-center text-sm text-muted-foreground">{{ devicesLoading ? i18n.t("app.loadingDevices") : devicesError || i18n.t("app.loadDevicesFailed") }}</p>
-            <div v-if="!devicesLoading" class="flex items-center gap-2">
-              <button type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.ensureDevices()">
-                <RefreshCw :size="13" />
-                {{ i18n.t("common.retry") }}
-              </button>
-              <button v-if="activeAccountKey" type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.beginRelogin(activeAccountKey)">
-                {{ i18n.t("app.verifyAgain") }}
-              </button>
-            </div>
+            <Spinner :size="22" />
+            <p class="text-sm text-muted-foreground">{{ i18n.t("app.restoring") }}</p>
           </div>
         </div>
-      </AppShell>
 
-      <PhotosLoginView
-        v-else
-        :accounts="accounts"
-        :active-account-key="activeAccountKey"
-        :avatars="accountAvatars"
-        :login-context="loginContext"
-        :pending-relogin-key="pendingReloginKey"
-        :accounts-loading="accountsLoading"
-        @success="handlePhotosSuccess"
-        @select-account="store.selectAccountFromLogin"
-        @switch-other="store.beginSwitchAccount"
-        @cancel-mcp="cancelMcpLogin"
-      />
+        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.3.0'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
+
+        <AppShell
+          v-else-if="signedIn"
+          :view="shellView"
+          :title="headerTitle"
+          :subtitle="headerSubtitle"
+          :account="store.account"
+          :device-count="devices?.result.deviceCount ?? null"
+          :accounts="accounts"
+          :active-account-key="activeAccountKey"
+          :accounts-loading="accountsLoading"
+          :account-avatars="accountAvatars"
+          @navigate="onNavigate"
+          @logout="store.logoutCurrentAccount()"
+          @switch-account="store.switchAccount"
+          @add-account="store.beginSwitchAccount"
+          @validate-accounts="store.validateAccounts"
+        >
+          <template #actions>
+            <button v-if="shellView === 'findmy'" type="button" class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="devicesLoading" @click="store.refreshActiveDevices()">
+              <RefreshCw :size="13" :class="devicesLoading ? 'animate-spin' : ''" />
+              {{ i18n.t("app.refresh") }}
+            </button>
+          </template>
+
+          <div v-if="openWorkspaceTabs.includes('findmy')" v-show="shellView === 'findmy'" class="h-full">
+            <MapView v-if="currentDevices" :data="currentDevices" @play-sound="store.playSoundOn" @open-settings="openMapSettings" />
+
+            <div v-else class="grid h-full place-items-center">
+              <div class="flex flex-col items-center gap-2.5">
+                <Spinner v-if="devicesLoading" :size="22" />
+                <p class="max-w-md px-4 text-center text-sm text-muted-foreground">{{ devicesLoading ? i18n.t("app.loadingDevices") : devicesError || i18n.t("app.loadDevicesFailed") }}</p>
+                <div v-if="!devicesLoading" class="flex items-center gap-2">
+                  <button type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.ensureDevices()">
+                    <RefreshCw :size="13" />
+                    {{ i18n.t("common.retry") }}
+                  </button>
+                  <button v-if="activeAccountKey" type="button" class="flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="store.beginRelogin(activeAccountKey)">
+                    {{ i18n.t("app.verifyAgain") }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('photos-gallery')" v-show="shellView === 'photos-gallery'" class="h-full">
+            <PhotosGalleryView v-if="photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('notes')" v-show="shellView === 'notes'" class="h-full">
+            <NotesView v-if="photosSession" :key="'notes-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('contacts')" v-show="shellView === 'contacts'" class="h-full">
+            <ContactsView v-if="photosSession" :key="'contacts-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('calendar')" v-show="shellView === 'calendar'" class="h-full">
+            <CalendarView v-if="photosSession" :key="'calendar-' + photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+          </div>
+        </AppShell>
+
+        <PhotosLoginView
+          v-else
+          :accounts="accounts"
+          :active-account-key="activeAccountKey"
+          :avatars="accountAvatars"
+          :login-context="loginContext"
+          :pending-relogin-key="pendingReloginKey"
+          :accounts-loading="accountsLoading"
+          @success="handlePhotosSuccess"
+          @select-account="store.selectAccountFromLogin"
+          @switch-other="store.beginSwitchAccount"
+          @cancel-mcp="cancelMcpLogin"
+        />
+      </div>
     </div>
 
     <DownloadManagerDialog v-if="downloads.dialogOpen" />
