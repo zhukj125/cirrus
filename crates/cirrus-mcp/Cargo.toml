@@ -1,0 +1,14 @@
+[package]
+name = "cirrus-mcp"
+description = "Cirrus MCP stdio bridge for the desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }

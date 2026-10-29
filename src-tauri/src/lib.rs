@@ -2,6 +2,9 @@ pub mod account_store;
 pub mod commands;
 pub mod download_tasks;
 pub mod download_transfers;
+pub mod mcp;
+pub mod mcp_clients;
+pub mod mcp_operations;
 pub mod state;
 
 use std::sync::Arc;
@@ -118,6 +121,7 @@ pub fn run() {
                 Err(error) => log::warn!("[TRAY] could not create the system tray: {error}"),
             }
 
+            state.mcp.start_in_background(app.handle().clone(), Arc::clone(&state));
             state::spawn_cleanup_task(state);
             log::info!("Cirrus {} started", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -126,6 +130,19 @@ pub fn run() {
             commands::account::account_store_load,
             commands::account::account_store_save,
             commands::session::runtime_info,
+            commands::mcp::mcp_info,
+            commands::mcp::mcp_pending_authorization,
+            commands::mcp::mcp_set_enabled,
+            commands::mcp::mcp_authorize,
+            commands::mcp::mcp_complete_login,
+            commands::mcp::mcp_cancel_login,
+            commands::mcp::mcp_tool_access,
+            commands::mcp::mcp_set_tool_enabled,
+            commands::mcp::mcp_clients,
+            commands::mcp::mcp_install_client,
+            commands::mcp::mcp_remove_client,
+            commands::mcp::mcp_accounts,
+            commands::mcp::mcp_set_account_enabled,
             commands::session::tray_available,
             set_tray_labels,
             commands::session::quit_app,

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowLeft, ChevronDown, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, HardDrive, Info, KeyRound, MapPin, Monitor, Moon, Palette, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
+import McpIntegrationSettings from "@/components/mcp/McpIntegrationSettings.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
 import DownloadSettingsPanel from "@/components/photos/DownloadSettingsPanel.vue";
 import { Button } from "@/components/ui/button";
@@ -64,6 +65,7 @@ const CATEGORIES = [
   { id: "appearance", labelKey: "settings.appearance", icon: Palette, keywords: "appearance theme light dark language interface" },
   { id: "maps", labelKey: "settings.maps", icon: MapPin, keywords: "map amap api key security code" },
   { id: "downloads", labelKey: "settings.downloads", icon: DownloadIcon, keywords: "downloads concurrency originals videos" },
+  { id: "mcp", labelKey: "settings.mcp", icon: Settings2, keywords: "mcp model context protocol ai agent login automation" },
   { id: "about", labelKey: "settings.about", icon: Info, keywords: "about version session cirrus" },
 ] as const;
 
@@ -161,7 +163,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     </aside>
 
     <div class="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background">
-      <div class="mx-auto w-full min-w-0 max-w-[min(100%,42rem)] px-6 py-7 sm:px-8">
+      <div :class="active === 'mcp' ? 'mx-auto w-full min-w-0 max-w-[min(100%,64rem)] px-6 py-7 sm:px-8' : 'mx-auto w-full min-w-0 max-w-[min(100%,42rem)] px-6 py-7 sm:px-8'">
         <label class="relative mb-8 block">
           <Search :size="16" class="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-muted-foreground" />
           <input v-model="query" type="search" class="h-10 w-full rounded-lg border border-border bg-card pr-4 pl-10 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring" :placeholder="locale.t('settings.search')" />
@@ -302,6 +304,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <p class="text-sm text-muted-foreground">{{ locale.t("settings.downloadDesc") }}</p>
           </div>
           <DownloadSettingsPanel />
+        </section>
+
+        <section v-else-if="active === 'mcp'" class="flex flex-col gap-6">
+          <McpIntegrationSettings />
         </section>
 
         <section v-else-if="active === 'about'" class="flex flex-col gap-5">

@@ -516,6 +516,31 @@ impl SrpSession {
         Ok(HttpResponse { status, headers: response_headers, body: body_text })
     }
 
+    pub async fn request_bytes_plain(
+        &mut self,
+        method: Method,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> AppResult<HttpResponseBytes> {
+        let mut map = HeaderMap::new();
+        insert_header(&mut map, hh::USER_AGENT, hc::USER_AGENT);
+        for (name, value) in headers {
+            insert_header(&mut map, name, value);
+        }
+        let response = self
+            .http
+            .request(method, url)
+            .timeout(hc::REQUEST_TIMEOUT)
+            .headers(map)
+            .send()
+            .await
+            .map_err(|source| AppError::Http { url: url.to_string(), source })?;
+        let status = response.status().as_u16();
+        let response_headers = response.headers().clone();
+        let bytes = response.bytes().await.map_err(|source| AppError::Http { url: url.to_string(), source })?.to_vec();
+        Ok(HttpResponseBytes { status, headers: response_headers, bytes })
+    }
+
     pub async fn request_bytes(
         &mut self,
         method: Method,

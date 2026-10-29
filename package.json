@@ -11,6 +11,8 @@
     "typecheck": "vue-tsc --noEmit --project apps/desktop/tsconfig.json",
     "build": "vite build --config apps/desktop/vite.config.ts",
     "build:checked": "pnpm typecheck && pnpm build",
+    "build:mcp": "cargo build -p cirrus-mcp",
+    "build:mcp:sidecar": "node scripts/build-mcp-sidecar.mjs",
     "check": "node scripts/run-check.mjs",
     "lint": "oxlint --vue-plugin apps/desktop/src",
     "fmt": "oxfmt \"apps/desktop/src/**/*.{ts,vue}\"",

@@ -101,6 +101,67 @@ export interface RuntimeInfo {
   vaultEnabled: boolean;
 }
 
+export interface McpInfo {
+  enabled: boolean;
+  running: boolean;
+  port: number | null;
+  endpoint: string | null;
+  command: string | null;
+  configToml: string | null;
+  version: string;
+}
+
+export interface McpAuthorizeResponse {
+  approved: boolean;
+  requestId: string;
+  clientName: string;
+}
+
+export interface McpAuthorizationRequest {
+  requestId: string;
+  clientName: string;
+  clientVersion?: string | null;
+  tool: string;
+  expiresInSeconds: number;
+}
+
+export interface McpAccountSummary {
+  accountKey: string;
+  appleId: string;
+  dsid: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string;
+  mcpEnabled: boolean;
+}
+
+export interface McpClientInfo {
+  id: string;
+  name: string;
+  installed: boolean;
+  configured: boolean;
+  canInstall: boolean;
+  supportsWrite: boolean;
+  configPath: string | null;
+  configSnippet: string | null;
+  blockedReason: "not-installed" | "binary-missing" | null;
+}
+
+export interface McpAccountInfo {
+  key: string;
+  appleId: string;
+  firstName: string | null;
+  lastName: string | null;
+  lastUsedAt: number;
+  enabled: boolean;
+  signedIn: boolean;
+  avatarDataUrl: string | null;
+}
+
+export interface McpToolAccessSettings {
+  disabledTools: string[];
+}
+
 export interface PhotosLoginResult {
   status: "NEED_2FA" | "TRUST_BROWSER_REQUIRED" | "OK" | "ERROR";
   message: string | null;
@@ -289,12 +350,14 @@ export interface AccountStoreSnapshot {
   activeAccountKey: string | null;
   avatars: Record<string, string>;
 }
-export type LoginMode = "normal" | "switch" | "relogin-expired";
+export type LoginMode = "normal" | "switch" | "relogin-expired" | "mcp";
 
 export interface LoginContext {
   mode: LoginMode;
 
   appleId: string | null;
+
+  clientName?: string | null;
 }
 export interface NoteFolder {
   id: string;

@@ -98,7 +98,7 @@ pub async fn fetch_url(manager: &SessionManager, session_id: &str, url: &str) ->
         snapshot.clear_password();
         snapshot
     };
-    let image = session.request_bytes(Method::GET, url, None, &[(hh::ACCEPT, "image/*")]).await?;
+    let image = session.request_bytes_plain(Method::GET, url, &[(hh::ACCEPT, "image/*")]).await?;
     if !image.is_success() {
         return Err(AppError::other(format!("Could not download contact photo: HTTP {}", image.status)));
     }

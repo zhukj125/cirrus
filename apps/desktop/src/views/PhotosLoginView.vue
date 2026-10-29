@@ -30,7 +30,7 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ success: [sessionId: string]; selectAccount: [key: string]; switchOther: [] }>();
+const emit = defineEmits<{ success: [sessionId: string]; selectAccount: [key: string]; switchOther: []; cancelMcp: [] }>();
 const locale = useLocaleStore();
 
 const POLL_INTERVAL_MS = 2000;
@@ -61,7 +61,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 const showReloginPrompt = computed(() => props.loginContext.mode === "relogin-expired" && !reloginConfirmed.value && !pendingSessionId.value);
 const lockAppleId = computed(() => props.loginContext.mode === "relogin-expired" && reloginConfirmed.value);
 const showFirstStep = computed(() => !pendingSessionId.value && !showReloginPrompt.value);
-const showKnownAccounts = computed(() => !pendingSessionId.value && !showReloginPrompt.value && props.accounts.length > 0);
+const showKnownAccounts = computed(() => props.loginContext.mode !== "mcp" && !pendingSessionId.value && !showReloginPrompt.value && props.accounts.length > 0);
 
 const reloginAccount = computed<KnownAccount | null>(() => {
   const byKey = props.accounts.find((account) => account.key === props.pendingReloginKey);
@@ -97,7 +97,7 @@ watch(
       appleId.value = context.appleId ?? "";
       return;
     }
-    if (context.mode === "switch") appleId.value = "";
+    if (context.mode === "switch" || context.mode === "mcp") appleId.value = "";
   },
   { immediate: true, deep: true },
 );
@@ -385,6 +385,17 @@ function switchToOtherAccount(): void {
       <div class="mb-6">
         <h1 class="text-2xl font-semibold tracking-tight">{{ locale.t("login.title") }}</h1>
         <p class="mt-2 text-sm leading-5 text-muted-foreground">{{ locale.t("login.subtitle") }}</p>
+      </div>
+
+      <div v-if="loginContext.mode === 'mcp'" class="mb-4 flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5" data-testid="mcp-login-banner">
+        <span class="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck :size="17" /></span>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-medium">{{ locale.t("login.mcpAuthorized", { client: loginContext.clientName ?? "MCP" }) }}</p>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("login.mcpAuthorizedDesc") }}</p>
+        </div>
+        <button type="button" class="shrink-0 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" @click="emit('cancelMcp')">
+          {{ locale.t("login.mcpCancel") }}
+        </button>
       </div>
 
       <div class="relative">

@@ -413,7 +413,9 @@ fn table_grid(document: &[u8]) -> AppResult<Vec<Vec<String>>> {
     Ok(grid)
 }
 
-fn ordered_set(objects: &[&[u8]], uuids: &[&[u8]], reference: u64) -> AppResult<(Vec<u64>, Vec<(u64, u64)>)> {
+type OrderedSetResult = (Vec<u64>, Vec<(u64, u64)>);
+
+fn ordered_set(objects: &[&[u8]], uuids: &[&[u8]], reference: u64) -> AppResult<OrderedSetResult> {
     let object = pool_object(objects, reference)?;
     let ordered = field_bytes(object, 16).ok_or_else(|| AppError::other("Table ordered set is missing"))?;
     let array = field_bytes(ordered, 1).ok_or_else(|| AppError::other("Table ordered set array is missing"))?;
@@ -584,14 +586,14 @@ fn proto_varint(data: &[u8], position: &mut usize) -> AppResult<u64> {
     Err(AppError::other("Protobuf varint is too long"))
 }
 
-fn field_bytes<'a>(data: &'a [u8], field: u64) -> Option<&'a [u8]> {
+fn field_bytes(data: &[u8], field: u64) -> Option<&[u8]> {
     parse_proto(data).ok()?.into_iter().find_map(|(candidate, _, value)| match value {
         Wire::Bytes(bytes) if candidate == field => Some(bytes),
         _ => None,
     })
 }
 
-fn field_bytes_all<'a>(data: &'a [u8], field: u64) -> Vec<&'a [u8]> {
+fn field_bytes_all(data: &[u8], field: u64) -> Vec<&[u8]> {
     parse_proto(data)
         .unwrap_or_default()
         .into_iter()

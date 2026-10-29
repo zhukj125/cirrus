@@ -14,6 +14,13 @@ import type {
   DownloadProgressEvent,
   LibraryTotal,
   LoadedDownloadTasks,
+  McpAccountInfo,
+  McpAccountSummary,
+  McpAuthorizationRequest,
+  McpAuthorizeResponse,
+  McpClientInfo,
+  McpInfo,
+  McpToolAccessSettings,
   Photos2faOptions,
   PhotosListRequest,
   PhotosLoginResult,
@@ -50,6 +57,58 @@ export function runtimeInfo(): Promise<RuntimeInfo> {
 
 export function isTrayAvailable(): Promise<boolean> {
   return call<boolean>("tray_available");
+}
+
+export function mcpInfo(): Promise<McpInfo> {
+  return call<McpInfo>("mcp_info");
+}
+
+export function mcpPendingAuthorization(): Promise<McpAuthorizationRequest | null> {
+  return call<McpAuthorizationRequest | null>("mcp_pending_authorization");
+}
+
+export function mcpToolAccess(): Promise<McpToolAccessSettings> {
+  return call<McpToolAccessSettings>("mcp_tool_access");
+}
+
+export function mcpSetToolEnabled(tool: string, enabled: boolean): Promise<McpToolAccessSettings> {
+  return call<McpToolAccessSettings>("mcp_set_tool_enabled", { tool, enabled });
+}
+
+export function mcpClients(): Promise<McpClientInfo[]> {
+  return call<McpClientInfo[]>("mcp_clients");
+}
+
+export function mcpInstallClient(clientId: string): Promise<McpClientInfo> {
+  return call<McpClientInfo>("mcp_install_client", { clientId });
+}
+
+export function mcpRemoveClient(clientId: string): Promise<McpClientInfo> {
+  return call<McpClientInfo>("mcp_remove_client", { clientId });
+}
+
+export function mcpAccounts(): Promise<McpAccountInfo[]> {
+  return call<McpAccountInfo[]>("mcp_accounts");
+}
+
+export function mcpSetAccountEnabled(accountKey: string, enabled: boolean): Promise<McpAccountInfo[]> {
+  return call<McpAccountInfo[]>("mcp_set_account_enabled", { accountKey, enabled });
+}
+
+export function mcpSetEnabled(enabled: boolean): Promise<McpInfo> {
+  return call<McpInfo>("mcp_set_enabled", { enabled });
+}
+
+export function mcpAuthorize(payload: { requestId: string; approved: boolean }): Promise<McpAuthorizeResponse> {
+  return call<McpAuthorizeResponse>("mcp_authorize", payload);
+}
+
+export function mcpCompleteLogin(payload: { requestId: string; sessionId: string }): Promise<McpAccountSummary> {
+  return call<McpAccountSummary>("mcp_complete_login", payload);
+}
+
+export function mcpCancelLogin(requestId: string): Promise<void> {
+  return call<void>("mcp_cancel_login", { requestId });
 }
 
 export async function quitApp(): Promise<void> {

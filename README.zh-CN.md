@@ -22,7 +22,7 @@
 
 Cirrus 是一个本地优先的 **Windows iCloud 桌面客户端**，把两个常用但浏览器体验不佳的流程放在一起：下载 **iCloud 照片**，以及通过 **Find My** 查找 Apple 设备。
 
-- 原生 Tauri 窗口，不需要浏览器标签页、本地 HTTP 服务或监听端口
+- 原生 Tauri 窗口；MCP 桥接默认开启，仅监听本机回环地址
 - 一次 Apple ID、密码和双重认证，同时用于照片与设备
 - 支持原图、原视频和 Live Photo 下载
 - 多账号切换、头像缓存、按账号隔离下载任务
@@ -51,6 +51,16 @@ Cirrus 是一个本地优先的 **Windows iCloud 桌面客户端**，把两个�
 - 浅色、深色和跟随系统主题
 - 多 Apple 账号与会话复用
 - 使用本地 SQLite 保存账号、头像、会话和下载历史
+
+### MCP
+
+- 可选的 stdio MCP 桥接，供 AI 客户端和自动化工具使用
+- 按其他主流桌面客户端方式提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签
+- iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用
+- 19 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、下载、备忘录、联系人、日历和头像图片
+- 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口
+- Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端
+- 仅监听本机回环地址，并使用每次启动随机生成的 Bearer Token
 
 ## 安装
 
@@ -88,11 +98,13 @@ VITE_AMAP_SECURITY_CODE=
 2. 完成双重认证。
 3. 打开 **Devices** 使用 Find My，或打开 **Photos** 浏览 iCloud 照片。
 
+如需使用 MCP，打开 **设置 → MCP**，启用桥接，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 19 个账户、设备、照片、下载、备忘录、联系人、日历、头像、登录和退出工具。
+
 首次登录必须完成双重认证；之后只要会话仍有效，就会从本地加密记录中恢复。
 
 ## 隐私与存储
 
-Cirrus 完全运行在本机，并直接连接 Apple。项目没有 Cirrus 账号、云端中转、遥测服务或本地 HTTP API。
+Cirrus 完全运行在本机，并直接连接 Apple。项目没有 Cirrus 账号、云端中转或遥测服务。MCP 桥接默认开启，仅监听 `127.0.0.1`，并要求每次启动随机生成的 Bearer Token。
 
 本地数据位于：
 
@@ -123,10 +135,11 @@ pnpm typecheck
 pnpm lint
 pnpm test
 cargo test --workspace
+pnpm build:mcp   # 开发时构建 MCP stdio 可执行文件
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-仓库包含 Cargo workspace（`src-tauri`、`crates/cirrus-core`）和 pnpm workspace（`apps/desktop`）。
+仓库包含 Cargo workspace（`src-tauri`、`crates/cirrus-core`、`crates/cirrus-mcp`）和 pnpm workspace（`apps/desktop`）。
 
 ## 限制
 
@@ -134,7 +147,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Linux 的会话恢复需要 Secret Service 实现
 - 依赖 iCloud 私有 Web API，Apple 更新后可能需要适配
 - 设备地图需要配置 AMap Key
-- 当前只覆盖照片和 Find My，不包含 iCloud Drive、邮件、联系人或日历
+- 当前覆盖照片、Find My、备忘录、联系人和日历，不包含 iCloud Drive 或邮件
+- MCP 已覆盖账户、设备、照片、下载、备忘录、联系人和日历等主要操作，且当前仅支持本地 stdio；暂未提供 HTTP 接入
 
 ## 商标与法律风险
 

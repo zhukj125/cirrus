@@ -162,7 +162,7 @@ async fn query_folders(session: &mut SrpSession, base: &str) -> AppResult<Vec<No
             Some(NoteFolder { id, name })
         })
         .collect();
-    folders.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    folders.sort_by_key(|folder| folder.name.to_lowercase());
     Ok(folders)
 }
 
@@ -594,7 +594,7 @@ fn extract_note_attachment_ids(document: &[u8]) -> AppResult<Vec<String>> {
     Ok(ids)
 }
 
-fn length_delimited_values<'a>(data: &'a [u8], wanted_field: u64) -> AppResult<Vec<&'a [u8]>> {
+fn length_delimited_values(data: &[u8], wanted_field: u64) -> AppResult<Vec<&[u8]>> {
     let mut reader = ProtoReader { data, position: 0 };
     let mut values = Vec::new();
     while !reader.done() {
@@ -609,7 +609,7 @@ fn length_delimited_values<'a>(data: &'a [u8], wanted_field: u64) -> AppResult<V
     }
     Ok(values)
 }
-fn last_length_delimited<'a>(data: &'a [u8], wanted_field: u64) -> AppResult<Option<&'a [u8]>> {
+fn last_length_delimited(data: &[u8], wanted_field: u64) -> AppResult<Option<&[u8]>> {
     let mut reader = ProtoReader { data, position: 0 };
     let mut found = None;
     while !reader.done() {
@@ -702,7 +702,7 @@ mod tests {
 
     fn field_varint(field: u64, value: u64) -> Vec<u8> {
         let mut out = Vec::new();
-        put_varint((field << 3) | 0, &mut out);
+        put_varint(field << 3, &mut out);
         put_varint(value, &mut out);
         out
     }

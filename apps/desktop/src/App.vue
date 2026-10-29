@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { RefreshCw } from "@lucide/vue";
+import { RefreshCw, ShieldCheck } from "@lucide/vue";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -24,9 +24,10 @@ import { useDownloadsStore } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 import { devMockEnabled, mockDevicesResponse } from "@/dev/mock";
-import { isTrayAvailable, quitApp, setTrayLabels } from "@/lib/api";
+import { isTrayAvailable, mcpAuthorize, mcpCancelLogin, mcpCompleteLogin, mcpPendingAuthorization, quitApp, setTrayLabels } from "@/lib/api";
 import { readStored, writeStored } from "@/lib/common/storage";
-import type { DevicesResponse } from "@/types";
+import { toast } from "@/lib/common/toast";
+import type { DevicesResponse, McpAuthorizationRequest } from "@/types";
 import { StorageKey, type ShellView } from "@/constants";
 
 const store = useAppStore();
@@ -121,6 +122,76 @@ const inTauri = isTauri();
 
 type CloseBehavior = "background" | "quit";
 
+const mcpAuthorization = ref<McpAuthorizationRequest | null>(null);
+const mcpAuthorizing = ref(false);
+const mcpLoginRequestId = ref<string | null>(null);
+let unlistenMcpAuthorization: (() => void) | null = null;
+let unlistenMcpAuthorizationFinished: (() => void) | null = null;
+let unlistenMcpLoginRequest: (() => void) | null = null;
+let unlistenMcpLoginFinished: (() => void) | null = null;
+let unlistenMcpAccountsChanged: (() => void) | null = null;
+let unlistenMcpDownloadCompleted: (() => void) | null = null;
+
+function clearMcpLoginRequest(requestId?: string): void {
+  if (requestId && mcpLoginRequestId.value !== requestId) return;
+  mcpLoginRequestId.value = null;
+  if (store.loginContext.mode === "mcp") store.resetLoginContext();
+}
+
+async function handleMcpAuthorization(approved: boolean): Promise<void> {
+  const request = mcpAuthorization.value;
+  if (!request || mcpAuthorizing.value) return;
+  mcpAuthorizing.value = true;
+  try {
+    const result = await mcpAuthorize({ requestId: request.requestId, approved });
+    mcpAuthorization.value = null;
+    if (result.approved) {
+      mcpLoginRequestId.value = result.requestId;
+      toast.info(i18n.t("mcp.loginRequested", { client: result.clientName }));
+    } else {
+      toast.info(i18n.t("mcp.authorizationDenied"));
+    }
+  } catch (error) {
+    mcpAuthorization.value = null;
+    toast.error(i18n.t("mcp.authorizationFailed", { error: error instanceof Error ? error.message : i18n.t("app.unknownError") }));
+  } finally {
+    mcpAuthorizing.value = false;
+  }
+}
+
+async function handlePhotosSuccess(sessionId: string): Promise<boolean> {
+  const requestId = mcpLoginRequestId.value;
+  const accepted = await store.acceptPhotosSession(sessionId);
+  if (requestId) {
+    if (!accepted) {
+      await mcpCancelLogin(requestId).catch(() => undefined);
+      clearMcpLoginRequest(requestId);
+      return false;
+    }
+    try {
+      const account = await mcpCompleteLogin({ requestId, sessionId });
+      toast.success(i18n.t("mcp.loginCompleted", { account: account.displayName }));
+      if (!account.mcpEnabled) toast.warning(i18n.t("mcp.accountAccessDisabled", { account: account.displayName }));
+    } catch (error) {
+      await mcpCancelLogin(requestId).catch(() => undefined);
+      toast.error(i18n.t("mcp.loginCompleteFailed", { error: error instanceof Error ? error.message : i18n.t("app.unknownError") }));
+    } finally {
+      clearMcpLoginRequest(requestId);
+    }
+  }
+  return accepted;
+}
+
+async function cancelMcpLogin(): Promise<void> {
+  const requestId = mcpLoginRequestId.value;
+  if (requestId) {
+    await mcpCancelLogin(requestId).catch(() => undefined);
+    toast.info(i18n.t("mcp.loginCancelled"));
+  }
+  clearMcpLoginRequest();
+  store.beginSwitchAccount();
+}
+
 function configuredCloseBehavior(): CloseBehavior {
   return readStored(StorageKey.closeBehavior) === "quit" ? "quit" : "background";
 }
@@ -202,6 +273,31 @@ onMounted(async () => {
     unlistenTrayQuit = await listen("tray-quit-requested", () => void requestQuit());
   } catch {}
   try {
+    unlistenMcpAuthorization = await listen<McpAuthorizationRequest>("mcp-authorization-request", (event) => {
+      mcpAuthorization.value = event.payload;
+    });
+    unlistenMcpAuthorizationFinished = await listen<{ requestId: string }>("mcp-authorization-finished", (event) => {
+      if (mcpAuthorization.value?.requestId === event.payload.requestId) mcpAuthorization.value = null;
+    });
+    unlistenMcpLoginRequest = await listen<{ requestId: string; clientName: string }>("mcp-login-request", (event) => {
+      mcpLoginRequestId.value = event.payload.requestId;
+      store.beginMcpLogin(event.payload.clientName);
+    });
+    unlistenMcpLoginFinished = await listen<{ requestId: string }>("mcp-login-finished", (event) => {
+      clearMcpLoginRequest(event.payload.requestId);
+    });
+    unlistenMcpAccountsChanged = await listen<{ accountKey: string; reason: string }>("mcp-accounts-changed", (event) => {
+      if (event.payload.reason === "logout") toast.info(i18n.t("mcp.accountSignedOut"));
+      void store.restore();
+    });
+    unlistenMcpDownloadCompleted = await listen<{ accountKey: string; path: string; fileName: string; sizeBytes: number }>("mcp-download-completed", (event) => {
+      toast.success(i18n.t("mcp.downloadCompleted", { file: event.payload.fileName }));
+    });
+  } catch {}
+  try {
+    mcpAuthorization.value = await mcpPendingAuthorization();
+  } catch {}
+  try {
     const window = getCurrentWindow();
     unlistenClose = await window.onCloseRequested(async (event) => {
       if (closeFlushing) return;
@@ -225,6 +321,12 @@ onMounted(async () => {
 onUnmounted(() => {
   unlistenClose?.();
   unlistenTrayQuit?.();
+  unlistenMcpAuthorization?.();
+  unlistenMcpAuthorizationFinished?.();
+  unlistenMcpLoginRequest?.();
+  unlistenMcpLoginFinished?.();
+  unlistenMcpAccountsChanged?.();
+  unlistenMcpDownloadCompleted?.();
   downloads.disposeDownloadTracking();
   trayAvailable.value = false;
 });
@@ -303,13 +405,44 @@ onUnmounted(() => {
         :login-context="loginContext"
         :pending-relogin-key="pendingReloginKey"
         :accounts-loading="accountsLoading"
-        @success="store.acceptPhotosSession"
+        @success="handlePhotosSuccess"
         @select-account="store.selectAccountFromLogin"
         @switch-other="store.beginSwitchAccount"
+        @cancel-mcp="cancelMcpLogin"
       />
     </div>
 
     <DownloadManagerDialog v-if="downloads.dialogOpen" />
+
+    <div v-if="mcpAuthorization" class="fixed inset-0 z-[4100] grid place-items-center bg-black/45 p-6 backdrop-blur-[2px]">
+      <div class="w-full max-w-[460px] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcp-authorization-title" @keydown.esc="handleMcpAuthorization(false)">
+        <div class="px-5 pt-5 pb-4">
+          <div class="mb-3 flex items-center gap-3">
+            <span class="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck :size="19" /></span>
+            <div class="min-w-0">
+              <h2 id="mcp-authorization-title" class="text-base font-semibold">{{ i18n.t("mcp.authorizationTitle") }}</h2>
+              <p class="mt-0.5 truncate text-xs text-muted-foreground">
+                {{ mcpAuthorization.clientName }}<span v-if="mcpAuthorization.clientVersion"> · {{ mcpAuthorization.clientVersion }}</span>
+              </p>
+            </div>
+          </div>
+          <p class="text-sm leading-6 text-muted-foreground">{{ i18n.t("mcp.authorizationDescription", { client: mcpAuthorization.clientName }) }}</p>
+          <div class="mt-4 rounded-lg border border-border bg-secondary/45 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
+            {{ i18n.t("mcp.authorizationPrivacy") }}
+          </div>
+          <p class="mt-3 text-2xs text-muted-foreground">
+            {{ i18n.t("mcp.authorizationTool") }}: <span class="font-mono">{{ mcpAuthorization.tool }}</span>
+          </p>
+        </div>
+        <div class="flex items-center gap-2 border-t border-border bg-muted/20 px-4 py-3">
+          <button type="button" class="mr-auto rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="mcpAuthorizing" @click="handleMcpAuthorization(false)">{{ i18n.t("common.cancel") }}</button>
+          <Button type="button" class="h-8 px-3" :disabled="mcpAuthorizing" @click="handleMcpAuthorization(true)">
+            <Spinner v-if="mcpAuthorizing" :size="12" />
+            {{ mcpAuthorizing ? i18n.t("mcp.authorizing") : i18n.t("mcp.authorize") }}
+          </Button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="closePromptOpen" class="fixed inset-0 z-[4000] grid place-items-center bg-black/45 p-6 backdrop-blur-[2px]">
       <div class="w-full max-w-[440px] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="close-prompt-title" @keydown.esc="cancelClosePrompt">

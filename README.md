@@ -22,7 +22,7 @@
 
 Cirrus is a local-first **iCloud desktop client for Windows, macOS, and Linux**. It combines two workflows that are awkward to use from a browser: downloading **iCloud Photos** and finding **Apple devices with Find My**.
 
-- Native Tauri window; no browser tab, local HTTP server, or listening port
+- Native Tauri window with a loopback-only MCP bridge enabled by default
 - One Apple ID + password + 2FA session for Photos and Find My
 - Original photos and videos, including Live Photos
 - Multi-account switching with cached avatars and account-scoped download tasks
@@ -51,6 +51,16 @@ Cirrus is a local-first **iCloud desktop client for Windows, macOS, and Linux**.
 - Light, dark, and system themes
 - Multiple Apple accounts with session reuse
 - Local SQLite storage for accounts, avatars, sessions, and download history
+
+### MCP
+
+- Optional stdio MCP bridge for AI clients and automation
+- Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder
+- Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked
+- 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images
+- Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window
+- Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client
+- Loopback-only bridge with a per-run random bearer token
 
 ## Install
 
@@ -88,11 +98,13 @@ VITE_AMAP_SECURITY_CODE=
 2. Complete two-factor authentication.
 3. Open **Devices** for Find My or **Photos** for the iCloud Photo Library.
 
+To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 19 account, device, photo, download, note, contact, calendar, profile image, login, and logout tools.
+
 The first sign-in requires 2FA. Later launches restore the encrypted session when it is still valid.
 
 ## Privacy and storage
 
-Cirrus runs entirely on your machine and talks directly to Apple. There is no Cirrus account, cloud relay, telemetry service, or local HTTP API.
+Cirrus runs entirely on your machine and talks directly to Apple. There is no Cirrus account, cloud relay, or telemetry service. The MCP bridge listens only on `127.0.0.1`, is enabled by default, and requires a per-run bearer token.
 
 Local data is stored in:
 
@@ -123,10 +135,11 @@ pnpm typecheck
 pnpm lint
 pnpm test
 cargo test --workspace
+pnpm build:mcp   # optional MCP stdio executable for development
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The repository contains a Cargo workspace (`src-tauri` and `crates/cirrus-core`) and a pnpm workspace (`apps/desktop`).
+The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, and `crates/cirrus-mcp`) and a pnpm workspace (`apps/desktop`).
 
 ## Limitations
 
@@ -134,7 +147,8 @@ The repository contains a Cargo workspace (`src-tauri` and `crates/cirrus-core`)
 - Linux session restore requires a Secret Service implementation.
 - iCloud uses private web APIs that may change without notice.
 - The device map requires an AMap key.
-- Cirrus currently covers Photos and Find My, not iCloud Drive, Mail, Contacts, or Calendars.
+- Cirrus currently covers Photos, Find My, Notes, Contacts, and Calendar, but not iCloud Drive or Mail.
+- MCP exposes the main Cirrus account, device, photo, download, note, contact, and calendar operations over local stdio; HTTP transport is not implemented yet.
 
 ## Trademarks and legal risk
 

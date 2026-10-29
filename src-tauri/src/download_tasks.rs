@@ -128,6 +128,23 @@ impl DownloadTaskRepository {
         Ok(())
     }
 
+    pub async fn append(&self, account_key: &str, task: Value) -> AppResult<()> {
+        validate_account_key(account_key)?;
+        let Some(database) = &self.database else {
+            return Ok(());
+        };
+        let _guard = self.lock.lock().await;
+        let connection = open_database(database)?;
+        let tasks_json = connection
+            .query_row("SELECT tasks_json FROM download_tasks WHERE account_key = ?1", [account_key], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?;
+        let mut tasks = tasks_json.as_deref().map(serde_json::from_str::<Vec<Value>>).transpose()?.unwrap_or_default();
+        tasks.push(task);
+        save_tasks(&connection, account_key, &tasks)
+    }
+
     pub async fn delete_account(&self, account_key: &str) -> AppResult<()> {
         validate_account_key(account_key)?;
         let Some(database) = &self.database else {
@@ -195,6 +212,19 @@ mod tests {
         let reopened = repo(&dir);
         assert_eq!(reopened.load("dsid:1").await.expect("load a").tasks, a);
         assert_eq!(reopened.load("dsid:2").await.expect("load b").tasks, b);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn append_adds_one_task_without_losing_existing_tasks() {
+        let dir = temp_dir("append");
+        let store = repo(&dir);
+        store.save("dsid:1", vec![json!({"id": "existing"})]).await.expect("seed");
+        store.append("dsid:1", json!({"id": "mcp-download"})).await.expect("append");
+        let loaded = store.load("dsid:1").await.expect("load");
+        assert_eq!(loaded.tasks.len(), 2);
+        assert_eq!(loaded.tasks[0]["id"], "existing");
+        assert_eq!(loaded.tasks[1]["id"], "mcp-download");
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -264,7 +264,7 @@ fn stroke_payload(data: &[u8]) -> Option<StrokePayload<'_>> {
     Some(StrokePayload { tool, packed, default_width, created })
 }
 
-fn bytes_field<'a>(data: &'a [u8], field: u64) -> Option<&'a [u8]> {
+fn bytes_field(data: &[u8], field: u64) -> Option<&[u8]> {
     let fields = parse_proto(data).ok()?;
     fields.into_iter().find_map(|(candidate, _, value)| match value {
         Wire::Bytes(bytes) if candidate == field => Some(bytes),
@@ -280,7 +280,7 @@ fn varint_field(data: &[u8], field: u64) -> Option<u64> {
     })
 }
 
-fn fixed64_field<'a>(data: &'a [u8], field: u64) -> Option<&'a [u8]> {
+fn fixed64_field(data: &[u8], field: u64) -> Option<&[u8]> {
     let fields = parse_proto(data).ok()?;
     fields.into_iter().find_map(|(candidate, _, value)| match value {
         Wire::Fixed64(bytes) if candidate == field => Some(bytes),
@@ -295,7 +295,7 @@ fn payload_to_stroke(payload: StrokePayload<'_>, (marker, color): (bool, [f32; 4
         _ if marker => 14,
         _ => 16,
     };
-    if payload.packed.is_empty() || payload.packed.len() % stride != 0 {
+    if payload.packed.is_empty() || !payload.packed.len().is_multiple_of(stride) {
         return None;
     }
     let fixed_width = payload.default_width.unwrap_or(if marker { 13.75 } else { 3.2 }) as f64;

@@ -193,6 +193,14 @@ export const useAppStore = defineStore("app", () => {
     loginContext.value = { mode: "normal", appleId: null };
   }
 
+  function beginMcpLogin(clientName: string): void {
+    switchEpoch += 1;
+    ensureDeviceListCleared();
+    pendingReloginKey.value = null;
+    loginContext.value = { mode: "mcp", appleId: null, clientName };
+    view.value = "photos-login";
+  }
+
   async function validateAccounts(): Promise<void> {
     if (accountsLoading.value) return;
     accountsLoading.value = true;
@@ -635,6 +643,7 @@ export const useAppStore = defineStore("app", () => {
     selectAccountFromLogin,
     beginRelogin,
     beginSwitchAccount,
+    beginMcpLogin,
     resetLoginContext,
     removeAccount,
     acceptPhotosSession,

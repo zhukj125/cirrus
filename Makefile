@@ -58,7 +58,7 @@ build: node_modules/.modules.yaml
 	$(PNPM) build:checked
 
 package: node_modules/.modules.yaml
-	$(PNPM) tauri build
+	$(PNPM) tauri build --config src-tauri/tauri.mcp.conf.json
 
 clean:
 	cargo clean
