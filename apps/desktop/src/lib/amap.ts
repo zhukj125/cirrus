@@ -77,7 +77,7 @@ export function loadAmap(config: AmapConfig = getAmapConfig()): Promise<any> {
       }
       const script = document.createElement("script");
       amapScript = script;
-      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(normalized.key)}`;
+      script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(normalized.key)}&plugin=AMap.Geocoder`;
       script.onload = () => {
         loadedSignature = signature;
 
