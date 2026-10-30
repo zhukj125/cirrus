@@ -50,7 +50,16 @@ export function reverseGeocode(lnglat: [number, number], language: "zh" | "en" =
   const key = `${language}:${lng.toFixed(5)},${lat.toFixed(5)}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const request = fetchAddress(lnglat, language);
+  const request = fetchAddress(lnglat, language).then(
+    (info) => {
+      if (!info) cache.delete(key);
+      return info;
+    },
+    (error) => {
+      cache.delete(key);
+      throw error;
+    },
+  );
   cache.set(key, request);
   return request;
 }

@@ -395,6 +395,45 @@ fn device_label(device: &Value) -> String {
     }
 }
 
+fn device_summary_text(device: &Value) -> String {
+    let location = match device.get("location").filter(|value| !value.is_null()) {
+        Some(location) => {
+            let latitude = location.get("latitude").and_then(Value::as_f64);
+            let longitude = location.get("longitude").and_then(Value::as_f64);
+            match (latitude, longitude) {
+                (Some(latitude), Some(longitude)) => {
+                    let accuracy = location
+                        .get("horizontalAccuracy")
+                        .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite() && *value >= 0.0)
+                        .map(|value| format!(" (±{value:.0} m)"))
+                        .unwrap_or_default();
+                    let stale = location.get("isOld").and_then(Value::as_bool).unwrap_or(false);
+                    format!("Location: {latitude:.6}, {longitude:.6}{accuracy}{}", if stale { " · stale" } else { "" })
+                }
+                _ => "Location: unavailable".to_string(),
+            }
+        }
+        None if device.get("locationEnabled").and_then(Value::as_bool) == Some(false) => {
+            "Location: services off".to_string()
+        }
+        None => "Location: unavailable".to_string(),
+    };
+    let status = match device.get("deviceStatus").and_then(Value::as_str) {
+        Some("200") => "Status: online",
+        _ => "Status: offline",
+    };
+    let battery = device
+        .get("batteryLevel")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| format!("Battery: {:.0}%", value.clamp(0.0, 1.0) * 100.0));
+    [Some(device_label(device)), Some(location), Some(status.to_string()), battery]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 fn preferred_device_image_url(url: &str) -> String {
     if url.ends_with("online-sourcelist.png") {
         url.trim_end_matches("online-sourcelist.png").to_string() + "online-infobox__3x.png"
@@ -439,9 +478,9 @@ async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<
 }
 
 async fn device_image_content(client: &reqwest::Client, device: &Value) -> Vec<Value> {
-    let label = device_label(device);
+    let summary = device_summary_text(device);
     let Some(url) = device.get("deviceImageUrl").and_then(Value::as_str) else {
-        return vec![json!({ "type": "text", "text": format!("{label}: device artwork is unavailable") })];
+        return vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: unavailable") })];
     };
     let preferred = preferred_device_image_url(url);
     let image = match fetch_device_image(client, &preferred).await {
@@ -454,11 +493,11 @@ async fn device_image_content(client: &reqwest::Client, device: &Value) -> Vec<V
     let (bytes, mime_type) = match image {
         Ok(image) => image,
         Err(error) => {
-            return vec![json!({ "type": "text", "text": format!("{label}: {error}") })];
+            return vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: {error}") })];
         }
     };
     vec![
-        json!({ "type": "text", "text": format!("Device artwork: {label}") }),
+        json!({ "type": "text", "text": summary }),
         json!({ "type": "image", "data": BASE64.encode(bytes), "mimeType": mime_type }),
     ]
 }
@@ -629,6 +668,39 @@ mod tests {
         assert!(!is_apple_device_image_url("https://example.com/image.png"));
     }
 
+    #[test]
+    fn device_summary_keeps_location_next_to_artwork() {
+        let device = json!({
+            "name": "Test Phone",
+            "deviceDisplayName": "iPhone",
+            "deviceStatus": "200",
+            "batteryLevel": 0.82,
+            "location": {
+                "latitude": 30.1234567,
+                "longitude": 120.7654321,
+                "horizontalAccuracy": 9.6,
+                "isOld": false
+            }
+        });
+        let summary = device_summary_text(&device);
+        assert!(summary.contains("Test Phone · iPhone"));
+        assert!(summary.contains("Location: 30.123457, 120.765432 (±10 m)"));
+        assert!(summary.contains("Status: online"));
+        assert!(summary.contains("Battery: 82%"));
+    }
+
+    #[test]
+    fn device_summary_explains_disabled_location_services() {
+        let device = json!({
+            "name": "Old Phone",
+            "locationEnabled": false,
+            "location": null,
+            "deviceStatus": "201"
+        });
+        let summary = device_summary_text(&device);
+        assert!(summary.contains("Location: services off"));
+        assert!(summary.contains("Status: offline"));
+    }
     #[test]
     fn errors_are_json_rpc_compatible() {
         let response = error_response(json!("request-1"), -32601, "Method not found");

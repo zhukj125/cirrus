@@ -135,7 +135,8 @@ function deviceRowContent(device: Device, addressShort: string | undefined): { a
 
   const stale = location?.isOld === true;
   const status = stale ? staleTimeLabel(location?.timeStamp) : timeAgo(location?.timeStamp);
-  return { address: addressShort || t("map.findingAddress"), status: status || t(online ? "map.online" : "map.offline"), stale };
+  const address = addressShort || coordinateFallback(device) || t("map.findingAddress");
+  return { address, status: status || t(online ? "map.online" : "map.offline"), stale };
 }
 
 function distanceMeters(a: [number, number], b: [number, number]): number {
@@ -200,8 +201,6 @@ const lastUpdated = ref(new Date());
 
 const addresses = ref<Record<string, AddressInfo>>({});
 
-const addressFallbacks = ref<Record<string, string>>({});
-
 const failedImages = ref(new Set<string>());
 
 const mapError = ref<string | null>(null);
@@ -249,9 +248,10 @@ const blurMap = computed(() => selectedDevice.value != null && hasNoLocation(sel
 const deviceRows = computed(() => {
   const rows = liveDevices.value.map((device) => {
     const key = deviceKey(device);
+    const coordinateKey = addressCacheKey(device);
     const online = isDeviceReportedOnline(device);
-    const resolved = addresses.value[key];
-    const content = deviceRowContent(device, resolved?.short || resolved?.full || addressFallbacks.value[key]);
+    const resolved = coordinateKey ? addresses.value[coordinateKey] : undefined;
+    const content = deviceRowContent(device, resolved?.short || resolved?.full);
     return { device, key, ...content, online, locationTime: locationTimeMs(device.location?.timeStamp) ?? 0 };
   });
   return rows.sort((a, b) => {
@@ -266,7 +266,8 @@ const detailAddress = computed(() => {
   const device = selectedDevice.value;
   if (!device) return "";
   if (isDeviceOnline(device)) {
-    const address = addresses.value[deviceKey(device)]?.full;
+    const coordinateKey = addressCacheKey(device);
+    const address = coordinateKey ? addresses.value[coordinateKey]?.full : undefined;
     if (address) return address;
     const location = device.location;
     return location?.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}` : t("map.locationFound");
@@ -491,28 +492,9 @@ function coordinateFallback(device: Device): string | null {
   return t("map.locationCoordinates", { coordinates: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` });
 }
 
-// Reuse one geocode result for every device at the same coordinate.
+// Addresses are keyed by coordinates so a moved device always resolves its new location.
 function applyAddressSuccess(cacheKey: string, info: AddressInfo): void {
-  const nextAddresses = { ...addresses.value };
-  const nextFallbacks = { ...addressFallbacks.value };
-  for (const device of liveDevices.value) {
-    if (addressCacheKey(device) !== cacheKey) continue;
-    const key = deviceKey(device);
-    nextAddresses[key] = info;
-    delete nextFallbacks[key];
-  }
-  addresses.value = nextAddresses;
-  addressFallbacks.value = nextFallbacks;
-}
-
-function applyAddressFallback(cacheKey: string): void {
-  const nextFallbacks = { ...addressFallbacks.value };
-  for (const device of liveDevices.value) {
-    if (addressCacheKey(device) !== cacheKey) continue;
-    const fallback = coordinateFallback(device);
-    if (fallback) nextFallbacks[deviceKey(device)] = fallback;
-  }
-  addressFallbacks.value = nextFallbacks;
+  addresses.value = { ...addresses.value, [cacheKey]: info };
 }
 
 function scheduleAddressRetry(cacheKey: string): void {
@@ -527,7 +509,7 @@ function scheduleAddressRetry(cacheKey: string): void {
 
 function handleAddressFailure(cacheKey: string): void {
   addressRetryAt.set(cacheKey, Date.now() + 15_000);
-  applyAddressFallback(cacheKey);
+
   scheduleAddressRetry(cacheKey);
 }
 
@@ -535,11 +517,10 @@ function handleAddressFailure(cacheKey: string): void {
 function resolveAddresses(): void {
   for (const device of liveDevices.value) {
     if (!isDeviceOnline(device)) continue;
-    const key = deviceKey(device);
-    if (addresses.value[key]) continue;
     const position = devicePosition(device);
     const cacheKey = addressCacheKey(device);
     if (!position || !cacheKey) continue;
+    if (addresses.value[cacheKey]) continue;
 
     const cached = addressCache.get(cacheKey);
     if (cached) {
