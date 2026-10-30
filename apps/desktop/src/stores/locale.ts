@@ -372,6 +372,8 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "login.appleId": { zh: "Apple ID", en: "Apple ID" },
   "login.password": { zh: "密码", en: "Password" },
   "login.passwordPlaceholder": { zh: "请输入密码", en: "Enter your password" },
+  "login.showPassword": { zh: "显示密码", en: "Show password" },
+  "login.hidePassword": { zh: "隐藏密码", en: "Hide password" },
   "login.submit": { zh: "登录", en: "Sign in" },
   "login.authenticating": { zh: "正在认证…", en: "Signing in…" },
   "login.twoFactor": { zh: "双重认证", en: "Two-factor authentication" },

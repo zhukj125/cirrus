@@ -38,4 +38,18 @@ describe("MCP sign-in login view", () => {
     await cancel!.trigger("click");
     expect(wrapper.emitted("cancelMcp")).toHaveLength(1);
   });
+
+  it("toggles the password visibility", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(PhotosLoginView, {
+      props: { loginContext: { mode: "normal", appleId: null } },
+      global: { plugins: [pinia] },
+    });
+
+    expect(wrapper.get("#apple-password").attributes("type")).toBe("password");
+    await wrapper.get('button[aria-label="Show password"]').trigger("click");
+    expect(wrapper.get("#apple-password").attributes("type")).toBe("text");
+    expect(wrapper.find('button[aria-label="Hide password"]').exists()).toBe(true);
+  });
 });

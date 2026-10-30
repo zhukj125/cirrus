@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { ArrowRight, ShieldCheck } from "@lucide/vue";
+import { ArrowRight, Eye, EyeOff, ShieldCheck } from "@lucide/vue";
 
 import { Status } from "@/constants";
 import { photos2faOptions, photosCheckApproval, photosFinish2fa, photosLogin, photosSendCode, photosStatus, photosVerify2fa } from "@/lib/api";
@@ -38,6 +38,7 @@ const POLL_LIMIT = 150;
 
 const appleId = ref(props.loginContext.appleId ?? "");
 const password = ref("");
+const showPassword = ref(false);
 const loading = ref(false);
 
 const reloginConfirmed = ref(false);
@@ -423,7 +424,19 @@ function switchToOtherAccount(): void {
 
             <div>
               <label for="apple-password" class="mb-2 block text-sm font-medium">{{ locale.t("login.password") }}</label>
-              <Input id="apple-password" v-model="password" class="h-10 rounded-lg" type="password" :placeholder="locale.t('login.passwordPlaceholder')" autocomplete="current-password" />
+              <div class="relative">
+                <Input id="apple-password" v-model="password" class="h-10 rounded-lg pr-10" :type="showPassword ? 'text' : 'password'" :placeholder="locale.t('login.passwordPlaceholder')" autocomplete="current-password" />
+                <button
+                  type="button"
+                  class="absolute inset-y-0 right-0 grid w-10 place-items-center rounded-r-lg text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  :aria-label="locale.t(showPassword ? 'login.hidePassword' : 'login.showPassword')"
+                  :title="locale.t(showPassword ? 'login.hidePassword' : 'login.showPassword')"
+                  @click="showPassword = !showPassword"
+                >
+                  <EyeOff v-if="showPassword" :size="16" />
+                  <Eye v-else :size="16" />
+                </button>
+              </div>
             </div>
 
             <Button type="submit" class="mt-1 h-10 w-full rounded-lg" :disabled="loading">
