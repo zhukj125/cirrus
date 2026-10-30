@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 function hostTarget() {
   const details = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
@@ -13,7 +13,8 @@ const target = process.env.TAURI_ENV_TARGET_TRIPLE || process.env.CARGO_BUILD_TA
 const debug = process.argv.includes("--debug");
 const profile = debug ? "debug" : "release";
 const executable = process.platform === "win32" ? "cirrus-mcp.exe" : "cirrus-mcp";
-const source = join("target", target, profile, executable);
+const targetRoot = resolve(process.env.CARGO_TARGET_DIR || "target");
+const source = join(targetRoot, target, profile, executable);
 const destinationDir = join("src-tauri", "binaries");
 const destination = join(destinationDir, `cirrus-mcp-${target}${process.platform === "win32" ? ".exe" : ""}`);
 

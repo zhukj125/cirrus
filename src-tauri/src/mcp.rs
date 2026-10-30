@@ -858,7 +858,7 @@ fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn mcp_binary_path() -> Option<PathBuf> {
+pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     let file_name = if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" };

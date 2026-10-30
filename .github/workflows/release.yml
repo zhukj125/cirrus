@@ -87,6 +87,7 @@ jobs:
             - 设备坐标变化后会重新解析位置地址，不再永久缓存失败的地址结果
             - 登录密码输入框新增显示/隐藏密码按钮
             - 修复跨平台更新清单合并，发布前校验 Windows、macOS 和 Linux 更新产物
+            - Windows 更新安装前自动关闭 MCP sidecar，避免 cirrus-mcp.exe 文件占用
 
             ### Highlights
 
@@ -96,6 +97,7 @@ jobs:
             - Device addresses refresh when coordinates change, and failed lookups are retried correctly
             - Added a password visibility toggle to the sign-in form
             - Fixed cross-platform updater manifest merging and validate every platform before publishing
+            - Windows updates now stop the MCP sidecar before replacing files
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.

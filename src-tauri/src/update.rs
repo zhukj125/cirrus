@@ -1,10 +1,13 @@
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -244,9 +247,70 @@ pub fn app_update_cancel_download(state: State<'_, PendingUpdateState>) {
     state.cancel_download();
 }
 
+fn same_executable_path(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    let equal = left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy());
+    #[cfg(not(windows))]
+    let equal = left == right;
+    equal
+}
+
+fn terminate_mcp_sidecars() -> Result<usize, String> {
+    const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+    const RETRY_INTERVAL: Duration = Duration::from_millis(100);
+
+    let Some(binary) = crate::mcp::mcp_binary_path().filter(|path| path.is_file()) else {
+        return Ok(0);
+    };
+    let expected = std::fs::canonicalize(&binary).unwrap_or(binary);
+    let mut system = System::new_all();
+    let mut terminated = HashSet::new();
+    let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+
+    loop {
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        let mut matched_pids = Vec::new();
+        for (pid, process) in system.processes() {
+            let Some(actual) = process.exe() else {
+                continue;
+            };
+            let actual = std::fs::canonicalize(actual).unwrap_or_else(|_| actual.to_path_buf());
+            if !same_executable_path(&actual, &expected) {
+                continue;
+            }
+            matched_pids.push(pid.as_u32());
+            if process.kill() {
+                terminated.insert(pid.as_u32());
+                log::info!("[UPDATE] stopped MCP sidecar pid={pid}");
+            } else {
+                log::warn!("[UPDATE] could not stop MCP sidecar pid={pid}");
+            }
+        }
+
+        if matched_pids.is_empty() {
+            return Ok(terminated.len());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Could not stop the Cirrus MCP sidecar before installing the update. Running process IDs: {matched_pids:?}"
+            ));
+        }
+        std::thread::sleep(RETRY_INTERVAL);
+    }
+}
 #[tauri::command]
 pub fn app_update_install(state: State<'_, PendingUpdateState>) -> Result<(), String> {
     let ready = state.take_ready()?;
+    let stopped = match terminate_mcp_sidecars() {
+        Ok(stopped) => stopped,
+        Err(error) => {
+            state.restore_ready(ready)?;
+            return Err(error);
+        }
+    };
+    if stopped > 0 {
+        log::info!("[UPDATE] stopped {stopped} MCP sidecar process(es) before install");
+    }
     if let Err(error) = ready.update.install(&ready.bytes) {
         state.restore_ready(ready)?;
         return Err(format!("Could not install the update: {error}"));
@@ -254,7 +318,6 @@ pub fn app_update_install(state: State<'_, PendingUpdateState>) -> Result<(), St
     state.finish_install()?;
     Ok(())
 }
-
 #[tauri::command]
 pub fn app_update_restart(app: AppHandle) {
     app.request_restart();
@@ -262,7 +325,7 @@ pub fn app_update_restart(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppUpdateInfo, AppUpdateProgress, ProgressGate};
+    use super::{same_executable_path, AppUpdateInfo, AppUpdateProgress, ProgressGate};
 
     #[test]
     fn progress_gate_emits_only_when_visible_percentage_changes() {
@@ -280,15 +343,23 @@ mod tests {
         assert!(!gate.should_emit(256, None));
     }
     #[test]
+    fn executable_path_matching_uses_platform_case_rules() {
+        let expected = std::path::Path::new(r"C:\Apps\Cirrus\cirrus-mcp.exe");
+        let same = std::path::Path::new(r"C:\Apps\Cirrus\cirrus-mcp.exe");
+        let different_case = std::path::Path::new(r"c:\apps\cirrus\CIRRUS-MCP.EXE");
+        assert!(same_executable_path(expected, same));
+        assert_eq!(same_executable_path(expected, different_case), cfg!(windows));
+    }
+    #[test]
     fn update_contract_uses_frontend_friendly_field_names() {
         let info = AppUpdateInfo {
-            current_version: "1.4.3".to_string(),
+            current_version: "1.4.4".to_string(),
             version: "1.5.0".to_string(),
             body: Some("Changes".to_string()),
             date: None,
         };
         let value = serde_json::to_value(info).expect("serialize update info");
-        assert_eq!(value["currentVersion"], "1.4.3");
+        assert_eq!(value["currentVersion"], "1.4.4");
         assert_eq!(value["version"], "1.5.0");
 
         let progress = AppUpdateProgress { downloaded: 12, total: Some(24) };

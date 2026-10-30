@@ -337,12 +337,38 @@ async function refreshTrayAvailability(): Promise<void> {
   trayAvailable.value = inTauri && (await isTrayAvailable().catch(() => false));
 }
 
+function openUpdateSettings(): void {
+  if (view.value !== "settings") settingsReturnView = view.value;
+  settingsInitialCategory.value = "about";
+  store.goTo("settings");
+}
+
 async function checkForAvailableUpdate(): Promise<void> {
   if (!inTauri || devMockEnabled) return;
   const update = await updater.check();
   if (!update) return;
   const version = update.version.startsWith("v") ? update.version : `v${update.version}`;
   toast.info(i18n.t("updates.availableToast", { version }), 8000);
+}
+
+async function handleTitleBarUpdate(): Promise<void> {
+  if (updater.checking) return;
+  if (updater.hasUpdate || updater.downloading || updater.downloaded || updater.installed) {
+    openUpdateSettings();
+    return;
+  }
+  const update = await updater.check();
+  if (updater.error) {
+    toast.error(i18n.t("updates.error", { error: updater.error }));
+    return;
+  }
+  if (update) {
+    const version = update.version.startsWith("v") ? update.version : `v${update.version}`;
+    toast.info(i18n.t("updates.availableToast", { version }), 8000);
+    openUpdateSettings();
+    return;
+  }
+  toast.success(i18n.t("updates.upToDate"));
 }
 async function syncTrayLabels(): Promise<void> {
   if (!trayAvailable.value) return;
@@ -432,7 +458,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <TitleBar :show-settings="true" :settings-active="view === 'settings'" :context-label="titleBarContext" @settings="toggleSettings" />
+    <TitleBar :show-settings="true" :show-update="true" :checking-update="updater.checking" :update-available="updater.hasUpdate" :settings-active="view === 'settings'" :context-label="titleBarContext" @settings="toggleSettings" @check-update="handleTitleBarUpdate" />
 
     <div class="flex min-h-0 flex-1 flex-col">
       <AppTabBar v-if="signedIn && !restoring" :tabs="openWorkspaceTabs" :active="activeWorkspaceTab" @select="activateWorkspaceTab" @close="closeWorkspaceTab" @add="activateWorkspaceTab" />
@@ -445,7 +471,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.3'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
+        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.4'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
 
         <AppShell
           v-else-if="signedIn"

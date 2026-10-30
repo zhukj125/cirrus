@@ -22,7 +22,7 @@ vi.mock("@/lib/api", () => ({
 import { useUpdaterStore } from "@/stores/updater";
 
 const update = {
-  currentVersion: "1.4.3",
+  currentVersion: "1.4.4",
   version: "1.5.0",
   body: "A signed update.",
   date: "2026-10-30T00:00:00Z",

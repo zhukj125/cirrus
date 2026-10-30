@@ -3,7 +3,7 @@ resolver = "2"
 members = ["src-tauri", "crates/cirrus-core", "crates/cirrus-mcp"]
 
 [workspace.package]
-version = "1.4.3"
+version = "1.4.4"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["cirrus"]
@@ -46,6 +46,7 @@ tauri-build = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2.10.1"
+sysinfo = { version = "0.32.1", default-features = false, features = ["system"] }
 
 [profile.dev.package."*"]
 debug = "line-tables-only"
