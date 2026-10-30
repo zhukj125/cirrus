@@ -67,17 +67,17 @@ jobs:
           releaseBody: |
             Cirrus ${{ github.ref_name }}
 
-            ### 修复
+            ### 更新内容
 
-            - 修复 MCP 客户端只放行登录和账户列表，其他工具被误判为 Unknown 的问题
-            - 设备、照片、下载、备忘录、联系人、日历、头像等 17 个工具现在可以正常转发执行
-            - 账户权限、工具权限、会话校验继续由 Cirrus 桌面端 MCP bridge 统一执行
+            - MCP 设备列表现在直接返回高清 Base64 设备图片内容，不再只是图片 URL 文本
+            - 设备图片优先使用 Apple 3x 设备渲染图，失败时自动回退到列表图
+            - 登录密码输入框新增显示/隐藏密码按钮
 
-            ### Fixes
+            ### Highlights
 
-            - Fixed the MCP client forwarding only login and account-list calls while rejecting every other tool as unknown
-            - The other 17 device, photo, download, note, contact, calendar, and avatar tools now execute through the bridge
-            - Account access, tool access, and session checks remain enforced by the Cirrus desktop MCP bridge
+            - MCP device listings now return high-resolution Base64 image content instead of URL-only text
+            - Device artwork prefers Apple 3x renders with automatic fallback to list images
+            - Added a password visibility toggle to the sign-in form
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.

@@ -26,7 +26,7 @@ vi.mock("@/lib/api", () => ({
     endpoint: "http://127.0.0.1:45678",
     command: String.raw`C:\Apps\Cirrus\cirrus-mcp.exe`,
     configToml: '[mcp_servers.cirrus]\ncommand = "C:\\\\Apps\\\\Cirrus\\\\cirrus-mcp.exe"\n',
-    version: "1.4.1",
+    version: "1.4.2",
   })),
   mcpSetEnabled: vi.fn(async (enabled: boolean) => ({
     enabled,
@@ -35,7 +35,7 @@ vi.mock("@/lib/api", () => ({
     endpoint: enabled ? "http://127.0.0.1:45678" : null,
     command: String.raw`C:\Apps\Cirrus\cirrus-mcp.exe`,
     configToml: '[mcp_servers.cirrus]\ncommand = "C:\\\\Apps\\\\Cirrus\\\\cirrus-mcp.exe"\n',
-    version: "1.4.1",
+    version: "1.4.2",
   })),
   mcpToolAccess: vi.fn(async () => ({ disabledTools: [] })),
   mcpSetToolEnabled: vi.fn(async () => ({ disabledTools: [] })),

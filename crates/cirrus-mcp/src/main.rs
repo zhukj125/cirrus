@@ -1,6 +1,9 @@
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use reqwest::Url;
 use serde_json::{json, Value};
 
 const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -8,6 +11,7 @@ const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024
 const LOGIN_TOOL: &str = "cirrus_login";
 const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const CLIENT_NAME: &str = "cirrus-mcp";
+const MAX_DEVICE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 struct ClientIdentity {
@@ -162,7 +166,7 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_list_devices",
                 "title": "List Find My devices",
-                "description": "List Apple devices, locations, battery status, and Find My state for an account.",
+                "description": "List Apple devices, locations, battery status, and Find My state for an account. Device artwork is returned as MCP image content when available.",
                 "inputSchema": account_schema(json!({})),
                 "annotations": { "title": "List Find My devices", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
@@ -339,14 +343,21 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity) -> 
     }
 
     match call_bridge(name, &arguments, client).await {
-        Ok(result) => success_response(
-            id,
-            json!({
-                "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()) }],
-                "structuredContent": result,
-                "isError": false
-            }),
-        ),
+        Ok(result) => {
+            let mut content = result_image_content(name, &result).await;
+            content.push(json!({
+                "type": "text",
+                "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
+            }));
+            success_response(
+                id,
+                json!({
+                    "content": content,
+                    "structuredContent": result,
+                    "isError": false
+                }),
+            )
+        }
         Err(message) => success_response(
             id,
             json!({
@@ -355,6 +366,118 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity) -> 
             }),
         ),
     }
+}
+
+fn is_apple_device_image_url(value: &str) -> bool {
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    matches!(url.scheme(), "https")
+        && url.host_str().is_some_and(|host| {
+            host == "icloud.com"
+                || host.ends_with(".icloud.com")
+                || host == "icloud.com.cn"
+                || host.ends_with(".icloud.com.cn")
+        })
+}
+
+fn device_label(device: &Value) -> String {
+    let name = device.get("name").and_then(Value::as_str).unwrap_or("Apple device");
+    let model = device
+        .get("deviceDisplayName")
+        .and_then(Value::as_str)
+        .or_else(|| device.get("modelDisplayName").and_then(Value::as_str))
+        .unwrap_or("");
+    if model.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} · {model}")
+    }
+}
+
+fn preferred_device_image_url(url: &str) -> String {
+    if url.ends_with("online-sourcelist.png") {
+        url.trim_end_matches("online-sourcelist.png").to_string() + "online-infobox__3x.png"
+    } else if url.ends_with("offline-sourcelist.png") {
+        url.trim_end_matches("offline-sourcelist.png").to_string() + "offline-infobox__3x.png"
+    } else {
+        url.to_string()
+    }
+}
+
+async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, String), String> {
+    if !is_apple_device_image_url(url) {
+        return Err("device artwork URL was rejected".to_string());
+    }
+    let response = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "image/*")
+        .timeout(std::time::Duration::from_secs(12))
+        .send()
+        .await
+        .map_err(|error| format!("could not load device artwork: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("device artwork returned HTTP {}", response.status()));
+    }
+    if response.content_length().is_some_and(|length| length as usize > MAX_DEVICE_IMAGE_BYTES) {
+        return Err("device artwork is too large".to_string());
+    }
+    let mime_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| value.starts_with("image/"))
+        .unwrap_or("image/png")
+        .to_string();
+    let bytes = response.bytes().await.map_err(|error| format!("could not read device artwork: {error}"))?;
+    if bytes.len() > MAX_DEVICE_IMAGE_BYTES {
+        return Err("device artwork is too large".to_string());
+    }
+    Ok((bytes.to_vec(), mime_type))
+}
+
+async fn device_image_content(client: &reqwest::Client, device: &Value) -> Vec<Value> {
+    let label = device_label(device);
+    let Some(url) = device.get("deviceImageUrl").and_then(Value::as_str) else {
+        return vec![json!({ "type": "text", "text": format!("{label}: device artwork is unavailable") })];
+    };
+    let preferred = preferred_device_image_url(url);
+    let image = match fetch_device_image(client, &preferred).await {
+        Ok(image) => Ok(image),
+        Err(preferred_error) if preferred != url => fetch_device_image(client, url)
+            .await
+            .map_err(|fallback_error| format!("{preferred_error}; fallback failed: {fallback_error}")),
+        Err(error) => Err(error),
+    };
+    let (bytes, mime_type) = match image {
+        Ok(image) => image,
+        Err(error) => {
+            return vec![json!({ "type": "text", "text": format!("{label}: {error}") })];
+        }
+    };
+    vec![
+        json!({ "type": "text", "text": format!("Device artwork: {label}") }),
+        json!({ "type": "image", "data": BASE64.encode(bytes), "mimeType": mime_type }),
+    ]
+}
+
+async fn result_image_content(tool: &str, result: &Value) -> Vec<Value> {
+    if tool != "cirrus_list_devices" {
+        return Vec::new();
+    }
+    let Some(devices) = result.get("devices").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() else {
+        return Vec::new();
+    };
+    let mut content = Vec::new();
+    for device in devices {
+        content.extend(device_image_content(&client, device).await);
+    }
+    content
 }
 
 #[derive(Debug)]
@@ -492,6 +615,18 @@ mod tests {
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn device_images_must_use_apple_https_hosts() {
+        assert!(is_apple_device_image_url(
+            "https://statici.icloud.com/fmipmobile/deviceImages-9.0/iPhone/iPhone18,3/online-sourcelist.png"
+        ));
+        assert!(is_apple_device_image_url(
+            "https://statici.icloud.com.cn/fmipmobile/deviceImages-9.0/iPad/iPad13,1/offline-sourcelist.png"
+        ));
+        assert!(!is_apple_device_image_url("http://statici.icloud.com/image.png"));
+        assert!(!is_apple_device_image_url("https://example.com/image.png"));
     }
 
     #[test]
