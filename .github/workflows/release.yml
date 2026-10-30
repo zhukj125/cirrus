@@ -14,16 +14,17 @@ jobs:
     name: Build ${{ matrix.label }}
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - label: macOS Apple Silicon
             platform: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - label: macOS Intel
             platform: macos-15-intel
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - label: Windows x64
             platform: windows-latest
             target: x86_64-pc-windows-msvc
@@ -85,6 +86,7 @@ jobs:
             - MCP 设备列表返回高清设备图片，并在图片旁显示位置、状态和电量
             - 设备坐标变化后会重新解析位置地址，不再永久缓存失败的地址结果
             - 登录密码输入框新增显示/隐藏密码按钮
+            - 修复跨平台更新清单合并，发布前校验 Windows、macOS 和 Linux 更新产物
 
             ### Highlights
 
@@ -93,21 +95,57 @@ jobs:
             - MCP device listings now include high-resolution artwork with location, status, and battery summaries
             - Device addresses refresh when coordinates change, and failed lookups are retried correctly
             - Added a password visibility toggle to the sign-in form
+            - Fixed cross-platform updater manifest merging and validate every platform before publishing
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.mcp.conf.json
+
 
   publish:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Verify updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/updater"
+          gh release download "$TAG" --pattern latest.json --dir "$RUNNER_TEMP/updater" --clobber
+          node - "$RUNNER_TEMP/updater/latest.json" "$TAG" <<'NODE'
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const expectedVersion = process.argv[3].replace(/^v/, '');
+          const required = [
+            'windows-x86_64',
+            'darwin-aarch64',
+            'darwin-x86_64',
+            'linux-x86_64',
+            'linux-aarch64',
+          ];
+          if (manifest.version !== expectedVersion) {
+            throw new Error(`latest.json version ${manifest.version} does not match ${expectedVersion}`);
+          }
+          const missing = required.filter((platform) => {
+            const entry = manifest.platforms?.[platform];
+            return !entry?.url || !entry?.signature;
+          });
+          if (missing.length > 0) {
+            throw new Error(`latest.json is missing required platforms: ${missing.join(', ')}`);
+          }
+          console.log(`Verified ${required.length} updater platforms for ${manifest.version}`);
+          NODE
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false --latest
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false --latest

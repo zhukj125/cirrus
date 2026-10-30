@@ -26,7 +26,7 @@ const props = withDefaults(
     initialCategory?: string;
   }>(),
   {
-    version: "1.4.2",
+    version: "1.4.3",
     ttlMinutes: null,
     vaultEnabled: null,
     initialCategory: "appearance",

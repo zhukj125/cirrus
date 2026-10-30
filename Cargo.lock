@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "cirrus-core",
  "http-body-util",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus-core"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus-mcp"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "base64 0.22.1",
  "reqwest 0.12.28",
