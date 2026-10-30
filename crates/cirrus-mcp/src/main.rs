@@ -325,16 +325,6 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity) -> 
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, -32602, "Missing tool name");
     };
-    if name != LOGIN_TOOL && name != LIST_ACCOUNTS_TOOL {
-        return success_response(
-            id,
-            json!({
-                "content": [{ "type": "text", "text": format!("Unknown Cirrus tool: {name}") }],
-                "isError": true
-            }),
-        );
-    }
-
     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
     if (name == LOGIN_TOOL || name == LIST_ACCOUNTS_TOOL)
         && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())

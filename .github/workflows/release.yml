@@ -67,26 +67,17 @@ jobs:
           releaseBody: |
             Cirrus ${{ github.ref_name }}
 
-            ### 更新内容
+            ### 修复
 
-            - 完整 MCP 集成：19 个工具、逐账户与逐工具权限控制、原生授权登录
-            - 多页签工作区，页面切换时保留搜索、筛选和选中状态
-            - 支持 Claude Code、Cursor、Codex、VS Code、Windsurf 等 13 个 MCP 客户端配置
-            - AMap 英文底图与英文地址解析，中英文界面分别使用对应地图语言
-            - 完善备忘录、联系人、日历、设备、照片和下载操作闭环
-            - 重新整理“关于”页面、README 文案和模拟数据产品截图
+            - 修复 MCP 客户端只放行登录和账户列表，其他工具被误判为 Unknown 的问题
+            - 设备、照片、下载、备忘录、联系人、日历、头像等 17 个工具现在可以正常转发执行
+            - 账户权限、工具权限、会话校验继续由 Cirrus 桌面端 MCP bridge 统一执行
 
-            原生 iCloud 照片、设备与个人资料桌面客户端，支持 Windows、macOS、Linux。
-            构建未做 Apple 公证，macOS 可能显示 Gatekeeper 警告。
+            ### Fixes
 
-            ### Highlights
-
-            - Complete MCP integration with 19 tools, per-account and per-tool controls, and native authorization
-            - Multi-tab workspace that preserves search, filters, and selection state
-            - One-click MCP setup for Claude Code, Cursor, Codex, VS Code, Windsurf, and other clients
-            - English AMap tiles and English reverse-geocoded addresses alongside localized Chinese maps
-            - Complete workflows for devices, photos, downloads, notes, contacts, and calendar
-            - Refreshed About page, README copy, and simulated-data product screenshots
+            - Fixed the MCP client forwarding only login and account-list calls while rejecting every other tool as unknown
+            - The other 17 device, photo, download, note, contact, calendar, and avatar tools now execute through the bridge
+            - Account access, tool access, and session checks remain enforced by the Cirrus desktop MCP bridge
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
