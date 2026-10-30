@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowLeft, ChevronDown, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, GitBranch, HardDrive, Images, Info, KeyRound, MapPin, Monitor, Moon, NotebookPen, Palette, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
+import { ArrowLeft, ChevronDown, CircleCheck, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, GitBranch, HardDrive, Images, Info, KeyRound, MapPin, Monitor, Moon, NotebookPen, Palette, RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import McpIntegrationSettings from "@/components/mcp/McpIntegrationSettings.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
 import DownloadSettingsPanel from "@/components/photos/DownloadSettingsPanel.vue";
 import { Button } from "@/components/ui/button";
+import Spinner from "@/components/ui/Spinner.vue";
 import { Input } from "@/components/ui/input";
 import { StorageKey, type ThemeMode } from "@/constants";
 import { openExternal } from "@/lib/api";
@@ -15,6 +16,7 @@ import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
+import { useUpdaterStore } from "@/stores/updater";
 
 const props = withDefaults(
   defineProps<{
@@ -34,6 +36,7 @@ const props = withDefaults(
 const emit = defineEmits<{ back: [] }>();
 const theme = useThemeStore();
 const locale = useLocaleStore();
+const updater = useUpdaterStore();
 const query = ref("");
 const active = ref(props.initialCategory);
 const closeBehavior = ref(readStored(StorageKey.closeBehavior) === "quit" ? "quit" : "background");
@@ -122,6 +125,31 @@ function toggleMapCredential(fieldId: string): void {
 
 function openMapConsole(): void {
   void openExternal(mapProvider.value.consoleUrl).catch(() => toast.error(locale.t("settings.mapConsoleOpenFailed")));
+}
+const updateReleaseDate = computed(() => {
+  const raw = updater.info?.date;
+  if (!raw) return null;
+  const date = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return raw;
+  return new Intl.DateTimeFormat(locale.locale, { dateStyle: "medium", timeZone: "UTC" }).format(date);
+});
+
+const updateProgressLabel = computed(() => (updater.progress === null ? locale.t("updates.progressUnknown") : locale.t("updates.progress", { percent: updater.progress })));
+
+function checkForUpdates(): void {
+  void updater.check();
+}
+
+function downloadUpdate(): void {
+  void updater.download();
+}
+
+function installUpdate(): void {
+  void updater.install();
+}
+
+function restartAfterUpdate(): void {
+  void updater.restart();
 }
 function openProjectGithub(): void {
   void openExternal("https://github.com/zhukj125/cirrus").catch(() => toast.error(locale.t("settings.aboutGithubOpenFailed")));
@@ -389,6 +417,84 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                 </div>
               </div>
             </dl>
+          </div>
+
+          <div class="overflow-hidden rounded-xl border border-border bg-card" data-testid="app-update-card">
+            <div class="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+              <div class="flex min-w-0 items-start gap-3">
+                <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><RefreshCw :size="17" /></span>
+                <div>
+                  <h3 class="text-sm font-semibold">{{ locale.t("updates.title") }}</h3>
+                  <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("updates.description") }}</p>
+                </div>
+              </div>
+              <Button type="button" variant="outline" size="sm" class="shrink-0" :disabled="updater.checking || updater.downloading || updater.installing" @click="checkForUpdates">
+                <Spinner v-if="updater.checking" :size="12" />
+                <RefreshCw v-else :size="13" />
+                {{ updater.checking ? locale.t("updates.checking") : locale.t("updates.check") }}
+              </Button>
+            </div>
+
+            <div class="space-y-4 p-5">
+              <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span
+                  >{{ locale.t("settings.version") }} <span class="tabular font-medium text-foreground">v{{ props.version }}</span></span
+                >
+                <span v-if="updateReleaseDate">{{ locale.t("updates.releaseDate", { date: updateReleaseDate }) }}</span>
+              </div>
+
+              <div v-if="updater.error" class="rounded-lg border border-destructive/25 bg-destructive/5 px-3.5 py-3 text-xs leading-5 text-destructive" role="alert">
+                {{ locale.t("updates.error", { error: updater.error }) }}
+              </div>
+
+              <div v-else-if="updater.checked && !updater.hasUpdate" class="flex items-center gap-2 rounded-lg border border-success/25 bg-success/5 px-3.5 py-3 text-sm text-success">
+                <CircleCheck :size="15" />
+                {{ locale.t("updates.upToDate") }}
+              </div>
+
+              <template v-if="updater.info">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{{ locale.t("updates.available") }}</span>
+                  <span class="text-sm font-semibold">{{ locale.t("updates.latestVersion", { version: updater.info.version }) }}</span>
+                </div>
+
+                <div>
+                  <p class="mb-1.5 text-xs font-medium text-muted-foreground">{{ locale.t("updates.notes") }}</p>
+                  <div class="max-h-44 overflow-y-auto rounded-lg bg-secondary/45 px-3.5 py-3 text-xs leading-5 whitespace-pre-line text-muted-foreground">{{ updater.info.body || locale.t("updates.noNotes") }}</div>
+                </div>
+
+                <div v-if="updater.downloading" class="space-y-2">
+                  <div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>{{ updateProgressLabel }}</span>
+                    <span class="tabular">{{ updater.progress === null ? "—" : `${updater.progress}%` }}</span>
+                  </div>
+                  <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                    <div class="h-full rounded-full bg-primary transition-[width] duration-200" :class="updater.progress === null ? 'w-1/3 animate-pulse' : ''" :style="updater.progress === null ? undefined : { width: `${updater.progress}%` }" />
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button v-if="updater.downloading" type="button" variant="outline" size="sm" @click="updater.cancelDownload()">
+                    {{ locale.t("updates.cancelDownload") }}
+                  </Button>
+                  <Button v-else-if="updater.installed" type="button" size="sm" :disabled="updater.installing" @click="restartAfterUpdate">
+                    <RotateCcw :size="13" />
+                    {{ locale.t("updates.restart") }}
+                  </Button>
+                  <Button v-else-if="updater.downloaded" type="button" size="sm" :disabled="updater.installing" @click="installUpdate">
+                    <Spinner v-if="updater.installing" :size="12" />
+                    <DownloadIcon v-else :size="13" />
+                    {{ updater.installing ? locale.t("updates.installing") : locale.t("updates.install") }}
+                  </Button>
+                  <Button v-else type="button" size="sm" @click="downloadUpdate">
+                    <DownloadIcon :size="13" />
+                    {{ locale.t("updates.download") }}
+                  </Button>
+                  <span v-if="updater.downloaded" class="text-xs text-success">{{ locale.t("updates.downloaded") }}</span>
+                  <span v-if="updater.installed" class="text-xs text-success">{{ locale.t("updates.installed") }}</span>
+                </div>
+              </template>
+            </div>
           </div>
 
           <div class="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-5">

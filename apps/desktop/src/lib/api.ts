@@ -10,6 +10,8 @@ import type {
   NotesListResult,
   AccountAvatar,
   AccountStoreSnapshot,
+  AppUpdateInfo,
+  AppUpdateProgressEvent,
   DeviceInfoResult,
   DownloadProgressEvent,
   LibraryTotal,
@@ -49,6 +51,30 @@ async function call<T>(command: string, payload?: unknown): Promise<T> {
   } catch (error) {
     throw new Error(describeError(error));
   }
+}
+
+export function appUpdateCheck(): Promise<AppUpdateInfo | null> {
+  return call<AppUpdateInfo | null>("app_update_check");
+}
+
+export function appUpdateDownload(): Promise<void> {
+  return call<void>("app_update_download");
+}
+
+export function appUpdateCancelDownload(): Promise<void> {
+  return call<void>("app_update_cancel_download");
+}
+
+export function appUpdateInstall(): Promise<void> {
+  return call<void>("app_update_install");
+}
+
+export function appUpdateRestart(): Promise<void> {
+  return call<void>("app_update_restart");
+}
+
+export function listenAppUpdateProgress(handler: (progress: AppUpdateProgressEvent) => void): Promise<UnlistenFn> {
+  return listen<AppUpdateProgressEvent>("app-update-progress", (event) => handler(event.payload));
 }
 
 export function runtimeInfo(): Promise<RuntimeInfo> {

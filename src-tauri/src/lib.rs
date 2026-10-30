@@ -6,6 +6,7 @@ pub mod mcp;
 pub mod mcp_clients;
 pub mod mcp_operations;
 pub mod state;
+pub mod update;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,6 +102,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = match app.path().app_data_dir() {
                 Ok(dir) => Arc::new(AppState::new(&dir)),
@@ -112,6 +114,7 @@ pub fn run() {
                 }
             };
             app.manage(Arc::clone(&state));
+            app.manage(update::PendingUpdateState::default());
 
             match setup_tray(app.handle()) {
                 Ok(menu) => {
@@ -127,6 +130,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            update::app_update_check,
+            update::app_update_download,
+            update::app_update_cancel_download,
+            update::app_update_install,
+            update::app_update_restart,
             commands::account::account_store_load,
             commands::account::account_store_save,
             commands::session::runtime_info,

@@ -93,6 +93,18 @@ export interface DownloadProgressEvent {
   totalBytes: number | null;
 }
 
+export interface AppUpdateInfo {
+  currentVersion: string;
+  version: string;
+  body: string | null;
+  date: string | null;
+}
+
+export interface AppUpdateProgressEvent {
+  downloaded: number;
+  total: number | null;
+}
+
 export interface RuntimeInfo {
   ttlMinutes: number;
   sessionLimit: number;

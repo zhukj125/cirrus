@@ -24,6 +24,7 @@ import { useAppStore } from "@/stores/app";
 import { useDownloadsStore } from "@/stores/downloads";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
+import { useUpdaterStore } from "@/stores/updater";
 import { devMockEnabled, mockDevicesResponse } from "@/dev/mock";
 import { isTrayAvailable, mcpAuthorize, mcpCancelLogin, mcpCompleteLogin, mcpPendingAuthorization, quitApp, setTrayLabels } from "@/lib/api";
 import { readStored, writeStored } from "@/lib/common/storage";
@@ -35,6 +36,7 @@ const store = useAppStore();
 
 const downloads = useDownloadsStore();
 const i18n = useLocaleStore();
+const updater = useUpdaterStore();
 
 useThemeStore();
 
@@ -335,6 +337,13 @@ async function refreshTrayAvailability(): Promise<void> {
   trayAvailable.value = inTauri && (await isTrayAvailable().catch(() => false));
 }
 
+async function checkForAvailableUpdate(): Promise<void> {
+  if (!inTauri || devMockEnabled) return;
+  const update = await updater.check();
+  if (!update) return;
+  const version = update.version.startsWith("v") ? update.version : `v${update.version}`;
+  toast.info(i18n.t("updates.availableToast", { version }), 8000);
+}
 async function syncTrayLabels(): Promise<void> {
   if (!trayAvailable.value) return;
   await setTrayLabels({
@@ -385,6 +394,7 @@ onMounted(async () => {
   try {
     mcpAuthorization.value = await mcpPendingAuthorization();
   } catch {}
+  void checkForAvailableUpdate();
   try {
     const window = getCurrentWindow();
     unlistenClose = await window.onCloseRequested(async (event) => {
