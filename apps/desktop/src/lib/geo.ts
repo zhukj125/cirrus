@@ -37,3 +37,16 @@ export function wgs84ToGcj02(lng: number, lat: number): [number, number] {
   dLng = (dLng * 180.0) / ((A / sqrtMagic) * Math.cos(radLat) * Math.PI);
   return [lng + dLng, lat + dLat];
 }
+export function gcj02ToWgs84(lng: number, lat: number): [number, number] {
+  if (outOfChina(lng, lat)) {
+    return [lng, lat];
+  }
+  let wgsLng = lng;
+  let wgsLat = lat;
+  for (let index = 0; index < 4; index += 1) {
+    const [convertedLng, convertedLat] = wgs84ToGcj02(wgsLng, wgsLat);
+    wgsLng -= convertedLng - lng;
+    wgsLat -= convertedLat - lat;
+  }
+  return [wgsLng, wgsLat];
+}

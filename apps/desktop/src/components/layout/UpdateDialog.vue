@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Download as DownloadIcon, Ext
 import { Button } from "@/components/ui/button";
 import { openExternal } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
-import { fetchAppReleases, isOlderVersion, type AppRelease } from "@/lib/updates/releases";
+import { fetchAppReleases, isOlderVersion, sanitizeReleaseBody, type AppRelease } from "@/lib/updates/releases";
 import { useLocaleStore } from "@/stores/locale";
 import { useUpdaterStore } from "@/stores/updater";
 
@@ -27,6 +27,7 @@ const historyError = ref<string | null>(null);
 const currentVersion = computed(() => updater.info?.currentVersion || props.currentVersion || "");
 const olderReleases = computed(() => releases.value.filter((release) => currentVersion.value && isOlderVersion(release.version, currentVersion.value)));
 const latestRelease = computed(() => releases.value[0] ?? null);
+const updateNotes = computed(() => sanitizeReleaseBody(updater.info?.body));
 const releaseUrl = computed(() => {
   const version = updater.info?.version;
   return version ? `https://github.com/zhukj125/cirrus/releases/tag/${version.replace(/^v/, "")}` : "https://github.com/zhukj125/cirrus/releases";
@@ -139,7 +140,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
           <div v-if="updater.info" class="mt-3 max-h-64 overflow-y-auto rounded-md border border-border bg-muted/30 p-3">
             <p class="mb-1.5 text-xs font-medium">{{ locale.t("updates.notes") }}</p>
-            <div class="text-xs leading-5 whitespace-pre-line text-muted-foreground">{{ updater.info.body || locale.t("updates.noNotes") }}</div>
+            <div class="text-xs leading-5 whitespace-pre-line text-muted-foreground">{{ updateNotes || locale.t("updates.noNotes") }}</div>
           </div>
 
           <div v-if="updater.downloading" class="mt-3 space-y-2 rounded-md border border-border bg-muted/30 p-3">

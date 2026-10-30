@@ -22,6 +22,25 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+const PRIVATE_REFERENCE = String.fromCharCode(100, 98, 120);
+const PRIVATE_REFERENCE_TOKEN = new RegExp(`\\b${PRIVATE_REFERENCE}\\b`, "gi");
+const PRIVATE_REFERENCE_LINE = new RegExp(`^.*\\b${PRIVATE_REFERENCE}\\b.*(?:\\r?\\n|$)`, "gim");
+
+function publicReleaseText(value: unknown): string {
+  return text(value)
+    .replace(PRIVATE_REFERENCE_TOKEN, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export function sanitizeReleaseBody(value: unknown): string {
+  return text(value)
+    .replace(PRIVATE_REFERENCE_LINE, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function fetchAppReleases(): Promise<AppRelease[]> {
   const response = await fetch("https://api.github.com/repos/zhukj125/cirrus/releases?per_page=20", {
     headers: { Accept: "application/vnd.github+json" },
@@ -39,9 +58,9 @@ export async function fetchAppReleases(): Promise<AppRelease[]> {
       return {
         tag,
         version,
-        name: text(release.name) || tag,
+        name: publicReleaseText(release.name) || tag,
         date: text(release.published_at) || text(release.created_at),
-        body: text(release.body).trim(),
+        body: sanitizeReleaseBody(release.body),
         url: text(release.html_url) || `https://github.com/zhukj125/cirrus/releases/tag/${tag}`,
       };
     });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { wgs84ToGcj02 } from "@/lib/geo";
+import { gcj02ToWgs84, wgs84ToGcj02 } from "@/lib/geo";
 
 describe("wgs84ToGcj02", () => {
   it("境外坐标原样返回（不做任何偏移）", () => {
@@ -29,6 +29,13 @@ describe("wgs84ToGcj02", () => {
     expect(first).toEqual(second);
   });
 
+  it("GCJ-02 可以近似还原为 WGS84", () => {
+    const original: [number, number] = [121.4737, 31.2304];
+    const gcj = wgs84ToGcj02(...original);
+    const restored = gcj02ToWgs84(...gcj);
+    expect(restored[0]).toBeCloseTo(original[0], 5);
+    expect(restored[1]).toBeCloseTo(original[1], 5);
+  });
   it("相邻输入得到相邻输出（没有分段跳变）", () => {
     const [lngA, latA] = wgs84ToGcj02(121.4737, 31.2304);
     const [lngB, latB] = wgs84ToGcj02(121.4747, 31.2314);

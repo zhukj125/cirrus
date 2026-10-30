@@ -455,7 +455,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.6'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
+        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.7'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
 
         <AppShell
           v-else-if="signedIn"
@@ -536,7 +536,7 @@ onUnmounted(() => {
 
     <DownloadManagerDialog v-if="downloads.dialogOpen" />
 
-    <UpdateDialog v-if="updateDialogOpen" :current-version="runtime?.version ?? '1.4.6'" @close="updateDialogOpen = false" />
+    <UpdateDialog v-if="updateDialogOpen" :current-version="runtime?.version ?? '1.4.7'" @close="updateDialogOpen = false" />
 
     <div v-if="mcpAuthorization" class="fixed inset-0 z-[4100] grid place-items-center bg-black/45 p-6 backdrop-blur-[2px]">
       <div class="w-full max-w-[460px] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcp-authorization-title" @keydown.esc="handleMcpAuthorization(false)">

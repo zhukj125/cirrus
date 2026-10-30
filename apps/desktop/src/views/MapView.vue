@@ -710,6 +710,7 @@ watch(
 
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
+  resolveAddresses();
 
   try {
     const AMap: AmapNamespace = await loadAmap();
@@ -755,8 +756,6 @@ onMounted(async () => {
     mapError.value = describeError(error);
     toast.error(mapError.value);
   }
-
-  resolveAddresses();
 
   pollTimer = window.setInterval(requestRefresh, REFRESH_INTERVAL);
 });

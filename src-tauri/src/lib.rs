@@ -135,6 +135,7 @@ pub fn run() {
             update::app_update_cancel_download,
             update::app_update_install,
             update::app_update_restart,
+            commands::geocode::reverse_geocode,
             commands::account::account_store_load,
             commands::account::account_store_save,
             commands::session::runtime_info,

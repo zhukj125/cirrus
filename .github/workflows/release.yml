@@ -81,29 +81,17 @@ jobs:
 
             ### 更新内容
 
-            - 新增应用内自动更新：检查版本、下载进度、安装与重启
-            - 设置页新增软件更新入口，支持查看版本说明
-            - MCP 设备列表返回高清设备图片，并在图片旁显示位置、状态和电量
-            - 设备坐标变化后会重新解析位置地址，不再永久缓存失败的地址结果
-            - 登录密码输入框新增显示/隐藏密码按钮
-            - 修复跨平台更新清单合并，发布前校验 Windows、macOS 和 Linux 更新产物
-            - Windows 更新安装前自动关闭 MCP sidecar，避免 cirrus-mcp.exe 文件占用
-            - 设备地址改用高德 JS API 逆地理编码，并在失败时回退到 REST 接口
-            - 右上角新增云下载更新图标、进度环与更新中心
-            - 更新中心支持更新日志、历史版本和统一下载入口
+            - 修复设备位置地址偶发不显示：后端优先解析，高德不可用时自动切换 OpenStreetMap
+            - 地图初始化不再阻塞地址查询，高德 JS 回调异常时会在超时后继续降级
+            - 设备坐标变化后会自动刷新地址详情
+            - 更新日志会过滤内部实现引用
 
             ### Highlights
 
-            - Added signed in-app updates with download progress, install, and restart
-            - Added update controls and release notes to Settings
-            - MCP device listings now include high-resolution artwork with location, status, and battery summaries
-            - Device addresses refresh when coordinates change, and failed lookups are retried correctly
-            - Added a password visibility toggle to the sign-in form
-            - Fixed cross-platform updater manifest merging and validate every platform before publishing
-            - Windows updates now stop the MCP sidecar before replacing files
-            - Device addresses now use the AMap JS Geocoder with a REST fallback
-            - Added a toolbar cloud update icon, progress ring, and update center
-            - Update center now includes changelog, version history, and a download-page action
+            - Fixed intermittent missing device addresses with backend-first lookup and OpenStreetMap fallback
+            - Map initialization no longer blocks address lookup; stalled AMap JS callbacks time out cleanly
+            - Device details now refresh when coordinates change
+            - Release notes now omit internal implementation references
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.

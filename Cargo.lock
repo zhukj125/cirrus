@@ -572,13 +572,14 @@ dependencies = [
 
 [[package]]
 name = "cirrus"
-version = "1.4.6"
+version = "1.4.7"
 dependencies = [
  "cirrus-core",
  "http-body-util",
  "hyper",
  "hyper-util",
  "log",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
@@ -595,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus-core"
-version = "1.4.6"
+version = "1.4.7"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -625,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "cirrus-mcp"
-version = "1.4.6"
+version = "1.4.7"
 dependencies = [
  "base64 0.22.1",
  "reqwest 0.12.28",

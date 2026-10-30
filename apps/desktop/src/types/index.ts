@@ -93,6 +93,19 @@ export interface DownloadProgressEvent {
   totalBytes: number | null;
 }
 
+export interface ReverseGeocodeRequest {
+  longitude: number;
+  latitude: number;
+  wgs84Longitude: number;
+  wgs84Latitude: number;
+  language: "zh" | "en";
+  amapKey?: string | null;
+}
+
+export interface ReverseGeocodeResult {
+  full: string;
+  short: string;
+}
 export interface AppUpdateInfo {
   currentVersion: string;
   version: string;

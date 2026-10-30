@@ -30,6 +30,8 @@ import type {
   PhotosStatus,
   PhotosTimeline,
   PlaySoundResult,
+  ReverseGeocodeRequest,
+  ReverseGeocodeResult,
   RuntimeInfo,
   SavedPhotoResult,
   SessionStateResponse,
@@ -53,6 +55,9 @@ async function call<T>(command: string, payload?: unknown): Promise<T> {
   }
 }
 
+export function reverseGeocodeBackend(request: ReverseGeocodeRequest): Promise<ReverseGeocodeResult | null> {
+  return call<ReverseGeocodeResult | null>("reverse_geocode", request);
+}
 export function appUpdateCheck(): Promise<AppUpdateInfo | null> {
   return call<AppUpdateInfo | null>("app_update_check");
 }

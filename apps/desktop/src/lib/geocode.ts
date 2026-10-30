@@ -1,4 +1,6 @@
 import { getAmapConfig, loadAmap } from "./amap";
+import { reverseGeocodeBackend } from "./api";
+import { gcj02ToWgs84 } from "./geo";
 
 export interface AddressInfo {
   full: string;
@@ -11,16 +13,6 @@ interface RegeoAddressComponent {
   district?: unknown;
   township?: unknown;
   streetNumber?: { street?: unknown; number?: unknown } | null;
-}
-
-interface RegeoResponse {
-  status?: string;
-  info?: string;
-  infocode?: string;
-  regeocode?: {
-    formatted_address?: string;
-    addressComponent?: RegeoAddressComponent;
-  };
 }
 
 interface AmapGeocoderInstance {
@@ -61,12 +53,6 @@ function buildAddressInfo(formattedAddress: unknown, addressComponent: RegeoAddr
   return full ? { full, short } : null;
 }
 
-function buildRestAddress(result: RegeoResponse, language: "zh" | "en"): AddressInfo | null {
-  const regeocode = result.regeocode;
-  if (result.status !== "1" || !regeocode) return null;
-  return buildAddressInfo(regeocode.formatted_address, regeocode.addressComponent, language);
-}
-
 function buildJsAddress(result: unknown, language: "zh" | "en"): AddressInfo | null {
   const regeocode = (result as AmapJsGeocodeResult | null)?.regeocode;
   if (!regeocode) return null;
@@ -97,32 +83,45 @@ async function geocoderConstructor(): Promise<AmapGeocoderConstructor> {
   return loaded;
 }
 
+const AMAP_JS_TIMEOUT_MS = 8_000;
+
 async function fetchAddressWithAmap(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
   const Geocoder = await geocoderConstructor();
   return new Promise((resolve) => {
-    const geocoder = new Geocoder({
-      city: "全国",
-      lang: language === "en" ? "en" : "zh_cn",
-    });
-    geocoder.getAddress(lnglat, (status, result) => {
-      resolve(status === "complete" ? buildJsAddress(result, language) : null);
-    });
+    let settled = false;
+    const finish = (info: AddressInfo | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(info);
+    };
+    const timer = window.setTimeout(() => finish(null), AMAP_JS_TIMEOUT_MS);
+    try {
+      const geocoder = new Geocoder({
+        city: "全国",
+        lang: language === "en" ? "en" : "zh_cn",
+      });
+      geocoder.getAddress(lnglat, (status, result) => {
+        finish(status === "complete" ? buildJsAddress(result, language) : null);
+      });
+    } catch {
+      finish(null);
+    }
   });
 }
 
-async function fetchAddressWithRest(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
-  const { key } = getAmapConfig();
-  if (!key) return null;
+async function fetchAddressWithBackend(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
   const [lng, lat] = lnglat;
-  const url = `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(key)}&location=${lng},${lat}&extensions=base&output=json&lang=${language}&langCode=${language === "en" ? "en" : "zh-Hans"}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-  if (!response.ok) return null;
-  const result = (await response.json()) as RegeoResponse;
-  if (result.status !== "1") {
-    console.warn("[GEO] AMap REST reverse geocoding failed", { info: result.info, infocode: result.infocode });
-    return null;
-  }
-  return buildRestAddress(result, language);
+  const [wgs84Lng, wgs84Lat] = gcj02ToWgs84(lng, lat);
+  const { key } = getAmapConfig();
+  return reverseGeocodeBackend({
+    longitude: lng,
+    latitude: lat,
+    wgs84Longitude: wgs84Lng,
+    wgs84Latitude: wgs84Lat,
+    language,
+    amapKey: key || null,
+  });
 }
 
 const cache = new Map<string, Promise<AddressInfo | null>>();
@@ -148,15 +147,16 @@ export function reverseGeocode(lnglat: [number, number], language: "zh" | "en" =
 
 async function fetchAddress(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
   try {
-    const info = await fetchAddressWithAmap(lnglat, language);
+    const info = await fetchAddressWithBackend(lnglat, language);
     if (info) return info;
   } catch (error) {
-    console.warn("[GEO] AMap JS reverse geocoding failed", error);
+    console.warn("[GEO] backend reverse geocoding failed", error);
   }
 
   try {
-    return await fetchAddressWithRest(lnglat, language);
-  } catch {
+    return await fetchAddressWithAmap(lnglat, language);
+  } catch (error) {
+    console.warn("[GEO] AMap JS reverse geocoding failed", error);
     return null;
   }
 }
