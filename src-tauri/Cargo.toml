@@ -1,6 +1,6 @@
 [package]
 name = "cirrus"
-description = "Cirrus · Find My devices and iCloud Photos (Rust + Tauri 2)"
+description = "Cirrus · iCloud desktop client (Rust + Tauri 2)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -4,7 +4,7 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "description": "Cirrus · Find My devices and iCloud Photos",
+  "description": "Cirrus · iCloud desktop client",
   "scripts": {
     "dev": "vite --config apps/desktop/vite.config.ts",
     "dev:tauri": "tauri dev",
