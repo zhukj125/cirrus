@@ -80,14 +80,18 @@ jobs:
 
             ### 更新内容
 
-            - MCP 设备列表现在直接返回高清 Base64 设备图片内容，不再只是图片 URL 文本
-            - 设备图片优先使用 Apple 3x 设备渲染图，失败时自动回退到列表图
+            - 新增应用内自动更新：检查版本、下载进度、安装与重启
+            - 设置页新增软件更新入口，支持查看版本说明
+            - MCP 设备列表返回高清设备图片，并在图片旁显示位置、状态和电量
+            - 设备坐标变化后会重新解析位置地址，不再永久缓存失败的地址结果
             - 登录密码输入框新增显示/隐藏密码按钮
 
             ### Highlights
 
-            - MCP device listings now return high-resolution Base64 image content instead of URL-only text
-            - Device artwork prefers Apple 3x renders with automatic fallback to list images
+            - Added signed in-app updates with download progress, install, and restart
+            - Added update controls and release notes to Settings
+            - MCP device listings now include high-resolution artwork with location, status, and battery summaries
+            - Device addresses refresh when coordinates change, and failed lookups are retried correctly
             - Added a password visibility toggle to the sign-in form
 
             Native iCloud desktop client for Windows, macOS, and Linux.
