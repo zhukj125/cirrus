@@ -19,6 +19,6 @@ describe("TitleBar updates", () => {
     });
     const button = wrapper.get('button[aria-label="Update available"]');
     expect(button.attributes("disabled")).toBeDefined();
-    expect(button.find("span.bg-primary").exists()).toBe(true);
+    expect(button.find("span.bg-danger-solid").exists()).toBe(true);
   });
 });

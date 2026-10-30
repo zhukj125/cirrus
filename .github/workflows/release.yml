@@ -89,6 +89,8 @@ jobs:
             - 修复跨平台更新清单合并，发布前校验 Windows、macOS 和 Linux 更新产物
             - Windows 更新安装前自动关闭 MCP sidecar，避免 cirrus-mcp.exe 文件占用
             - 设备地址改用高德 JS API 逆地理编码，并在失败时回退到 REST 接口
+            - 右上角新增云下载更新图标、进度环与更新中心
+            - 更新中心支持更新日志、历史版本和统一下载入口
 
             ### Highlights
 
@@ -100,6 +102,8 @@ jobs:
             - Fixed cross-platform updater manifest merging and validate every platform before publishing
             - Windows updates now stop the MCP sidecar before replacing files
             - Device addresses now use the AMap JS Geocoder with a REST fallback
+            - Added a toolbar cloud update icon, progress ring, and update center
+            - Update center now includes changelog, version history, and a download-page action
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.

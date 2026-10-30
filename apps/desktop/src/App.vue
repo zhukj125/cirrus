@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import AppShell from "@/components/layout/AppShell.vue";
 import AppTabBar from "@/components/layout/AppTabBar.vue";
 import TitleBar from "@/components/layout/TitleBar.vue";
+import UpdateDialog from "@/components/layout/UpdateDialog.vue";
 import DownloadManagerDialog from "@/components/photos/DownloadManagerDialog.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import Toaster from "@/components/ui/Toaster.vue";
@@ -337,12 +338,6 @@ async function refreshTrayAvailability(): Promise<void> {
   trayAvailable.value = inTauri && (await isTrayAvailable().catch(() => false));
 }
 
-function openUpdateSettings(): void {
-  if (view.value !== "settings") settingsReturnView = view.value;
-  settingsInitialCategory.value = "about";
-  store.goTo("settings");
-}
-
 async function checkForAvailableUpdate(): Promise<void> {
   if (!inTauri || devMockEnabled) return;
   const update = await updater.check();
@@ -351,24 +346,13 @@ async function checkForAvailableUpdate(): Promise<void> {
   toast.info(i18n.t("updates.availableToast", { version }), 8000);
 }
 
-async function handleTitleBarUpdate(): Promise<void> {
-  if (updater.checking) return;
-  if (updater.hasUpdate || updater.downloading || updater.downloaded || updater.installed) {
-    openUpdateSettings();
-    return;
+const updateDialogOpen = ref(false);
+
+function handleTitleBarUpdate(): void {
+  updateDialogOpen.value = true;
+  if (!updater.checking && !updater.hasUpdate && !updater.downloading && !updater.downloaded && !updater.installed) {
+    void updater.check();
   }
-  const update = await updater.check();
-  if (updater.error) {
-    toast.error(i18n.t("updates.error", { error: updater.error }));
-    return;
-  }
-  if (update) {
-    const version = update.version.startsWith("v") ? update.version : `v${update.version}`;
-    toast.info(i18n.t("updates.availableToast", { version }), 8000);
-    openUpdateSettings();
-    return;
-  }
-  toast.success(i18n.t("updates.upToDate"));
 }
 async function syncTrayLabels(): Promise<void> {
   if (!trayAvailable.value) return;
@@ -471,7 +455,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.5'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
+        <SettingsView v-else-if="view === 'settings'" :version="runtime?.version ?? '1.4.6'" :ttl-minutes="runtime?.ttlMinutes ?? null" :vault-enabled="runtime?.vaultEnabled ?? null" :initial-category="settingsInitialCategory" @back="toggleSettings" />
 
         <AppShell
           v-else-if="signedIn"
@@ -551,6 +535,8 @@ onUnmounted(() => {
     </div>
 
     <DownloadManagerDialog v-if="downloads.dialogOpen" />
+
+    <UpdateDialog v-if="updateDialogOpen" :current-version="runtime?.version ?? '1.4.6'" @close="updateDialogOpen = false" />
 
     <div v-if="mcpAuthorization" class="fixed inset-0 z-[4100] grid place-items-center bg-black/45 p-6 backdrop-blur-[2px]">
       <div class="w-full max-w-[460px] overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcp-authorization-title" @keydown.esc="handleMcpAuthorization(false)">

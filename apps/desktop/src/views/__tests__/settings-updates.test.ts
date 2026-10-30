@@ -4,7 +4,7 @@ import { createPinia } from "pinia";
 
 const api = vi.hoisted(() => ({
   check: vi.fn(async () => ({
-    currentVersion: "1.4.5",
+    currentVersion: "1.4.6",
     version: "1.5.0",
     body: "Signed release notes",
     date: "2026-10-30T00:00:00Z",
@@ -25,7 +25,7 @@ import SettingsView from "@/views/SettingsView.vue";
 
 describe("SettingsView updates", () => {
   it("checks for signed updates and shows release notes in About", async () => {
-    const wrapper = mount(SettingsView, { props: { initialCategory: "about", version: "1.4.5" }, global: { plugins: [createPinia()] } });
+    const wrapper = mount(SettingsView, { props: { initialCategory: "about", version: "1.4.6" }, global: { plugins: [createPinia()] } });
 
     const card = wrapper.get('[data-testid="app-update-card"]');
     expect(card.text()).toContain("Software update");

@@ -2,10 +2,11 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Monitor, Moon, RefreshCw, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
+import { Copy, Minus, Monitor, Moon, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
+import ToolbarUpdateIcon from "@/components/layout/ToolbarUpdateIcon.vue";
 import { openExternal } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
@@ -18,6 +19,8 @@ const props = withDefaults(
     showUpdate?: boolean;
     checkingUpdate?: boolean;
     updateAvailable?: boolean;
+    downloadingUpdate?: boolean;
+    updateProgress?: number | null;
     settingsActive?: boolean;
     contextLabel?: string | null;
   }>(),
@@ -27,6 +30,8 @@ const props = withDefaults(
     showUpdate: false,
     checkingUpdate: false,
     updateAvailable: false,
+    downloadingUpdate: false,
+    updateProgress: null,
     settingsActive: false,
     contextLabel: null,
   },
@@ -102,8 +107,8 @@ onUnmounted(() => unlisten?.());
         :title="locale.t(props.updateAvailable ? 'titlebar.updateAvailable' : props.checkingUpdate ? 'titlebar.checkingUpdates' : 'titlebar.checkUpdates')"
         @click="emit('check-update')"
       >
-        <RefreshCw :size="14" :class="props.checkingUpdate ? 'animate-spin' : ''" />
-        <span v-if="props.updateAvailable" class="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-primary ring-2 ring-sidebar" />
+        <ToolbarUpdateIcon :loading="props.checkingUpdate" :downloading="props.downloadingUpdate" :progress="props.updateProgress" />
+        <span v-if="props.updateAvailable" class="absolute top-1.5 right-1.5 size-2 rounded-full bg-danger-solid ring-2 ring-sidebar" />
       </button>
       <button type="button" class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="locale.t('titlebar.github')" :title="locale.t('titlebar.github')" @click="openGithub">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
