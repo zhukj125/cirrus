@@ -73,6 +73,7 @@ Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的�
 - iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用。
 - 19 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、下载、备忘录、联系人、日历和头像图片。
 - 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口。
+- MCP 调用历史保存在 SQLite，可在 **设置 → MCP → 历史** 查看；请求和响应会截断并脱敏，不保存令牌或图片 Base64。
 - Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端。
 - 两种传输都只监听本机回环地址，并使用每次启动随机生成的 Bearer Token。
 
@@ -134,6 +135,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 
 - 账号信息和下载任务保存在 SQLite 表中
 - 主题、语言、地图、下载、侧栏、页签、MCP 开关和权限等应用设置保存在 SQLite 的 `app_state` 表
+- MCP 工具调用历史保存在 SQLite 的 `mcp_call_history` 表，默认保留最近 1000 条
 - 前端 `localStorage` 只作为启动时的同步缓存；旧版本 localStorage 和 JSON 配置会自动迁移到 SQLite
 - 头像缓存在本地
 - Cookie 和令牌先经过 AES-256-GCM 加密，再写入 SQLite

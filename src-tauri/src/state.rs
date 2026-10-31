@@ -9,11 +9,13 @@ use cirrus_core::{database_path, now_millis, SessionManager, SessionVault, MAX_S
 use crate::download_tasks::DownloadTaskRepository;
 use crate::download_transfers::DownloadTransferRegistry;
 use crate::mcp::McpService;
+use crate::mcp_history::McpHistoryRepository;
 
 pub struct AppState {
     pub sessions: SessionManager,
 
     pub mcp: Arc<McpService>,
+    pub mcp_history: Arc<McpHistoryRepository>,
 
     pub download_tasks: DownloadTaskRepository,
 
@@ -37,6 +39,7 @@ impl AppState {
         Self {
             sessions: SessionManager::new(None, Some(Arc::new(vault))),
             mcp: Arc::new(McpService::new(Some(data_dir))),
+            mcp_history: Arc::new(McpHistoryRepository::new(Some(data_dir))),
             download_tasks: DownloadTaskRepository::new(Some(data_dir)),
             download_limiter: DownloadRateLimiter::new(0),
             download_transfers: DownloadTransferRegistry::default(),
@@ -53,6 +56,7 @@ impl AppState {
         Self {
             sessions: SessionManager::new(None, None),
             mcp: Arc::new(McpService::new(None)),
+            mcp_history: Arc::new(McpHistoryRepository::new(None)),
             download_tasks: DownloadTaskRepository::new(None),
             download_limiter: DownloadRateLimiter::new(0),
             download_transfers: DownloadTransferRegistry::default(),

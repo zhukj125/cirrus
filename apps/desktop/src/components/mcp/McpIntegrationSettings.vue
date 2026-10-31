@@ -1,23 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Check, Copy, Globe, PlugZap, RefreshCw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
+import { Check, Clock3, Copy, Globe, PlugZap, RefreshCw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
 
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { mcpAccounts, mcpClients, mcpInfo, mcpInstallClient, mcpRemoveClient, mcpSetAccountEnabled, mcpSetEnabled, mcpSetToolEnabled, mcpToolAccess } from "@/lib/api";
+import { mcpAccounts, mcpCallHistory, mcpClearCallHistory, mcpClients, mcpInfo, mcpInstallClient, mcpRemoveClient, mcpSetAccountEnabled, mcpSetEnabled, mcpSetToolEnabled, mcpToolAccess } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
-import type { McpAccountInfo, McpClientInfo, McpInfo } from "@/types";
+import type { McpAccountInfo, McpCallHistoryEntry, McpClientInfo, McpInfo } from "@/types";
 
-type ManagementTab = "access" | "permissions";
+type ManagementTab = "access" | "permissions" | "history";
 
 const locale = useLocaleStore();
 const info = ref<McpInfo | null>(null);
 const clients = ref<McpClientInfo[]>([]);
 const accounts = ref<McpAccountInfo[]>([]);
 const disabledTools = ref<string[]>([]);
+const callHistory = ref<McpCallHistoryEntry[]>([]);
 const loading = ref(true);
+const historyLoading = ref(false);
+const historyClearing = ref(false);
 const bridgeSaving = ref(false);
 const clientSaving = ref<string | null>(null);
 const accountSaving = ref<string | null>(null);
@@ -84,16 +87,56 @@ const bridgeStatus = computed(() => {
 async function loadAll(): Promise<void> {
   loading.value = true;
   try {
-    const [nextInfo, nextClients, nextAccounts, nextToolAccess] = await Promise.all([mcpInfo(), mcpClients(), mcpAccounts(), mcpToolAccess()]);
+    const [nextInfo, nextClients, nextAccounts, nextToolAccess, nextHistory] = await Promise.all([mcpInfo(), mcpClients(), mcpAccounts(), mcpToolAccess(), mcpCallHistory()]);
     info.value = nextInfo;
     clients.value = nextClients;
     accounts.value = nextAccounts;
     disabledTools.value = [...nextToolAccess.disabledTools];
+    callHistory.value = nextHistory;
     if (!nextClients.some((client) => client.id === selectedClientId.value)) selectedClientId.value = nextClients[0]?.id ?? "claude";
   } catch (error) {
     toast.error(locale.t("settings.mcpLoadFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
   } finally {
     loading.value = false;
+  }
+}
+
+async function refreshHistory(): Promise<void> {
+  if (historyLoading.value) return;
+  historyLoading.value = true;
+  try {
+    callHistory.value = await mcpCallHistory();
+  } catch (error) {
+    toast.error(locale.t("settings.mcpHistoryLoadFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function clearHistory(): Promise<void> {
+  if (historyClearing.value) return;
+  historyClearing.value = true;
+  try {
+    await mcpClearCallHistory();
+    callHistory.value = [];
+    toast.success(locale.t("settings.mcpHistoryCleared"));
+  } catch (error) {
+    toast.error(locale.t("settings.mcpHistoryClearFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
+  } finally {
+    historyClearing.value = false;
+  }
+}
+
+function historyTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString(locale.locale, { hour12: false });
+}
+
+function historyPayload(value: string | null): string {
+  if (!value) return "—";
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
   }
 }
 
@@ -257,6 +300,18 @@ onMounted(() => void loadAll());
           {{ locale.t("settings.mcpPermissionsTab") }}
           <span v-if="managementTab === 'permissions'" class="absolute inset-x-2.5 bottom-0 h-0.5 rounded-full bg-primary"></span>
         </button>
+        <button
+          type="button"
+          role="tab"
+          class="relative flex h-10 items-center gap-1.5 px-2.5 text-sm transition-colors"
+          :class="managementTab === 'history' ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'"
+          :aria-selected="managementTab === 'history'"
+          @click="managementTab = 'history'"
+        >
+          <Clock3 :size="14" />
+          {{ locale.t("settings.mcpHistoryTab") }}
+          <span v-if="managementTab === 'history'" class="absolute inset-x-2.5 bottom-0 h-0.5 rounded-full bg-primary"></span>
+        </button>
       </div>
 
       <div v-if="managementTab === 'access'" class="space-y-5 p-4">
@@ -388,7 +443,7 @@ onMounted(() => void loadAll());
         </div>
       </div>
 
-      <div v-else class="space-y-5 p-4">
+      <div v-else-if="managementTab === 'permissions'" class="space-y-5 p-4">
         <div class="grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
           <div>
             <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpAccounts") }}</p>
@@ -446,6 +501,59 @@ onMounted(() => void loadAll());
         <div class="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
           <ShieldCheck :size="14" class="mt-0.5 shrink-0" />
           <span>{{ locale.t("settings.mcpLoginOnly") }}</span>
+        </div>
+      </div>
+
+      <div v-else class="space-y-4 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="text-sm font-medium">{{ locale.t("settings.mcpHistory") }}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ locale.t("settings.mcpHistoryDesc", { count: callHistory.length }) }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="h-7 px-2 text-xs" :disabled="historyLoading" @click="refreshHistory">
+              <RefreshCw :size="12" :class="historyLoading ? 'animate-spin' : ''" />
+              {{ locale.t("settings.mcpHistoryRefresh") }}
+            </Button>
+            <Button variant="outline" size="sm" class="h-7 px-2 text-xs text-destructive" :disabled="historyClearing || callHistory.length === 0" @click="clearHistory">
+              <Trash2 :size="12" />
+              {{ locale.t("settings.mcpHistoryClear") }}
+            </Button>
+          </div>
+        </div>
+
+        <div v-if="historyLoading && callHistory.length === 0" class="grid place-items-center rounded-md border border-dashed border-border px-3 py-10 text-xs text-muted-foreground">
+          <Spinner :size="18" />
+        </div>
+        <div v-else-if="callHistory.length === 0" class="rounded-md border border-dashed border-border px-3 py-10 text-center text-xs text-muted-foreground">
+          {{ locale.t("settings.mcpHistoryEmpty") }}
+        </div>
+        <div v-else class="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
+          <details v-for="entry in callHistory" :key="entry.id" class="group">
+            <summary class="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent/50">
+              <span class="size-2 shrink-0 rounded-full" :class="entry.success ? 'bg-success' : 'bg-destructive'"></span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-mono text-xs font-medium">{{ entry.toolName }}</span>
+                <span class="mt-0.5 block truncate text-2xs text-muted-foreground"> {{ entry.clientName ?? "MCP client" }}{{ entry.clientVersion ? ` · ${entry.clientVersion}` : "" }} </span>
+              </span>
+              <span class="shrink-0 text-right text-2xs text-muted-foreground">
+                <span class="block">{{ historyTime(entry.startedAt) }}</span>
+                <span class="block">{{ entry.durationMs }} ms</span>
+              </span>
+            </summary>
+            <div class="space-y-2 border-t border-border bg-muted/15 px-3 py-3 text-xs">
+              <p v-if="entry.accountKey" class="text-muted-foreground">{{ entry.accountKey }}</p>
+              <p v-if="entry.error" class="break-words text-destructive">{{ entry.error }}</p>
+              <details v-if="entry.requestJson">
+                <summary class="cursor-pointer font-medium">{{ locale.t("settings.mcpHistoryRequest") }}</summary>
+                <pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 font-mono text-2xs">{{ historyPayload(entry.requestJson) }}</pre>
+              </details>
+              <details v-if="entry.responseJson">
+                <summary class="cursor-pointer font-medium">{{ locale.t("settings.mcpHistoryResponse") }}</summary>
+                <pre class="mt-1 max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 font-mono text-2xs">{{ historyPayload(entry.responseJson) }}</pre>
+              </details>
+            </div>
+          </details>
         </div>
       </div>
     </section>

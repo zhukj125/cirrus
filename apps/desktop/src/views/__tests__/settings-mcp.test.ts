@@ -52,6 +52,22 @@ vi.mock("@/lib/api", () => ({
   mcpClients: vi.fn(async () => [client]),
   mcpInstallClient: vi.fn(async () => client),
   mcpRemoveClient: vi.fn(async () => ({ ...client, configured: false })),
+  mcpCallHistory: vi.fn(async () => [
+    {
+      id: "history-1",
+      toolName: "cirrus_list_devices",
+      accountKey: "dsid:111",
+      clientName: "Codex",
+      clientVersion: "1.0",
+      startedAt: 1_700_000_000_000,
+      durationMs: 42,
+      success: true,
+      error: null,
+      requestJson: '{"accountKey":"dsid:111"}',
+      responseJson: '{"deviceCount":1}',
+    },
+  ]),
+  mcpClearCallHistory: vi.fn(async () => undefined),
   mcpAccounts: vi.fn(async () => [
     { key: "dsid:111", appleId: "one@example.com", firstName: "One", lastName: null, lastUsedAt: 1, enabled: true, signedIn: true, avatarDataUrl: "data:image/jpeg;base64,avatar" },
     { key: "dsid:222", appleId: "two@example.com", firstName: "Two", lastName: null, lastUsedAt: 2, enabled: false, signedIn: true, avatarDataUrl: null },
@@ -90,5 +106,11 @@ describe("SettingsView MCP", () => {
 
     await wrapper.get('[aria-label="Toggle MCP access for two@example.com"]').trigger("click");
     expect(api.mcpSetAccountEnabled).toHaveBeenCalledWith("dsid:222", true);
+
+    const historyTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes("History"));
+    expect(historyTab).toBeDefined();
+    await historyTab!.trigger("click");
+    expect(wrapper.text()).toContain("cirrus_list_devices");
+    expect(wrapper.text()).toContain("Codex");
   });
 });

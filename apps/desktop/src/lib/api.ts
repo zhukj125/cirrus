@@ -20,6 +20,7 @@ import type {
   McpAccountSummary,
   McpAuthorizationRequest,
   McpAuthorizeResponse,
+  McpCallHistoryEntry,
   McpClientInfo,
   McpInfo,
   McpToolAccessSettings,
@@ -135,6 +136,14 @@ export function mcpCompleteLogin(payload: { requestId: string; sessionId: string
 
 export function mcpCancelLogin(requestId: string): Promise<void> {
   return call<void>("mcp_cancel_login", { requestId });
+}
+
+export function mcpCallHistory(): Promise<McpCallHistoryEntry[]> {
+  return call<McpCallHistoryEntry[]>("mcp_call_history");
+}
+
+export function mcpClearCallHistory(): Promise<void> {
+  return call<void>("mcp_clear_call_history");
 }
 
 export async function quitApp(): Promise<void> {

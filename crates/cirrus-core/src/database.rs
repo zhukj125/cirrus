@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::AppResult;
 
 pub const DATABASE_FILE_NAME: &str = "cirrus.db";
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS accounts (
@@ -53,6 +53,22 @@ CREATE TABLE IF NOT EXISTS download_tasks (
     tasks_json TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mcp_call_history (
+    id TEXT PRIMARY KEY NOT NULL,
+    tool_name TEXT NOT NULL,
+    account_key TEXT,
+    client_name TEXT,
+    client_version TEXT,
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    success INTEGER NOT NULL,
+    error TEXT,
+    request_json TEXT,
+    response_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_call_history_started ON mcp_call_history(started_at DESC);
 "#;
 
 pub fn database_path(data_dir: &Path) -> PathBuf {
@@ -126,9 +142,9 @@ mod tests {
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0)).expect("read version");
         assert_eq!(version, SCHEMA_VERSION);
         let tables: i64 = connection
-            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('accounts', 'account_avatars', 'app_state', 'session_secrets', 'trusted_browsers', 'download_tasks')", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('accounts', 'account_avatars', 'app_state', 'session_secrets', 'trusted_browsers', 'download_tasks', 'mcp_call_history')", [], |row| row.get(0))
             .expect("count tables");
-        assert_eq!(tables, 6);
+        assert_eq!(tables, 7);
         drop(connection);
         let _ = std::fs::remove_dir_all(dir);
     }

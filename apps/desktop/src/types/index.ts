@@ -142,6 +142,20 @@ export interface McpAuthorizationRequest {
   expiresInSeconds: number;
 }
 
+export interface McpCallHistoryEntry {
+  id: string;
+  toolName: string;
+  accountKey: string | null;
+  clientName: string | null;
+  clientVersion: string | null;
+  startedAt: number;
+  durationMs: number;
+  success: boolean;
+  error: string | null;
+  requestJson: string | null;
+  responseJson: string | null;
+}
+
 export interface McpAccountSummary {
   accountKey: string;
   appleId: string;

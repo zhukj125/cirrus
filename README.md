@@ -73,6 +73,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 - Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
 - 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images.
 - Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
+- MCP call history is stored in SQLite and available under **Settings → MCP → History**; requests and responses are bounded and redacted, with no tokens or image Base64 stored.
 - Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
 - Both transports are loopback-only and use a per-run random bearer token.
 
@@ -134,6 +135,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 
 - Account metadata and download tasks live in SQLite tables.
 - Theme, language, map, download, sidebar, tab, MCP enabled state, and access policies live in the SQLite `app_state` table.
+- MCP tool call history lives in the SQLite `mcp_call_history` table and keeps the latest 1000 entries by default.
 - Frontend `localStorage` is only a startup cache; legacy localStorage and JSON settings are migrated into SQLite automatically.
 - Cached avatars are stored locally.
 - Session cookies and tokens are encrypted with AES-256-GCM before being written to SQLite.

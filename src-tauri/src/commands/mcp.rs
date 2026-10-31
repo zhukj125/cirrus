@@ -5,6 +5,7 @@ use tauri::{AppHandle, State};
 use crate::account_store::{AccountStoreRepository, AccountStoreSnapshot};
 use crate::mcp::{McpAccountSummary, McpAuthorizationEvent, McpAuthorizeResponse, McpInfo, McpToolAccessSettings};
 use crate::mcp_clients::{self, McpClientInfo};
+use crate::mcp_history::McpCallHistoryEntry;
 use crate::state::AppState;
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
@@ -177,4 +178,14 @@ pub async fn mcp_complete_login(
 #[tauri::command]
 pub async fn mcp_cancel_login(app: AppHandle, state: SharedState<'_>, payload: McpCancelRequest) -> Result<(), String> {
     state.inner().mcp.cancel_login(&payload.request_id, &app).await
+}
+
+#[tauri::command]
+pub fn mcp_call_history(state: SharedState<'_>) -> Result<Vec<McpCallHistoryEntry>, String> {
+    state.mcp_history.list(200).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn mcp_clear_call_history(state: SharedState<'_>) -> Result<(), String> {
+    state.mcp_history.clear().map_err(|error| error.to_string())
 }

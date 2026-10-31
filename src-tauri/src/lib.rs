@@ -4,6 +4,7 @@ pub mod download_tasks;
 pub mod download_transfers;
 pub mod mcp;
 pub mod mcp_clients;
+pub mod mcp_history;
 pub mod mcp_operations;
 pub mod state;
 pub mod update;
@@ -147,6 +148,8 @@ pub fn run() {
             commands::mcp::mcp_authorize,
             commands::mcp::mcp_complete_login,
             commands::mcp::mcp_cancel_login,
+            commands::mcp::mcp_call_history,
+            commands::mcp::mcp_clear_call_history,
             commands::mcp::mcp_tool_access,
             commands::mcp::mcp_set_tool_enabled,
             commands::mcp::mcp_clients,

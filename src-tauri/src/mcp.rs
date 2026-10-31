@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cirrus_core::{load_app_state_json, save_app_state_json};
 use http_body_util::{BodyExt, Full};
@@ -21,6 +21,7 @@ use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use crate::account_store::AccountStoreRepository;
+use crate::mcp_history::McpCallHistoryEntry;
 use crate::state::AppState;
 
 pub const LOGIN_TOOL: &str = "cirrus_login";
@@ -776,27 +777,6 @@ async fn handle_call(
         );
     }
     let arguments = payload.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    if (tool == LOGIN_TOOL || tool == LIST_ACCOUNTS_TOOL)
-        && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
-    {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "ok": false, "error": format!("{tool} does not accept arguments") }),
-        );
-    }
-    if tool == LIST_ACCOUNTS_TOOL {
-        return match service.visible_accounts() {
-            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
-            Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
-        };
-    }
-    if tool != LOGIN_TOOL {
-        return match crate::mcp_operations::call_tool(tool, &arguments, &app_state, &service, &app).await {
-            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
-            Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
-        };
-    }
-
     let client_name = payload
         .get("client")
         .and_then(|value| value.get("name"))
@@ -806,6 +786,51 @@ async fn handle_call(
         .to_string();
     let client_version =
         payload.get("client").and_then(|value| value.get("version")).and_then(Value::as_str).map(ToOwned::to_owned);
+    let started_at = Instant::now();
+    let started_ms = cirrus_core::now_millis();
+    if (tool == LOGIN_TOOL || tool == LIST_ACCOUNTS_TOOL)
+        && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
+    {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": format!("{tool} does not accept arguments") }),
+        );
+    }
+    if tool == LIST_ACCOUNTS_TOOL {
+        let result =
+            service.visible_accounts().and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()));
+        record_mcp_call_history(
+            &app_state,
+            tool,
+            &arguments,
+            &client_name,
+            client_version.as_deref(),
+            started_ms,
+            started_at,
+            &result,
+        );
+        return match result {
+            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
+            Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
+        };
+    }
+    if tool != LOGIN_TOOL {
+        let result = crate::mcp_operations::call_tool(tool, &arguments, &app_state, &service, &app).await;
+        record_mcp_call_history(
+            &app_state,
+            tool,
+            &arguments,
+            &client_name,
+            client_version.as_deref(),
+            started_ms,
+            started_at,
+            &result,
+        );
+        return match result {
+            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
+            Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
+        };
+    }
 
     let request_id = Uuid::new_v4().to_string();
     let (approval_tx, approval_rx) = oneshot::channel();
@@ -833,7 +858,7 @@ async fn handle_call(
         McpAuthorizationEvent {
             request_id: request_id.clone(),
             client_name: client_name.clone(),
-            client_version,
+            client_version: client_version.clone(),
             tool: LOGIN_TOOL.to_string(),
             expires_in_seconds: AUTHORIZATION_TIMEOUT.as_secs(),
         },
@@ -889,8 +914,49 @@ async fn handle_call(
     } else {
         log::info!("[MCP] sign-in request completed successfully");
     }
-    let _ = app_state;
-    json_response(StatusCode::OK, json!({ "ok": true, "result": outcome }))
+    let result = serde_json::to_value(&outcome).map_err(|error| error.to_string());
+    record_mcp_call_history(
+        &app_state,
+        tool,
+        &arguments,
+        &client_name,
+        client_version.as_deref(),
+        started_ms,
+        started_at,
+        &result,
+    );
+    match result {
+        Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
+        Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
+    }
+}
+
+fn record_mcp_call_history(
+    state: &AppState,
+    tool: &str,
+    arguments: &Value,
+    client_name: &str,
+    client_version: Option<&str>,
+    started_at: i64,
+    started: Instant,
+    result: &Result<Value, String>,
+) {
+    let entry = McpCallHistoryEntry {
+        id: Uuid::new_v4().to_string(),
+        tool_name: tool.to_string(),
+        account_key: arguments.get("accountKey").and_then(Value::as_str).map(ToOwned::to_owned),
+        client_name: Some(client_name.to_string()),
+        client_version: client_version.map(ToOwned::to_owned),
+        started_at,
+        duration_ms: started.elapsed().as_millis() as i64,
+        success: result.is_ok(),
+        error: result.as_ref().err().cloned(),
+        request_json: Some(arguments.to_string()),
+        response_json: result.as_ref().ok().map(Value::to_string),
+    };
+    if let Err(error) = state.mcp_history.record(entry) {
+        log::warn!("[MCP] could not save call history: {error}");
+    }
 }
 
 fn show_main_window(app: &AppHandle) {
