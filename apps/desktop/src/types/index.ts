@@ -104,6 +104,7 @@ export interface ReverseGeocodeResult {
   full: string;
   short: string;
 }
+
 export interface AppUpdateInfo {
   currentVersion: string;
   version: string;

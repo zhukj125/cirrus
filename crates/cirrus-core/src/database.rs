@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
 
 use crate::AppResult;
 
@@ -76,6 +78,36 @@ pub fn open_database(path: &Path) -> AppResult<Connection> {
     connection.execute_batch(SCHEMA)?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(connection)
+}
+
+pub fn load_app_state_json<T: DeserializeOwned>(data_dir: &Path, key: &str) -> AppResult<Option<T>> {
+    let connection = open_database(&database_path(data_dir))?;
+    let value = connection
+        .query_row("SELECT value_json FROM app_state WHERE key = ?1", [key], |row| row.get::<_, String>(0))
+        .optional()?;
+    value
+        .map(|value| serde_json::from_str::<T>(&value).map_err(|error| crate::AppError::other(error.to_string())))
+        .transpose()
+}
+
+pub fn load_app_state_value(data_dir: &Path, key: &str) -> AppResult<Option<Value>> {
+    load_app_state_json::<Value>(data_dir, key)
+}
+
+pub fn save_app_state_json<T: Serialize>(data_dir: &Path, key: &str, value: &T) -> AppResult<()> {
+    let connection = open_database(&database_path(data_dir))?;
+    let value = serde_json::to_string(value).map_err(|error| crate::AppError::other(error.to_string()))?;
+    connection.execute(
+        "INSERT INTO app_state (key, value_json) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
+        [key, value.as_str()],
+    )?;
+    Ok(())
+}
+
+pub fn delete_app_state_value(data_dir: &Path, key: &str) -> AppResult<()> {
+    let connection = open_database(&database_path(data_dir))?;
+    connection.execute("DELETE FROM app_state WHERE key = ?1", [key])?;
+    Ok(())
 }
 
 #[cfg(test)]

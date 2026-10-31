@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use cirrus_core::{load_app_state_json, save_app_state_json};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Bytes};
 use hyper::header::{self, HeaderValue};
@@ -26,9 +27,12 @@ pub const LOGIN_TOOL: &str = "cirrus_login";
 pub const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const PORT_FILE: &str = "mcp-bridge-port";
 const TOKEN_FILE: &str = "mcp-bridge-token";
-const SETTINGS_FILE: &str = "mcp-settings.json";
-const ACCOUNT_ACCESS_FILE: &str = "mcp-account-access.json";
-const TOOL_ACCESS_FILE: &str = "mcp-tool-access.json";
+const LEGACY_SETTINGS_FILE: &str = "mcp-settings.json";
+const LEGACY_ACCOUNT_ACCESS_FILE: &str = "mcp-account-access.json";
+const LEGACY_TOOL_ACCESS_FILE: &str = "mcp-tool-access.json";
+const SETTINGS_KEY: &str = "mcp_settings";
+const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
+const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
@@ -205,6 +209,10 @@ pub struct McpService {
 impl McpService {
     pub fn new(data_dir: Option<&Path>) -> Self {
         let enabled = data_dir.map(load_enabled_setting).unwrap_or(false);
+        if let Some(data_dir) = data_dir {
+            let _ = load_account_access(data_dir);
+            let _ = load_tool_access(data_dir);
+        }
         Self {
             data_dir: data_dir.map(Path::to_path_buf),
             enabled: AtomicBool::new(enabled),
@@ -372,8 +380,7 @@ impl McpService {
         } else {
             settings.disabled_account_keys.insert(account_key.to_string());
         }
-        let value = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-        write_private_file(&data_dir.join(ACCOUNT_ACCESS_FILE), &value)
+        save_app_state_json(data_dir, ACCOUNT_ACCESS_KEY, &settings)
             .map_err(|error| format!("Could not save MCP account access: {error}"))
     }
 
@@ -396,8 +403,7 @@ impl McpService {
         } else {
             settings.disabled_tools.insert(tool.to_string());
         }
-        let value = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-        write_private_file(&data_dir.join(TOOL_ACCESS_FILE), &value)
+        save_app_state_json(data_dir, TOOL_ACCESS_KEY, &settings)
             .map_err(|error| format!("Could not save MCP tool access: {error}"))?;
         Ok(settings)
     }
@@ -965,17 +971,33 @@ pub fn account_key(apple_id: &str, dsid: Option<&str>) -> String {
 }
 
 fn load_tool_access(data_dir: &Path) -> McpToolAccessSettings {
-    std::fs::read_to_string(data_dir.join(TOOL_ACCESS_FILE))
+    if let Ok(Some(settings)) = load_app_state_json::<McpToolAccessSettings>(data_dir, TOOL_ACCESS_KEY) {
+        return settings;
+    }
+    let legacy_path = data_dir.join(LEGACY_TOOL_ACCESS_FILE);
+    let settings = std::fs::read_to_string(&legacy_path)
         .ok()
         .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if save_app_state_json(data_dir, TOOL_ACCESS_KEY, &settings).is_ok() {
+        let _ = std::fs::remove_file(legacy_path);
+    }
+    settings
 }
 
 fn load_account_access(data_dir: &Path) -> McpAccountAccessSettings {
-    std::fs::read_to_string(data_dir.join(ACCOUNT_ACCESS_FILE))
+    if let Ok(Some(settings)) = load_app_state_json::<McpAccountAccessSettings>(data_dir, ACCOUNT_ACCESS_KEY) {
+        return settings;
+    }
+    let legacy_path = data_dir.join(LEGACY_ACCOUNT_ACCESS_FILE);
+    let settings = std::fs::read_to_string(&legacy_path)
         .ok()
         .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if save_app_state_json(data_dir, ACCOUNT_ACCESS_KEY, &settings).is_ok() {
+        let _ = std::fs::remove_file(legacy_path);
+    }
+    settings
 }
 
 fn mask_apple_id(apple_id: &str) -> String {
@@ -998,31 +1020,29 @@ pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
     Some(dir.join(file_name))
 }
 
-fn settings_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(SETTINGS_FILE)
-}
-
 fn load_enabled_setting(data_dir: &Path) -> bool {
-    let path = settings_path(data_dir);
-    std::fs::read_to_string(path)
+    if let Ok(Some(settings)) = load_app_state_json::<McpSettings>(data_dir, SETTINGS_KEY) {
+        return settings.enabled;
+    }
+    let legacy_path = data_dir.join(LEGACY_SETTINGS_FILE);
+    let settings = std::fs::read_to_string(&legacy_path)
         .ok()
         .and_then(|value| serde_json::from_str::<McpSettings>(&value).ok())
-        .map(|settings| settings.enabled)
-        .unwrap_or(true)
+        .unwrap_or(McpSettings { enabled: true });
+    if save_app_state_json(data_dir, SETTINGS_KEY, &settings).is_ok() {
+        let _ = std::fs::remove_file(legacy_path);
+    }
+    settings.enabled
 }
 
 fn save_enabled_setting(data_dir: Option<&Path>, enabled: bool) {
     let Some(data_dir) = data_dir else {
         return;
     };
-    if let Err(error) = std::fs::create_dir_all(data_dir) {
-        log::warn!("[MCP] could not create the app data directory: {error}");
-        return;
-    }
-    let value = serde_json::to_vec_pretty(&McpSettings { enabled }).unwrap_or_default();
-    if let Err(error) = write_private_file(&settings_path(data_dir), &value) {
+    if let Err(error) = save_app_state_json(data_dir, SETTINGS_KEY, &McpSettings { enabled }) {
         log::warn!("[MCP] could not save the MCP setting: {error}");
     }
+    let _ = std::fs::remove_file(data_dir.join(LEGACY_SETTINGS_FILE));
 }
 
 fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {

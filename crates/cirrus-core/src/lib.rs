@@ -12,7 +12,10 @@ pub mod session;
 pub mod session_manager;
 
 pub use cookies::SharedCookieJar;
-pub use database::{database_path, open_database, DATABASE_FILE_NAME};
+pub use database::{
+    database_path, delete_app_state_value, load_app_state_json, load_app_state_value, open_database,
+    save_app_state_json, DATABASE_FILE_NAME,
+};
 pub use error::{AppError, AppResult};
 pub use models::*;
 pub use persistence::{SessionSnapshot, SessionVault};

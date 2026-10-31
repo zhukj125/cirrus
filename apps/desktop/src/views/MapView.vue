@@ -708,7 +708,6 @@ watch(
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
   resolveAddresses();
-
   try {
     const AMap: AmapNamespace = await loadAmap();
 

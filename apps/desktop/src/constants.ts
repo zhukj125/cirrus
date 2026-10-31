@@ -26,6 +26,7 @@ export const StorageKey = {
   mapProvider: "cirrus.mapProvider",
   amapKey: "cirrus.amapKey",
   amapSecurityCode: "cirrus.amapSecurityCode",
+  amapWebServiceKey: "cirrus.amapWebServiceKey",
   photosView: "cirrus.photosView",
   workspaceTabs: "cirrus.workspaceTabs",
 } as const;

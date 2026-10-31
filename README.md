@@ -72,6 +72,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 - Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder.
 - Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
 - 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images.
+- Device results include coordinates, AMap reverse-geocoded addresses, and device artwork; address lookup uses the locally stored AMap Web Service key.
 - Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
 - Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
 - Both transports are loopback-only and use a per-run random bearer token.
@@ -104,7 +105,12 @@ For map rendering, copy `.env.example` to `.env.local` and set:
 ```env
 VITE_AMAP_KEY=
 VITE_AMAP_SECURITY_CODE=
+VITE_AMAP_WEB_SERVICE_KEY=
 ```
+
+`VITE_AMAP_KEY` is the Web JS API key used to render the map. Device and MCP address fields require a separate Web Service key. You can also enter it under **Settings → Maps**, where it is stored in local app data instead of an environment file.
+
+Map credentials are stored together in the app data SQLite database `cirrus.db` under the `cirrus.amap*` keys inside `app_state.desktop_settings`. On Windows the default database path is `%APPDATA%\com.cirrus\cirrus.db`; it contains the Web JS key, Security JS Code, and Web Service key.
 
 ## Usage
 
@@ -129,10 +135,13 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 ```
 
 - Account metadata and download tasks live in SQLite tables.
+- Theme, language, map, download, sidebar, tab, MCP enabled state, and access policies live in the SQLite `app_state` table.
+- Frontend `localStorage` is only a startup cache; legacy localStorage and JSON settings are migrated into SQLite automatically.
 - Cached avatars are stored locally.
 - Session cookies and tokens are encrypted with AES-256-GCM before being written to SQLite.
 - The encryption key is stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service.
 - Your password is never persisted.
+- MCP ports and per-run tokens remain runtime files rather than settings rows.
 
 ## Tech stack
 

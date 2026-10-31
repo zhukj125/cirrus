@@ -111,12 +111,12 @@ async function fetchAddressWithAmap(lnglat: [number, number], language: "zh" | "
 
 async function fetchAddressWithBackend(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
   const [lng, lat] = lnglat;
-  const { key } = getAmapConfig();
+  const { webServiceKey } = getAmapConfig();
   return reverseGeocodeBackend({
     longitude: lng,
     latitude: lat,
     language,
-    amapKey: key || null,
+    amapKey: webServiceKey || null,
   });
 }
 

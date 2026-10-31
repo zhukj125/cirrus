@@ -468,7 +468,7 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_list_devices",
                 "title": "List Find My devices",
-                "description": "List Apple devices, locations, battery status, and Find My state for an account. Device artwork is returned as MCP image content when available.",
+                "description": "List Apple devices, address-resolved locations, battery status, and Find My state for an account. Device artwork is returned as MCP image content when available.",
                 "inputSchema": account_schema(json!({})),
                 "annotations": { "title": "List Find My devices", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
@@ -722,6 +722,13 @@ fn device_summary_text(device: &Value) -> String {
         }
         None => "Location: unavailable".to_string(),
     };
+    let address = device
+        .get("location")
+        .and_then(|location| location.get("address"))
+        .and_then(|address| address.get("short").or_else(|| address.get("full")))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("Address: {value}"));
     let status = match device.get("deviceStatus").and_then(Value::as_str) {
         Some("200") => "Status: online",
         _ => "Status: offline",
@@ -731,7 +738,7 @@ fn device_summary_text(device: &Value) -> String {
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite())
         .map(|value| format!("Battery: {:.0}%", value.clamp(0.0, 1.0) * 100.0));
-    [Some(device_label(device)), Some(location), Some(status.to_string()), battery]
+    [Some(device_label(device)), Some(location), address, Some(status.to_string()), battery]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()

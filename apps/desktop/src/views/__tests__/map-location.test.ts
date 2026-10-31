@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from "pinia";
 const mapStyleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/amap", () => ({
+  getAmapConfig: vi.fn(() => ({ key: "test-key", securityCode: "" })),
   loadAmap: vi.fn(async () => ({
     Map: class {
       on() {}
