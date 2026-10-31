@@ -1,10 +1,22 @@
-use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, BufRead, Write},
+    net::{IpAddr, SocketAddr},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use axum::{
+    extract::{DefaultBodyLimit, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use reqwest::Url;
 use serde_json::{json, Value};
+use tokio::net::TcpListener;
 
 const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -12,6 +24,9 @@ const LOGIN_TOOL: &str = "cirrus_login";
 const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const CLIENT_NAME: &str = "cirrus-mcp";
 const MAX_DEVICE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
+const DEFAULT_HTTP_PORT: u16 = 5226;
+const DEFAULT_HTTP_PATH: &str = "/mcp";
 
 #[derive(Debug, Clone, Default)]
 struct ClientIdentity {
@@ -19,25 +34,56 @@ struct ClientIdentity {
     version: Option<String>,
 }
 
+enum RuntimeMode {
+    Stdio,
+    Http(HttpConfig),
+}
+
+struct HttpConfig {
+    bind_addr: SocketAddr,
+    path: String,
+    token: String,
+    allow_remote: bool,
+}
+
+#[derive(Clone)]
+struct HttpState {
+    token: Arc<str>,
+    allow_remote: bool,
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("cirrus-mcp");
         println!();
-        println!("MCP stdio bridge for Cirrus. Configure it as a stdio MCP server, not a browser URL.");
+        println!("MCP bridge for Cirrus.");
+        println!();
+        println!("Usage:");
+        println!("  cirrus-mcp                         Start stdio transport");
+        println!("  cirrus-mcp --http                  Start Streamable HTTP transport");
+        println!("  cirrus-mcp --http --http-port 5226 Start HTTP on a custom port");
+        println!();
+        println!("HTTP authentication uses CIRRUS_MCP_HTTP_TOKEN or CIRRUS_MCP_HTTP_TOKEN_FILE.");
         return;
     }
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("cirrus-mcp {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    if !args.is_empty() {
-        eprintln!("cirrus-mcp: unknown argument: {}", args[0]);
-        std::process::exit(2);
-    }
-
-    if let Err(error) = run_stdio().await {
+    let mode = match runtime_mode(args) {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("cirrus-mcp: {error}");
+            std::process::exit(2);
+        }
+    };
+    let result = match mode {
+        RuntimeMode::Stdio => run_stdio().await,
+        RuntimeMode::Http(config) => run_http(config).await,
+    };
+    if let Err(error) = result {
         eprintln!("cirrus-mcp: {error}");
         std::process::exit(1);
     }
@@ -64,6 +110,262 @@ async fn run_stdio() -> Result<(), String> {
         stdout.flush().map_err(|error| format!("could not flush stdout: {error}"))?;
     }
     Ok(())
+}
+
+fn runtime_mode(args: Vec<String>) -> Result<RuntimeMode, String> {
+    let mut transport = std::env::var("CIRRUS_MCP_TRANSPORT").ok();
+    let mut host = std::env::var("CIRRUS_MCP_HTTP_HOST").ok();
+    let mut port = std::env::var("CIRRUS_MCP_HTTP_PORT").ok();
+    let mut path = std::env::var("CIRRUS_MCP_HTTP_PATH").ok();
+    let mut token = std::env::var("CIRRUS_MCP_HTTP_TOKEN").ok();
+    let mut token_file = std::env::var_os("CIRRUS_MCP_HTTP_TOKEN_FILE").map(PathBuf::from);
+    let mut allow_remote = env_flag("CIRRUS_MCP_HTTP_ALLOW_REMOTE")?;
+    let mut explicit_allow_remote = false;
+
+    let mut arguments = args.into_iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--stdio" => transport = Some("stdio".into()),
+            "--http" => transport = Some("streamable-http".into()),
+            "--http-allow-remote" => {
+                allow_remote = true;
+                explicit_allow_remote = true;
+            }
+            "--transport" => transport = Some(required_argument(&mut arguments, "--transport")?),
+            "--http-host" => host = Some(required_argument(&mut arguments, "--http-host")?),
+            "--http-port" => port = Some(required_argument(&mut arguments, "--http-port")?),
+            "--http-path" => path = Some(required_argument(&mut arguments, "--http-path")?),
+            "--http-token" => token = Some(required_argument(&mut arguments, "--http-token")?),
+            "--http-token-file" => {
+                token_file = Some(PathBuf::from(required_argument(&mut arguments, "--http-token-file")?));
+            }
+            _ => {
+                if let Some(value) = argument.strip_prefix("--transport=") {
+                    transport = Some(value.into());
+                } else if let Some(value) = argument.strip_prefix("--http-host=") {
+                    host = Some(value.into());
+                } else if let Some(value) = argument.strip_prefix("--http-port=") {
+                    port = Some(value.into());
+                } else if let Some(value) = argument.strip_prefix("--http-path=") {
+                    path = Some(value.into());
+                } else if let Some(value) = argument.strip_prefix("--http-token=") {
+                    token = Some(value.into());
+                } else if let Some(value) = argument.strip_prefix("--http-token-file=") {
+                    token_file = Some(PathBuf::from(value));
+                } else {
+                    return Err(format!("unknown argument: {argument}"));
+                }
+            }
+        }
+    }
+
+    let transport = transport.unwrap_or_else(|| "stdio".into());
+    match transport.trim().to_ascii_lowercase().as_str() {
+        "stdio" => Ok(RuntimeMode::Stdio),
+        "http" | "streamable-http" | "streamable_http" => {
+            let host = host.unwrap_or_else(|| DEFAULT_HTTP_HOST.into());
+            let ip = host.parse::<IpAddr>().map_err(|_| "HTTP host must be an IP address".to_string())?;
+            let port = port
+                .unwrap_or_else(|| DEFAULT_HTTP_PORT.to_string())
+                .parse::<u16>()
+                .map_err(|_| "HTTP port must be a valid TCP port".to_string())?;
+            if port == 0 {
+                return Err("HTTP port must be between 1 and 65535".to_string());
+            }
+            let path = path.unwrap_or_else(|| DEFAULT_HTTP_PATH.into());
+            validate_http_path(&path)?;
+            if !ip.is_loopback() && !(allow_remote && explicit_allow_remote) {
+                return Err(
+                    "non-loopback HTTP binding requires CIRRUS_MCP_HTTP_ALLOW_REMOTE=1 and --http-allow-remote".into(),
+                );
+            }
+            if token.is_some() && token_file.is_some() {
+                return Err("set only one of HTTP token and token file".into());
+            }
+            let token = http_token(token, token_file)?;
+            Ok(RuntimeMode::Http(HttpConfig {
+                bind_addr: SocketAddr::new(ip, port),
+                path,
+                token,
+                allow_remote: !ip.is_loopback(),
+            }))
+        }
+        _ => Err("CIRRUS_MCP_TRANSPORT must be stdio or streamable-http".into()),
+    }
+}
+
+fn required_argument(arguments: &mut impl Iterator<Item = String>, name: &str) -> Result<String, String> {
+    arguments.next().filter(|value| !value.starts_with("--")).ok_or_else(|| format!("{name} requires a value"))
+}
+
+fn env_flag(name: &str) -> Result<bool, String> {
+    match std::env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" => Ok(true),
+            "0" | "false" | "no" | "" => Ok(false),
+            _ => Err(format!("{name} must be true or false")),
+        },
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8")),
+    }
+}
+
+fn validate_http_path(path: &str) -> Result<(), String> {
+    if path == "/" || !path.starts_with('/') || path.ends_with('/') || path.contains('?') || path.contains('#') {
+        return Err("HTTP path must be an absolute path such as /mcp".to_string());
+    }
+    Ok(())
+}
+
+fn http_token(token: Option<String>, token_file: Option<PathBuf>) -> Result<String, String> {
+    if let Some(token) = token {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("HTTP token must not be empty".to_string());
+        }
+        return Ok(token);
+    }
+    let path = token_file
+        .or_else(|| app_data_dir().map(|dir| dir.join("mcp-bridge-token")))
+        .ok_or_else(|| "HTTP token is not configured".to_string())?;
+    let token = std::fs::read_to_string(&path)
+        .map_err(|error| format!("could not read HTTP token from {}: {error}", path.display()))?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err("HTTP token file is empty".to_string());
+    }
+    Ok(token)
+}
+
+async fn run_http(config: HttpConfig) -> Result<(), String> {
+    let listener = TcpListener::bind(config.bind_addr)
+        .await
+        .map_err(|error| format!("could not bind HTTP service at {}: {error}", config.bind_addr))?;
+    let local_addr = listener.local_addr().map_err(|error| format!("could not read HTTP address: {error}"))?;
+    let state = HttpState { token: Arc::from(config.token), allow_remote: config.allow_remote };
+    let router = Router::new()
+        .route("/healthz", get(http_health))
+        .route(&config.path, post(http_message).get(http_stream).delete(http_delete).options(http_options))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+        .with_state(state);
+    eprintln!("cirrus-mcp Streamable HTTP listening on http://{local_addr}{}", config.path);
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+        .map_err(|error| format!("HTTP service failed: {error}"))
+}
+
+async fn http_health() -> Response {
+    with_http_headers(
+        Json(json!({
+            "status": "ok",
+            "transport": "streamable-http",
+            "version": env!("CARGO_PKG_VERSION")
+        }))
+        .into_response(),
+    )
+}
+
+async fn http_message(State(state): State<HttpState>, headers: HeaderMap, Json(payload): Json<Value>) -> Response {
+    if let Err(response) = authorize_http(&state, &headers) {
+        return with_http_headers(*response);
+    }
+    let mut client = ClientIdentity::default();
+    match handle_message(payload, &mut client).await {
+        Some(response) => http_json(response),
+        None => with_http_headers(StatusCode::ACCEPTED.into_response()),
+    }
+}
+
+async fn http_stream(State(state): State<HttpState>, headers: HeaderMap) -> Response {
+    if let Err(response) = authorize_http(&state, &headers) {
+        return with_http_headers(*response);
+    }
+    with_http_headers(
+        (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, HeaderValue::from_static("POST, DELETE, OPTIONS"))],
+            "Server-initiated SSE streams are not used by Cirrus MCP.",
+        )
+            .into_response(),
+    )
+}
+
+async fn http_delete(State(state): State<HttpState>, headers: HeaderMap) -> Response {
+    if let Err(response) = authorize_http(&state, &headers) {
+        return with_http_headers(*response);
+    }
+    with_http_headers(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn http_options() -> Response {
+    with_http_headers(StatusCode::NO_CONTENT.into_response())
+}
+
+fn authorize_http(state: &HttpState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+    if !state.allow_remote && !host_is_loopback(headers) {
+        return Err(Box::new(with_http_headers(
+            (StatusCode::FORBIDDEN, "MCP HTTP Host header is not allowed").into_response(),
+        )));
+    }
+    let candidate = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if token_matches(state.token.as_bytes(), candidate) {
+        Ok(())
+    } else {
+        Err(Box::new(with_http_headers(
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))],
+                "Unauthorized",
+            )
+                .into_response(),
+        )))
+    }
+}
+
+fn token_matches(expected: &[u8], candidate: &str) -> bool {
+    let candidate = candidate.as_bytes();
+    if expected.len() != candidate.len() {
+        return false;
+    }
+    expected.iter().zip(candidate).fold(0_u8, |difference, (left, right)| difference | (left ^ right)) == 0
+}
+
+fn host_is_loopback(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    let host = host.trim().to_ascii_lowercase();
+    host == "localhost"
+        || host == "127.0.0.1"
+        || host == "[::1]"
+        || host == "::1"
+        || host.starts_with("localhost:")
+        || host.starts_with("127.0.0.1:")
+        || host.starts_with("[::1]:")
+}
+
+fn http_json(value: Value) -> Response {
+    let mut response = Json(value).into_response();
+    response.headers_mut().insert("MCP-Protocol-Version", HeaderValue::from_static("2025-06-18"));
+    with_http_headers(response)
+}
+
+fn with_http_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Authorization, Content-Type, Accept, MCP-Protocol-Version"),
+    );
+    headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST, GET, DELETE, OPTIONS"));
+    response
 }
 
 async fn handle_line(line: &str, client: &mut ClientIdentity) -> Option<Value> {
@@ -343,11 +645,12 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity) -> 
     }
 
     match call_bridge(name, &arguments, client).await {
-        Ok(result) => {
-            let mut content = result_image_content(name, &result).await;
+        Ok(mut result) => {
+            let mut content = result_image_content(name, &mut result).await;
+            let text_result = result_without_inline_artwork(&result);
             content.push(json!({
                 "type": "text",
-                "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string())
+                "text": serde_json::to_string_pretty(&text_result).unwrap_or_else(|_| text_result.to_string())
             }));
             success_response(
                 id,
@@ -477,10 +780,17 @@ async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<
     Ok((bytes.to_vec(), mime_type))
 }
 
-async fn device_image_content(client: &reqwest::Client, device: &Value) -> Vec<Value> {
+async fn device_image_content(
+    client: &reqwest::Client,
+    device: &Value,
+) -> (Vec<Value>, Option<(String, String)>, Option<String>) {
     let summary = device_summary_text(device);
     let Some(url) = device.get("deviceImageUrl").and_then(Value::as_str) else {
-        return vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: unavailable") })];
+        return (
+            vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: unavailable") })],
+            None,
+            Some("unavailable".to_string()),
+        );
     };
     let preferred = preferred_device_image_url(url);
     let image = match fetch_device_image(client, &preferred).await {
@@ -493,20 +803,30 @@ async fn device_image_content(client: &reqwest::Client, device: &Value) -> Vec<V
     let (bytes, mime_type) = match image {
         Ok(image) => image,
         Err(error) => {
-            return vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: {error}") })];
+            return (
+                vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: {error}") })],
+                None,
+                Some(error),
+            );
         }
     };
-    vec![
-        json!({ "type": "text", "text": summary }),
-        json!({ "type": "image", "data": BASE64.encode(bytes), "mimeType": mime_type }),
-    ]
+    let encoded = BASE64.encode(bytes);
+    let data_url = format!("data:{mime_type};base64,{encoded}");
+    (
+        vec![
+            json!({ "type": "text", "text": summary }),
+            json!({ "type": "image", "data": encoded, "mimeType": mime_type }),
+        ],
+        Some((mime_type, data_url)),
+        None,
+    )
 }
 
-async fn result_image_content(tool: &str, result: &Value) -> Vec<Value> {
+async fn result_image_content(tool: &str, result: &mut Value) -> Vec<Value> {
     if tool != "cirrus_list_devices" {
         return Vec::new();
     }
-    let Some(devices) = result.get("devices").and_then(Value::as_array) else {
+    let Some(devices) = result.get_mut("devices").and_then(Value::as_array_mut) else {
         return Vec::new();
     };
     let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() else {
@@ -514,9 +834,31 @@ async fn result_image_content(tool: &str, result: &Value) -> Vec<Value> {
     };
     let mut content = Vec::new();
     for device in devices {
-        content.extend(device_image_content(&client, device).await);
+        let (items, artwork, error) = device_image_content(&client, device).await;
+        content.extend(items);
+        if let Some(device) = device.as_object_mut() {
+            if let Some((mime_type, data_url)) = artwork {
+                device.insert("deviceImageMimeType".to_string(), json!(mime_type));
+                device.insert("deviceImageDataUrl".to_string(), json!(data_url));
+            }
+            if let Some(error) = error {
+                device.insert("deviceImageError".to_string(), json!(error));
+            }
+        }
     }
     content
+}
+
+fn result_without_inline_artwork(result: &Value) -> Value {
+    let mut visible = result.clone();
+    if let Some(devices) = visible.get_mut("devices").and_then(Value::as_array_mut) {
+        for device in devices {
+            if let Some(device) = device.as_object_mut() {
+                device.remove("deviceImageDataUrl");
+            }
+        }
+    }
+    visible
 }
 
 #[derive(Debug)]
@@ -666,6 +1008,34 @@ mod tests {
         ));
         assert!(!is_apple_device_image_url("http://statici.icloud.com/image.png"));
         assert!(!is_apple_device_image_url("https://example.com/image.png"));
+    }
+
+    #[test]
+    fn text_result_strips_inline_device_artwork() {
+        let result = json!({
+            "devices": [{
+                "name": "Phone",
+                "deviceImageMimeType": "image/png",
+                "deviceImageDataUrl": "data:image/png;base64,large"
+            }]
+        });
+        let visible = result_without_inline_artwork(&result);
+        assert_eq!(visible["devices"][0]["deviceImageMimeType"], "image/png");
+        assert!(visible["devices"][0].get("deviceImageDataUrl").is_none());
+        assert_eq!(result["devices"][0]["deviceImageDataUrl"], "data:image/png;base64,large");
+    }
+
+    #[test]
+    fn http_authentication_and_loopback_hosts_are_checked() {
+        assert!(token_matches(b"secret", "secret"));
+        assert!(!token_matches(b"secret", "secreu"));
+        assert!(!token_matches(b"secret", "secret-longer"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:5226"));
+        assert!(host_is_loopback(&headers));
+        headers.insert(header::HOST, HeaderValue::from_static("example.com"));
+        assert!(!host_is_loopback(&headers));
     }
 
     #[test]

@@ -68,13 +68,13 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 
 ### MCP
 
-- Optional stdio MCP bridge for AI clients and automation.
+- Optional stdio and Streamable HTTP MCP access for AI clients and automation.
 - Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder.
 - Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
 - 19 MCP tools covering login, account status, devices, Find My sound, photos, downloads, notes, contacts, calendar, and profile images.
 - Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
 - Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
-- Loopback-only bridge with a per-run random bearer token.
+- Both transports are loopback-only and use a per-run random bearer token.
 
 ## Install
 
@@ -112,7 +112,7 @@ VITE_AMAP_SECURITY_CODE=
 2. Complete two-factor authentication.
 3. Open **Devices**, **Photos**, **Notes**, **Contacts**, or **Calendar** from the sidebar or workspace tabs.
 
-To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 19 account, device, photo, download, note, contact, calendar, profile image, login, and logout tools.
+To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 19 account, device, photo, download, note, contact, calendar, profile image, login, and logout tools. The `Streamable HTTP` tab shows the current `/mcp` endpoint, bearer token, and a ready-to-copy client configuration.
 
 The first sign-in requires 2FA. Later launches restore the encrypted session when it is still valid.
 
@@ -173,6 +173,12 @@ pnpm build:mcp
 
 Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds the release executable and copies it to `src-tauri/binaries/cirrus-mcp-<target>` (with an `.exe` suffix on Windows), where `src-tauri/tauri.mcp.conf.json` includes it as a Tauri sidecar in the installer.
 
+When MCP is enabled in the desktop app, Cirrus starts `cirrus-mcp.exe --http` automatically and listens on `http://127.0.0.1:5226/mcp`. The HTTP transport can also be started manually:
+
+```sh
+cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
+```
+
 ## Limitations
 
 - Release builds are not notarized; macOS may show a Gatekeeper warning.
@@ -180,7 +186,7 @@ Reopen the MCP settings or restart Cirrus after building. For packaged builds, u
 - iCloud uses private web APIs that may change without notice.
 - The device map requires an AMap key.
 - Cirrus currently covers Photos, Find My, Notes, Contacts, and Calendar, but not iCloud Drive or Mail.
-- MCP exposes the main Cirrus account, device, photo, download, note, contact, and calendar operations over local stdio; HTTP transport is not implemented yet.
+- MCP exposes the main Cirrus account, device, photo, download, note, contact, and calendar operations over local stdio or Streamable HTTP.
 
 ## Trademarks and legal risk
 

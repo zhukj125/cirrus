@@ -39,6 +39,7 @@ hyper = { version = "1.11", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 toml_edit = "0.25"
+axum = "0.8"
 
 
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

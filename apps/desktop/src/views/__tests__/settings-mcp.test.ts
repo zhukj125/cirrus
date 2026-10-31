@@ -26,6 +26,11 @@ vi.mock("@/lib/api", () => ({
     endpoint: "http://127.0.0.1:45678",
     command: String.raw`C:\Apps\Cirrus\cirrus-mcp.exe`,
     configToml: '[mcp_servers.cirrus]\ncommand = "C:\\\\Apps\\\\Cirrus\\\\cirrus-mcp.exe"\n',
+    httpRunning: true,
+    httpPort: 5226,
+    httpEndpoint: "http://127.0.0.1:5226/mcp",
+    httpAccessToken: "test-http-token",
+    httpError: null,
     version: "1.4.7",
   })),
   mcpSetEnabled: vi.fn(async (enabled: boolean) => ({
@@ -35,6 +40,11 @@ vi.mock("@/lib/api", () => ({
     endpoint: enabled ? "http://127.0.0.1:45678" : null,
     command: String.raw`C:\Apps\Cirrus\cirrus-mcp.exe`,
     configToml: '[mcp_servers.cirrus]\ncommand = "C:\\\\Apps\\\\Cirrus\\\\cirrus-mcp.exe"\n',
+    httpRunning: enabled,
+    httpPort: enabled ? 5226 : null,
+    httpEndpoint: enabled ? "http://127.0.0.1:5226/mcp" : null,
+    httpAccessToken: enabled ? "test-http-token" : null,
+    httpError: null,
     version: "1.4.7",
   })),
   mcpToolAccess: vi.fn(async () => ({ disabledTools: [] })),
@@ -62,6 +72,12 @@ describe("SettingsView MCP", () => {
     expect(wrapper.text()).toContain("Configured");
     expect(wrapper.text()).toContain("[mcp_servers.cirrus]");
     expect(wrapper.get('[role="switch"]').attributes("aria-checked")).toBe("true");
+
+    const httpTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes("Streamable HTTP"));
+    expect(httpTab).toBeDefined();
+    await httpTab!.trigger("click");
+    expect(wrapper.text()).toContain("http://127.0.0.1:5226/mcp");
+    expect(wrapper.text()).toContain("Bearer test-http-token");
 
     const permissionsTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes("Permissions"));
     expect(permissionsTab).toBeDefined();

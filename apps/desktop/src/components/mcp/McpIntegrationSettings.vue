@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Check, Copy, PlugZap, RefreshCw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
+import { Check, Copy, Globe, PlugZap, RefreshCw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
 
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,24 @@ const enabledAccounts = computed(() => accounts.value.filter((account) => accoun
 const enabledToolCount = computed(() => toolRows.filter((tool) => !disabledTools.value.includes(tool.name)).length);
 const selectedClient = computed(() => clients.value.find((client) => client.id === selectedClientId.value) ?? clients.value[0] ?? null);
 const selectedSnippet = computed(() => selectedClient.value?.configSnippet ?? null);
+const httpSnippet = computed(() => {
+  const endpoint = info.value?.httpEndpoint;
+  const token = info.value?.httpAccessToken;
+  if (!endpoint || !token) return null;
+  return JSON.stringify(
+    {
+      mcpServers: {
+        cirrus: {
+          type: "streamable-http",
+          url: endpoint,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+});
 const bridgeStatus = computed(() => {
   if (loading.value) return locale.t("settings.mcpChecking");
   if (info.value?.running) return locale.t("settings.mcpRunning");
@@ -248,16 +266,17 @@ onMounted(() => void loadAll());
             {{ locale.t("settings.mcpStdioTab") }}
             <span v-if="transportTab === 'stdio'" class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary"></span>
           </button>
-          <button type="button" role="tab" class="relative flex h-8 shrink-0 items-center gap-1.5 px-2 text-xs text-muted-foreground/55" disabled :title="locale.t('settings.mcpHttpUnsupported')">
-            HTTP
-            <span class="rounded bg-muted px-1 py-px text-[9px]">{{ locale.t("settings.mcpComingSoon") }}</span>
+          <button type="button" role="tab" class="relative flex h-8 shrink-0 items-center gap-1.5 px-2 text-xs transition-colors" :class="transportTab === 'http' ? 'font-medium text-foreground' : 'text-muted-foreground'" :aria-selected="transportTab === 'http'" @click="transportTab = 'http'">
+            <Globe :size="13" />
+            {{ locale.t("settings.mcpHttpTab") }}
+            <span v-if="transportTab === 'http'" class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary"></span>
           </button>
         </div>
 
         <div class="grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
           <div>
             <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpTransport") }}</p>
-            <p class="mt-1 font-medium">{{ locale.t("settings.mcpStdioTab") }}</p>
+            <p class="mt-1 font-medium">{{ locale.t(transportTab === "http" ? "settings.mcpHttpTab" : "settings.mcpStdioTab") }}</p>
           </div>
           <div>
             <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpClients") }}</p>
@@ -269,7 +288,7 @@ onMounted(() => void loadAll());
           </div>
         </div>
 
-        <div class="space-y-2.5">
+        <div v-if="transportTab === 'stdio'" class="space-y-2.5">
           <div>
             <p class="text-sm font-medium">{{ locale.t("settings.mcpConfig") }}</p>
             <p class="mt-1 text-xs text-muted-foreground">{{ locale.t("settings.mcpConfigOptionsHint") }}</p>
@@ -316,11 +335,56 @@ onMounted(() => void loadAll());
             </div>
             <pre class="max-h-64 overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-muted-foreground">{{ selectedSnippet ?? locale.t("settings.mcpUnavailable") }}</pre>
           </div>
+
+          <div class="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+            <Terminal :size="14" class="mt-0.5 shrink-0" />
+            <span>{{ locale.t("settings.mcpClientRestartHint") }}</span>
+          </div>
         </div>
 
-        <div class="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
-          <Terminal :size="14" class="mt-0.5 shrink-0" />
-          <span>{{ locale.t("settings.mcpClientRestartHint") }}</span>
+        <div v-else class="space-y-5 p-4">
+          <div class="grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
+            <div>
+              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpTransport") }}</p>
+              <p class="mt-1 font-medium">Streamable HTTP</p>
+            </div>
+            <div>
+              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpStatus") }}</p>
+              <p class="mt-1 font-medium" :class="info?.httpRunning ? 'text-success' : 'text-warning'">
+                {{ locale.t(info?.httpRunning ? "settings.mcpHttpRunning" : "settings.mcpHttpStopped") }}
+              </p>
+            </div>
+            <div class="min-w-0">
+              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpEndpoint") }}</p>
+              <p class="mt-1 truncate font-mono text-[11px]" :title="info?.httpEndpoint ?? ''">{{ info?.httpEndpoint ?? "—" }}</p>
+            </div>
+          </div>
+
+          <div v-if="info?.httpError" class="rounded-md border border-warning/30 bg-warning/8 px-3 py-2.5 text-xs leading-5 text-warning">
+            {{ info.httpError }}
+          </div>
+
+          <section class="space-y-2.5">
+            <div>
+              <p class="text-sm font-medium">{{ locale.t("settings.mcpHttpConfig") }}</p>
+              <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.mcpHttpConfigHint") }}</p>
+            </div>
+            <div class="overflow-hidden rounded-md border border-border bg-background">
+              <div class="flex items-center justify-between border-b border-border bg-muted/20 px-3 py-2">
+                <span class="text-xs font-medium">{{ locale.t("settings.mcpHttpToken") }}</span>
+                <Button variant="outline" size="sm" class="h-7 px-2 text-xs" :disabled="!httpSnippet" @click="copySnippet(httpSnippet)">
+                  <Copy :size="12" />
+                  {{ locale.t("settings.mcpCopy") }}
+                </Button>
+              </div>
+              <pre class="max-h-64 overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-muted-foreground">{{ httpSnippet ?? locale.t("settings.mcpHttpUnavailable") }}</pre>
+            </div>
+          </section>
+
+          <div class="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+            <ShieldCheck :size="14" class="mt-0.5 shrink-0" />
+            <span>{{ locale.t("settings.mcpHttpSecurityHint") }}</span>
+          </div>
         </div>
       </div>
 

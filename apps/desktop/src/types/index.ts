@@ -131,6 +131,11 @@ export interface McpInfo {
   endpoint: string | null;
   command: string | null;
   configToml: string | null;
+  httpRunning: boolean;
+  httpPort: number | null;
+  httpEndpoint: string | null;
+  httpAccessToken: string | null;
+  httpError: string | null;
   version: string;
 }
 
