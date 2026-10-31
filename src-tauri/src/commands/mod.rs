@@ -4,7 +4,6 @@ pub mod contacts;
 pub mod desktop_settings;
 pub mod devices;
 pub mod download_tasks;
-pub mod geocode;
 pub mod mcp;
 pub mod notes;
 pub mod photos;

@@ -12,7 +12,7 @@ const DESKTOP_SETTINGS_KEY: &str = "desktop_settings";
 const LEGACY_MAP_CONFIG_FILE: &str = "map-config.json";
 const AMAP_KEY: &str = "cirrus.amapKey";
 const AMAP_SECURITY_CODE: &str = "cirrus.amapSecurityCode";
-const AMAP_WEB_SERVICE_KEY: &str = "cirrus.amapWebServiceKey";
+const LEGACY_AMAP_WEB_SERVICE_KEY: &str = "cirrus.amapWebServiceKey";
 static DESKTOP_SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
@@ -30,7 +30,6 @@ pub struct DesktopSettingChange {
 struct LegacyMapConfig {
     amap_key: Option<String>,
     amap_security_code: Option<String>,
-    amap_web_service_key: Option<String>,
 }
 
 fn legacy_config_path(data_dir: &Path) -> PathBuf {
@@ -53,7 +52,6 @@ fn migrate_legacy_map_config(data_dir: &Path) -> DesktopSettings {
     let mut settings = DesktopSettings::new();
     insert_non_empty(&mut settings, AMAP_KEY, legacy.amap_key);
     insert_non_empty(&mut settings, AMAP_SECURITY_CODE, legacy.amap_security_code);
-    insert_non_empty(&mut settings, AMAP_WEB_SERVICE_KEY, legacy.amap_web_service_key);
     if !settings.is_empty() && save_settings(data_dir, &settings).is_ok() {
         let _ = std::fs::remove_file(path);
     }
@@ -61,9 +59,12 @@ fn migrate_legacy_map_config(data_dir: &Path) -> DesktopSettings {
 }
 
 fn load_settings(data_dir: &Path) -> Result<DesktopSettings, String> {
-    if let Some(settings) =
+    if let Some(mut settings) =
         load_app_state_json::<DesktopSettings>(data_dir, DESKTOP_SETTINGS_KEY).map_err(|error| error.to_string())?
     {
+        if settings.remove(LEGACY_AMAP_WEB_SERVICE_KEY).is_some() {
+            save_settings(data_dir, &settings)?;
+        }
         return Ok(settings);
     }
     Ok(migrate_legacy_map_config(data_dir))
@@ -115,13 +116,6 @@ pub fn desktop_settings_merge(payload: DesktopSettings, state: SharedState<'_>) 
     save_settings(data_dir, &settings)
 }
 
-pub(crate) fn amap_web_service_key(data_dir: Option<&Path>) -> Option<String> {
-    data_dir
-        .and_then(|data_dir| load_settings(data_dir).ok())
-        .and_then(|settings| settings.get(AMAP_WEB_SERVICE_KEY).cloned())
-        .filter(|value| !value.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,8 +128,7 @@ mod tests {
             legacy_config_path(&dir),
             serde_json::to_vec(&serde_json::json!({
                 "amapKey": "js-key",
-                "amapSecurityCode": "security",
-                "amapWebServiceKey": "web-service-key"
+                "amapSecurityCode": "security"
             }))
             .unwrap(),
         )
@@ -143,9 +136,7 @@ mod tests {
 
         let settings = load_settings(&dir).expect("load");
         assert_eq!(settings.get(AMAP_KEY).map(String::as_str), Some("js-key"));
-        assert_eq!(settings.get(AMAP_WEB_SERVICE_KEY).map(String::as_str), Some("web-service-key"));
         assert!(!legacy_config_path(&dir).exists());
-        assert_eq!(amap_web_service_key(Some(&dir)).as_deref(), Some("web-service-key"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

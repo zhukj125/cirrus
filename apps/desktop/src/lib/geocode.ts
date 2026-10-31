@@ -1,5 +1,4 @@
-import { getAmapConfig, loadAmap } from "./amap";
-import { reverseGeocodeBackend } from "./api";
+import { loadAmap } from "./amap";
 
 export interface AddressInfo {
   full: string;
@@ -109,17 +108,6 @@ async function fetchAddressWithAmap(lnglat: [number, number], language: "zh" | "
   });
 }
 
-async function fetchAddressWithBackend(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
-  const [lng, lat] = lnglat;
-  const { webServiceKey } = getAmapConfig();
-  return reverseGeocodeBackend({
-    longitude: lng,
-    latitude: lat,
-    language,
-    amapKey: webServiceKey || null,
-  });
-}
-
 const cache = new Map<string, Promise<AddressInfo | null>>();
 
 export function reverseGeocode(lnglat: [number, number], language: "zh" | "en" = "zh"): Promise<AddressInfo | null> {
@@ -142,13 +130,6 @@ export function reverseGeocode(lnglat: [number, number], language: "zh" | "en" =
 }
 
 async function fetchAddress(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
-  try {
-    const info = await fetchAddressWithBackend(lnglat, language);
-    if (info) return info;
-  } catch (error) {
-    console.warn("[GEO] backend reverse geocoding failed", error);
-  }
-
   try {
     return await fetchAddressWithAmap(lnglat, language);
   } catch (error) {

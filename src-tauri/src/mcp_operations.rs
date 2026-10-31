@@ -8,7 +8,6 @@ use cirrus_core::services::{avatar, calendar, contacts, devices, media, notes, p
 use cirrus_core::SessionHandle;
 
 use crate::account_store::{AccountStoreRepository, StoredAccount};
-use crate::commands::{desktop_settings, geocode};
 use crate::mcp::McpService;
 use crate::state::AppState;
 
@@ -35,7 +34,7 @@ pub async fn call_tool(
     match tool {
         "cirrus_account_status" => account_status(&resolved).await,
         "cirrus_logout" => logout(resolved, state, app).await,
-        "cirrus_list_devices" => list_devices_with_addresses(&resolved.handle, state).await,
+        "cirrus_list_devices" => Ok(to_value(devices::list_devices(&resolved.handle).await)?),
         "cirrus_play_sound" => {
             let device_id = required_str(arguments, "deviceId")?;
             Ok(to_value(devices::play_sound(&resolved.handle, device_id).await)?)
@@ -120,57 +119,6 @@ pub async fn call_tool(
         }
         _ => Err(format!("Unknown Cirrus MCP tool: {tool}")),
     }
-}
-
-async fn list_devices_with_addresses(handle: &SessionHandle, state: &AppState) -> Result<Value, String> {
-    let mut result = to_value(devices::list_devices(handle).await)?;
-    let key = desktop_settings::amap_web_service_key(state.data_dir());
-    if let Some(object) = result.as_object_mut() {
-        object.insert("addressLookup".to_string(), json!({ "provider": "amap", "configured": key.is_some() }));
-    }
-    let Some(devices) = result.get_mut("devices").and_then(Value::as_array_mut) else {
-        return Ok(result);
-    };
-    for device in devices {
-        let Some(location) = device.get_mut("location").filter(|value| !value.is_null()) else {
-            continue;
-        };
-        let longitude = location.get("longitude").and_then(Value::as_f64);
-        let latitude = location.get("latitude").and_then(Value::as_f64);
-        let (Some(longitude), Some(latitude)) = (longitude, latitude) else {
-            continue;
-        };
-        let Some(key) = key.clone() else {
-            if let Some(object) = location.as_object_mut() {
-                object.insert("addressError".to_string(), json!("AMap Web Service key is not configured"));
-            }
-            continue;
-        };
-        match geocode::reverse_geocode_wgs84(longitude, latitude, Some(key), "zh").await {
-            Some(address) => {
-                if let Some(object) = location.as_object_mut() {
-                    object.insert(
-                        "address".to_string(),
-                        json!({
-                            "full": address.full,
-                            "short": address.short,
-                            "provider": "amap",
-                            "language": "zh-CN"
-                        }),
-                    );
-                }
-            }
-            None => {
-                if let Some(object) = location.as_object_mut() {
-                    object.insert(
-                        "addressError".to_string(),
-                        json!("AMap returned no address; verify this is a Web Service key"),
-                    );
-                }
-            }
-        }
-    }
-    Ok(result)
 }
 
 async fn resolve_account(account_key: &str, state: &AppState, mcp: &McpService) -> Result<ResolvedAccount, String> {

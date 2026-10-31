@@ -135,7 +135,6 @@ pub fn run() {
             update::app_update_cancel_download,
             update::app_update_install,
             update::app_update_restart,
-            commands::geocode::reverse_geocode,
             commands::desktop_settings::desktop_settings_load,
             commands::desktop_settings::desktop_setting_set,
             commands::desktop_settings::desktop_settings_merge,

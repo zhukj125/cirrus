@@ -3,12 +3,10 @@ import { readStored } from "@/lib/common/storage";
 
 const ENV_AMAP_KEY = String(import.meta.env.VITE_AMAP_KEY ?? "").trim();
 const ENV_AMAP_SECURITY_CODE = String(import.meta.env.VITE_AMAP_SECURITY_CODE ?? "").trim();
-const ENV_AMAP_WEB_SERVICE_KEY = String(import.meta.env.VITE_AMAP_WEB_SERVICE_KEY ?? "").trim();
 
 export interface AmapConfig {
   key: string;
   securityCode: string;
-  webServiceKey: string;
 }
 
 export function getAmapConfig(): AmapConfig {
@@ -17,10 +15,9 @@ export function getAmapConfig(): AmapConfig {
     return {
       key: localKey,
       securityCode: (readStored(StorageKey.amapSecurityCode) ?? "").trim(),
-      webServiceKey: (readStored(StorageKey.amapWebServiceKey) ?? "").trim(),
     };
   }
-  return { key: ENV_AMAP_KEY, securityCode: ENV_AMAP_SECURITY_CODE, webServiceKey: ENV_AMAP_WEB_SERVICE_KEY };
+  return { key: ENV_AMAP_KEY, securityCode: ENV_AMAP_SECURITY_CODE };
 }
 
 export function hasEnvironmentAmapKey(): boolean {
@@ -61,7 +58,6 @@ export function loadAmap(config: AmapConfig = getAmapConfig()): Promise<any> {
   const normalized: AmapConfig = {
     key: config.key.trim(),
     securityCode: config.securityCode.trim(),
-    webServiceKey: config.webServiceKey.trim(),
   };
   const signature = signatureOf(normalized);
 

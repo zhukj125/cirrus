@@ -72,7 +72,6 @@ Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的�
 - 提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签。
 - iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用。
 - 19 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、下载、备忘录、联系人、日历和头像图片。
-- 设备结果包含经纬度、高德逆地理编码地址和设备图片；地址解析使用本机保存的 AMap Web 服务 Key。
 - 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口。
 - Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端。
 - 两种传输都只监听本机回环地址，并使用每次启动随机生成的 Bearer Token。
@@ -105,12 +104,11 @@ make package   # 构建当前平台安装包
 ```env
 VITE_AMAP_KEY=
 VITE_AMAP_SECURITY_CODE=
-VITE_AMAP_WEB_SERVICE_KEY=
 ```
 
-`VITE_AMAP_KEY` 用于地图显示，必须是 Web 端（JS API）Key。设备地址和 MCP 返回的地址字段需要额外配置 Web 服务 Key；也可以在 **设置 → 地图** 中填写并保存到本机 app data，无需写进环境变量。
+`VITE_AMAP_KEY` 用于地图显示，必须是 Web 端（JS API）Key；也可以在 **设置 → 地图** 中填写并保存到本机 SQLite。
 
-地图配置统一保存在应用数据目录的 SQLite 数据库 `cirrus.db` 中，位于 `app_state.desktop_settings` 的 `cirrus.amap*` 键。Windows 默认数据库路径为 `%APPDATA%\com.cirrus\cirrus.db`，其中包含 Web 端 Key、Security JS Code 和 Web 服务 Key。
+地图配置统一保存在应用数据目录的 SQLite 数据库 `cirrus.db` 中，位于 `app_state.desktop_settings` 的 `cirrus.amap*` 键。Windows 默认数据库路径为 `%APPDATA%\com.cirrus\cirrus.db`。
 
 ## 使用
 

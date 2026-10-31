@@ -48,17 +48,8 @@ export const MAP_PROVIDERS: readonly MapProviderDefinition[] = [
         optionalKey: "settings.amapSecurityOptional",
         icon: "shield",
       },
-      {
-        id: "webServiceKey",
-        storageKey: StorageKey.amapWebServiceKey,
-        labelKey: "settings.amapWebServiceKey",
-        placeholderKey: "settings.amapWebServicePlaceholder",
-        optionalKey: "settings.amapWebServiceOptional",
-        helpKeys: ["settings.amapWebServiceTip"],
-        icon: "key",
-      },
     ],
-    helpStepKeys: ["settings.amapHelpStep1", "settings.amapHelpStep2", "settings.amapHelpStep3", "settings.amapHelpStep4"],
+    helpStepKeys: ["settings.amapHelpStep1", "settings.amapHelpStep2", "settings.amapHelpStep3"],
     environmentConfigured: hasEnvironmentAmapKey,
   },
 ];
