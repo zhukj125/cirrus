@@ -1,6 +1,5 @@
 import { getAmapConfig, loadAmap } from "./amap";
 import { reverseGeocodeBackend } from "./api";
-import { gcj02ToWgs84 } from "./geo";
 
 export interface AddressInfo {
   full: string;
@@ -112,13 +111,10 @@ async function fetchAddressWithAmap(lnglat: [number, number], language: "zh" | "
 
 async function fetchAddressWithBackend(lnglat: [number, number], language: "zh" | "en"): Promise<AddressInfo | null> {
   const [lng, lat] = lnglat;
-  const [wgs84Lng, wgs84Lat] = gcj02ToWgs84(lng, lat);
   const { key } = getAmapConfig();
   return reverseGeocodeBackend({
     longitude: lng,
     latitude: lat,
-    wgs84Longitude: wgs84Lng,
-    wgs84Latitude: wgs84Lat,
     language,
     amapKey: key || null,
   });

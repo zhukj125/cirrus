@@ -37,7 +37,6 @@ const CLUSTER_RADIUS_M = 100;
 
 const MAP_STYLE_LIGHT = "amap://styles/normal";
 const MAP_STYLE_DARK = "amap://styles/dark";
-const AMAP_EN_TILE_URL = "https://wprd0{1,2,3,4}.is.autonavi.com/appmaptile?x=[x]&y=[y]&z=[z]&size=1&scl=1&style=7&lang=en";
 
 const MARKER_BASE_SIZE = 56;
 
@@ -76,7 +75,6 @@ interface AmapMapInstance {
 interface AmapNamespace {
   Map: new (container: HTMLElement, options: Record<string, unknown>) => AmapMapInstance;
   Pixel: new (x: number, y: number) => unknown;
-  TileLayer: new (options: { tileUrl: string; zIndex?: number }) => unknown;
   Marker: new (options: { position: [number, number]; offset: unknown; title: string }) => AmapMarker;
   Circle: new (options: Record<string, unknown>) => unknown;
 }
@@ -209,7 +207,6 @@ let map: AmapMapInstance | null = null;
 let amap: AmapNamespace | null = null;
 
 function applyMapStyle(): void {
-  if (locale.isEnglish) return;
   map?.setMapStyle?.(theme.isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT);
 }
 
@@ -718,12 +715,6 @@ onMounted(async () => {
     if (disposed || !mapContainer.value) return;
     amap = AMap;
 
-    const englishLayer = locale.isEnglish
-      ? new AMap.TileLayer({
-          tileUrl: AMAP_EN_TILE_URL,
-          zIndex: 1,
-        })
-      : null;
     const mapOptions: Record<string, unknown> = {
       zoom: 11,
       center: [120.1, 30.28],
@@ -732,14 +723,9 @@ onMounted(async () => {
       pitch: 0,
       maxZoom: 20,
       rotateEnable: true,
+      mapStyle: theme.isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT,
     };
-    if (locale.isEnglish) {
-      mapOptions.layers = [englishLayer];
-    } else {
-      mapOptions.mapStyle = theme.isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT;
-    }
     const instance = new AMap.Map(mapContainer.value, mapOptions);
-    if (englishLayer) instance.add(englishLayer);
     map = instance;
     applyMapStyle();
 

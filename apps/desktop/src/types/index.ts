@@ -96,8 +96,6 @@ export interface DownloadProgressEvent {
 export interface ReverseGeocodeRequest {
   longitude: number;
   latitude: number;
-  wgs84Longitude: number;
-  wgs84Latitude: number;
   language: "zh" | "en";
   amapKey?: string | null;
 }

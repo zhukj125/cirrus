@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
+
+const mapStyleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/amap", () => ({
   loadAmap: vi.fn(async () => ({
@@ -21,10 +23,11 @@ vi.mock("@/lib/amap", () => ({
       zoomIn() {}
       zoomOut() {}
       destroy() {}
-      setMapStyle() {}
+      setMapStyle(style: string) {
+        mapStyleMock(style);
+      }
     },
     Pixel: class {},
-    TileLayer: class {},
     Marker: class {
       on() {}
       show() {}
@@ -46,6 +49,8 @@ vi.mock("@/lib/geocode", () => ({
 }));
 
 import MapView from "@/views/MapView.vue";
+import { useLocaleStore } from "@/stores/locale";
+import { useThemeStore } from "@/stores/theme";
 import type { DevicesResponse } from "@/types";
 
 const data: DevicesResponse = {
@@ -94,6 +99,26 @@ function movedData(latitude: number, longitude: number): DevicesResponse {
 describe("MapView location fallback", () => {
   beforeEach(() => {
     geocodeMock.mockReset();
+    geocodeMock.mockResolvedValue(null);
+    mapStyleMock.mockReset();
+  });
+
+  it("uses AMap light and dark styles in English mode", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useLocaleStore().setLocale("en-US");
+    useThemeStore().setMode("dark");
+
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [pinia] } });
+    await flushPromises();
+
+    expect(mapStyleMock).toHaveBeenCalledWith("amap://styles/dark");
+
+    useThemeStore().setMode("light");
+    await flushPromises();
+
+    expect(mapStyleMock).toHaveBeenCalledWith("amap://styles/normal");
+    wrapper.unmount();
   });
 
   it("shows coordinates immediately while reverse geocoding is pending", async () => {

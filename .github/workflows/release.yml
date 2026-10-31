@@ -81,14 +81,14 @@ jobs:
 
             ### 更新内容
 
-            - 修复设备位置地址偶发不显示：后端优先解析，高德不可用时自动切换 OpenStreetMap
+            - 修复设备位置地址偶发不显示：后端优先解析，失败时由前端高德 JS 再尝试
             - 地图初始化不再阻塞地址查询，高德 JS 回调异常时会在超时后继续降级
             - 设备坐标变化后会自动刷新地址详情
             - 更新日志会过滤内部实现引用
 
             ### Highlights
 
-            - Fixed intermittent missing device addresses with backend-first lookup and OpenStreetMap fallback
+            - Fixed intermittent missing device addresses with backend-first lookup and AMap JS retry
             - Map initialization no longer blocks address lookup; stalled AMap JS callbacks time out cleanly
             - Device details now refresh when coordinates change
             - Release notes now omit internal implementation references

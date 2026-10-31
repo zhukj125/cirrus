@@ -1,18 +1,13 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-const NOMINATIM_MIN_INTERVAL: Duration = Duration::from_millis(1_100);
-static NOMINATIM_GATE: tokio::sync::Mutex<Option<Instant>> = tokio::sync::Mutex::const_new(None);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReverseGeocodeRequest {
     pub longitude: f64,
     pub latitude: f64,
-    pub wgs84_longitude: f64,
-    pub wgs84_latitude: f64,
     pub language: String,
     pub amap_key: Option<String>,
 }
@@ -70,16 +65,6 @@ fn build_amap_result(value: &Value, language: &str) -> Option<ReverseGeocodeResu
     (!full.is_empty()).then_some(ReverseGeocodeResult { full, short })
 }
 
-fn build_nominatim_result(value: &Value, language: &str) -> Option<ReverseGeocodeResult> {
-    let address = value.get("address").unwrap_or(&Value::Null);
-    let street = pick(address, &["road", "pedestrian", "footway", "residential", "suburb", "neighbourhood", "quarter"]);
-    let locality = pick(address, &["city", "town", "county", "district", "state"]);
-    let short = join_parts(&[street, locality], language);
-    let full =
-        text(value.get("display_name")).trim_end_matches(", 中国").trim_end_matches(", China").trim().to_string();
-    (!full.is_empty()).then_some(ReverseGeocodeResult { full, short })
-}
-
 async fn fetch_amap(
     client: &reqwest::Client,
     payload: &ReverseGeocodeRequest,
@@ -108,51 +93,12 @@ async fn fetch_amap(
     build_amap_result(&response.json::<Value>().await.ok()?, language)
 }
 
-async fn wait_for_nominatim_slot() {
-    let mut last_request = NOMINATIM_GATE.lock().await;
-    if let Some(last) = *last_request {
-        let elapsed = last.elapsed();
-        if elapsed < NOMINATIM_MIN_INTERVAL {
-            tokio::time::sleep(NOMINATIM_MIN_INTERVAL - elapsed).await;
-        }
-    }
-    *last_request = Some(Instant::now());
-}
-
-async fn fetch_nominatim(
-    client: &reqwest::Client,
-    payload: &ReverseGeocodeRequest,
-    language: &str,
-) -> Option<ReverseGeocodeResult> {
-    wait_for_nominatim_slot().await;
-    let accept_language = if language == "en" { "en" } else { "zh-CN" };
-    let response = client
-        .get("https://nominatim.openstreetmap.org/reverse")
-        .query(&[
-            ("format", "jsonv2"),
-            ("lat", &payload.wgs84_latitude.to_string()),
-            ("lon", &payload.wgs84_longitude.to_string()),
-            ("zoom", "18"),
-            ("accept-language", accept_language),
-        ])
-        .send()
-        .await
-        .ok()?
-        .error_for_status()
-        .ok()?;
-    build_nominatim_result(&response.json::<Value>().await.ok()?, language)
-}
-
 #[tauri::command]
 pub async fn reverse_geocode(payload: ReverseGeocodeRequest) -> Result<Option<ReverseGeocodeResult>, String> {
     if !payload.longitude.is_finite()
         || !payload.latitude.is_finite()
         || !(-180.0..=180.0).contains(&payload.longitude)
         || !(-90.0..=90.0).contains(&payload.latitude)
-        || !payload.wgs84_longitude.is_finite()
-        || !payload.wgs84_latitude.is_finite()
-        || !(-180.0..=180.0).contains(&payload.wgs84_longitude)
-        || !(-90.0..=90.0).contains(&payload.wgs84_latitude)
     {
         return Err("Invalid reverse geocoding coordinates".to_string());
     }
@@ -166,13 +112,13 @@ pub async fn reverse_geocode(payload: ReverseGeocodeRequest) -> Result<Option<Re
     if let Some(result) = fetch_amap(&client, &payload, language).await {
         return Ok(Some(result));
     }
-    log::warn!("[GEO] AMap reverse geocoding failed; falling back to OpenStreetMap");
-    Ok(fetch_nominatim(&client, &payload, language).await)
+    log::warn!("[GEO] AMap reverse geocoding returned no address");
+    Ok(None)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_amap_result, build_nominatim_result};
+    use super::build_amap_result;
     use serde_json::json;
 
     #[test]
@@ -192,21 +138,5 @@ mod tests {
         let result = build_amap_result(&value, "zh").expect("address");
         assert_eq!(result.full, "浙江省杭州市西湖区测试路1号");
         assert_eq!(result.short, "测试路，杭州市");
-    }
-
-    #[test]
-    fn parses_nominatim_regeocode() {
-        let value = json!({
-            "display_name": "Test Road, Xihu, Hangzhou, Zhejiang, China",
-            "address": {
-                "road": "Test Road",
-                "city": "Hangzhou",
-                "state": "Zhejiang",
-                "country": "China"
-            }
-        });
-        let result = build_nominatim_result(&value, "en").expect("address");
-        assert_eq!(result.full, "Test Road, Xihu, Hangzhou, Zhejiang");
-        assert_eq!(result.short, "Test Road, Hangzhou");
     }
 }
