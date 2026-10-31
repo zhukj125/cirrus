@@ -426,7 +426,7 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "settings.mcpManagementTabs": { zh: "MCP 管理页面", en: "MCP management pages" },
   "settings.mcpAccessTab": { zh: "接入方式", en: "Access" },
   "settings.mcpPermissionsTab": { zh: "权限管理", en: "Permissions" },
-  "settings.mcpHistoryTab": { zh: "历史", en: "History" },
+  "settings.mcpOpenHistory": { zh: "查看 MCP 调用历史", en: "View MCP call history" },
   "settings.mcpHistory": { zh: "MCP 调用历史", en: "MCP call history" },
   "settings.mcpHistoryDesc": { zh: "最近 {count} 次工具调用，敏感字段和图片数据已脱敏。", en: "Recent {count} tool calls with secrets and image data redacted." },
   "settings.mcpHistoryRefresh": { zh: "刷新", en: "Refresh" },

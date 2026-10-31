@@ -107,10 +107,10 @@ describe("SettingsView MCP", () => {
     await wrapper.get('[aria-label="Toggle MCP access for two@example.com"]').trigger("click");
     expect(api.mcpSetAccountEnabled).toHaveBeenCalledWith("dsid:222", true);
 
-    const historyTab = wrapper.findAll('[role="tab"]').find((item) => item.text().includes("History"));
-    expect(historyTab).toBeDefined();
-    await historyTab!.trigger("click");
-    expect(wrapper.text()).toContain("cirrus_list_devices");
-    expect(wrapper.text()).toContain("Codex");
+    const historyButton = wrapper.get('[aria-label="View MCP call history"]');
+    await historyButton.trigger("click");
+    expect(document.body.textContent).toContain("cirrus_list_devices");
+    expect(document.body.textContent).toContain("Codex");
+    wrapper.unmount();
   });
 });
