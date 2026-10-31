@@ -155,6 +155,24 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 仓库包含 Cargo workspace（`src-tauri`、`crates/cirrus-core`、`crates/cirrus-mcp`）和 pnpm workspace（`apps/desktop`）。
 
+### MCP 可执行文件
+
+MCP 使用独立的 stdio 可执行文件，而不是主程序内置的命令。开发模式下，Cirrus 会查找与当前程序同目录的 `cirrus-mcp`（Windows 为 `cirrus-mcp.exe`），例如：
+
+```text
+target/debug/cirrus-mcp.exe
+```
+
+如果 **设置 → MCP** 提示未找到 `cirrus-mcp`，先构建开发用可执行文件：
+
+```sh
+cargo build -p cirrus-mcp
+# 或
+pnpm build:mcp
+```
+
+构建后重新打开 MCP 设置或重启 Cirrus。正式打包时使用 `pnpm build:mcp:sidecar`，脚本会构建 release 版本并复制到 `src-tauri/binaries/cirrus-mcp-<target>`（Windows 带 `.exe` 后缀），再由 `src-tauri/tauri.mcp.conf.json` 作为 Tauri sidecar 打入安装包。
+
 ## 限制
 
 - Release 构建未公证；macOS 可能显示 Gatekeeper 警告

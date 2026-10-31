@@ -155,6 +155,24 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, and `crates/cirrus-mcp`) and a pnpm workspace (`apps/desktop`).
 
+### MCP executable
+
+MCP runs as a separate stdio executable rather than a command embedded in the main application. In development, Cirrus looks for `cirrus-mcp` (`cirrus-mcp.exe` on Windows) next to the running application, for example:
+
+```text
+target/debug/cirrus-mcp.exe
+```
+
+If **Settings → MCP** reports that `cirrus-mcp` was not found, build the development executable first:
+
+```sh
+cargo build -p cirrus-mcp
+# or
+pnpm build:mcp
+```
+
+Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds the release executable and copies it to `src-tauri/binaries/cirrus-mcp-<target>` (with an `.exe` suffix on Windows), where `src-tauri/tauri.mcp.conf.json` includes it as a Tauri sidecar in the installer.
+
 ## Limitations
 
 - Release builds are not notarized; macOS may show a Gatekeeper warning.
