@@ -37,11 +37,11 @@ const PINYIN_BOUNDARIES: Array<[string, string]> = [
   ["Y", "压"],
   ["Z", "匝"],
 ];
-const contactCollator = new Intl.Collator("zh-CN", { sensitivity: "base", numeric: true });
 
 const props = defineProps<{ sessionId: string }>();
 const emit = defineEmits<{ logout: [] }>();
 const locale = useLocaleStore();
+const contactCollator = new Intl.Collator("zh-CN", { sensitivity: "base", numeric: true });
 const t = locale.t;
 
 const contacts = ref<ContactEntry[]>([]);
@@ -163,7 +163,7 @@ async function loadContacts(): Promise<void> {
   try {
     const response = await contactsList({
       sessionId: props.sessionId,
-      locale: locale.locale === "zh-CN" ? "zh_CN" : "en_US",
+      locale: locale.isChinese ? "zh_CN" : "en_US",
     });
     if (response.status === Status.error) {
       if (isSessionGoneMessage(response.message)) {

@@ -51,13 +51,19 @@ export function presetRange(key: Exclude<RangeKey, "all" | "custom">, now: Date 
 
 export function dayLabel(dayStart: number, now: Date = new Date(), locale = "en-US"): string {
   const english = locale.startsWith("en");
+  const chinese = locale.startsWith("zh");
   const today = startOfDay(now);
-  if (dayStart === today) return english ? "Today" : "今天";
-  if (dayStart === addDays(today, -1)) return english ? "Yesterday" : "昨天";
+  const relativeDay = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  if (dayStart === today) return english ? "Today" : chinese ? "今天" : relativeDay.format(0, "day");
+  if (dayStart === addDays(today, -1)) return english ? "Yesterday" : chinese ? "昨天" : relativeDay.format(-1, "day");
   const date = new Date(dayStart);
-  const weekday = date.toLocaleDateString(locale, { weekday: "short" });
   const prefix = date.getFullYear() === now.getFullYear() ? "" : `${date.getFullYear()} `;
-  return english ? `${prefix}${date.toLocaleDateString(locale, { month: "short", day: "numeric" })}, ${weekday}` : `${date.toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" })}`;
+  if (english) {
+    const weekday = date.toLocaleDateString(locale, { weekday: "short" });
+    return `${prefix}${date.toLocaleDateString(locale, { month: "short", day: "numeric" })}, ${weekday}`;
+  }
+  if (chinese) return date.toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" });
+  return date.toLocaleDateString(locale, { year: date.getFullYear() === now.getFullYear() ? undefined : "numeric", month: "long", day: "numeric", weekday: "short" });
 }
 
 export function filterByRange(photos: PhotoItem[], bounds: DateBounds): PhotoItem[] {
@@ -79,7 +85,7 @@ export interface PhotoDaySection {
   items: Array<{ photo: PhotoItem; index: number }>;
 }
 
-export function groupByDay(photos: PhotoItem[], now: Date = new Date(), locale = "en-US"): PhotoDaySection[] {
+export function groupByDay(photos: PhotoItem[], now: Date = new Date(), locale = "en-US", unknownDateLabel = locale.startsWith("en") ? "Unknown date" : "日期未知"): PhotoDaySection[] {
   const buckets = new Map<number, Array<{ photo: PhotoItem; index: number }>>();
   photos.forEach((photo, index) => {
     const key = photo.takenAt && photo.takenAt > 0 ? startOfDay(new Date(photo.takenAt)) : Number.NaN;
@@ -92,7 +98,7 @@ export function groupByDay(photos: PhotoItem[], now: Date = new Date(), locale =
     .sort((a, b) => (Number.isNaN(a[0]) ? 1 : Number.isNaN(b[0]) ? -1 : b[0] - a[0]))
     .map(([dayStart, items]) => ({
       key: String(dayStart),
-      label: Number.isNaN(dayStart) ? (locale.startsWith("en") ? "Unknown date" : "日期未知") : dayLabel(dayStart, now, locale),
+      label: Number.isNaN(dayStart) ? unknownDateLabel : dayLabel(dayStart, now, locale),
       items,
     }));
 }
