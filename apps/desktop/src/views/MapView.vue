@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/lib/common/toast";
 import { reverseGeocode } from "@/lib/geocode";
 import { createMapAdapter, type AddressInfo, type MapAdapter, type MapInstance, type MapMarker, type MapOverlay, type MapPadding } from "@/lib/maps";
-import { mapWheelGesture } from "@/lib/maps/wheel-gesture";
+import { mapWheelPanGesture, mapWheelGesture } from "@/lib/maps/wheel-gesture";
 import { relativeTimeLabel, staleTimeLabel as formatStaleTimeLabel } from "@/lib/time";
 import { useAppStore } from "@/stores/app";
 import { useLocaleStore } from "@/stores/locale";
@@ -40,6 +40,8 @@ const MARKER_BASE_SIZE = 56;
 const MARKER_CLICK_GRACE_MS = 300;
 
 const MAP_MAX_ZOOM = 20;
+
+const MAP_WHEEL_GESTURE_TIMEOUT_MS = 250;
 
 const FIT_VIEW_MARGINS: MapPadding = [100, 80, 360, 80];
 const FIT_VIEW_MARGINS_COLLAPSED: MapPadding = [80, 80, 80, 80];
@@ -206,6 +208,8 @@ let compassDrag: { startX: number; startY: number; startRot: number; moved: bool
 let pollTimer: number | null = null;
 let scrollRaf: number | null = null;
 let mapWheelTarget: HTMLDivElement | null = null;
+let mapWheelGestureType: "pan" | "zoom" | null = null;
+let mapWheelGestureTimestamp = 0;
 
 let disposed = false;
 
@@ -604,23 +608,30 @@ function onMapWheel(event: WheelEvent): void {
 
   const pageHeight = Math.max(mapContainer.value?.clientHeight ?? window.innerHeight, 1);
   const gesture = mapWheelGesture(event.deltaX, event.deltaY, event.deltaMode, event.ctrlKey, pageHeight);
-  if (gesture.type === "none") return;
+  const continuesPan = mapWheelGestureType === "pan" && !event.ctrlKey && event.timeStamp - mapWheelGestureTimestamp <= MAP_WHEEL_GESTURE_TIMEOUT_MS;
+  const resolvedGesture = continuesPan ? mapWheelPanGesture(event.deltaX, event.deltaY, event.deltaMode, pageHeight) : gesture;
+  if (resolvedGesture.type === "none") return;
+
+  mapWheelGestureType = resolvedGesture.type;
+  mapWheelGestureTimestamp = event.timeStamp;
 
   event.preventDefault();
   event.stopImmediatePropagation();
 
-  if (gesture.type === "pan") {
-    mapInstance.panBy(gesture.deltaX, gesture.deltaY);
+  if (resolvedGesture.type === "pan") {
+    mapInstance.panBy(resolvedGesture.deltaX, resolvedGesture.deltaY);
     return;
   }
 
-  const target = Math.min(MAP_MAX_ZOOM, Math.max(minimumWorldZoom(), mapInstance.getZoom() + gesture.delta));
+  const target = Math.min(MAP_MAX_ZOOM, Math.max(minimumWorldZoom(), mapInstance.getZoom() + resolvedGesture.delta));
   mapInstance.setZoom(target);
 }
 
 function detachMapWheelZoom(): void {
   mapWheelTarget?.removeEventListener("wheel", onMapWheel, true);
   mapWheelTarget = null;
+  mapWheelGestureType = null;
+  mapWheelGestureTimestamp = 0;
 }
 
 function attachMapWheelZoom(): void {

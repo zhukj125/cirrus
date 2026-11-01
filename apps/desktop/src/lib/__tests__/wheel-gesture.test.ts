@@ -8,10 +8,13 @@ describe("map wheel gestures", () => {
     expect(mapWheelGesture(0, 100, 0, false)).toEqual({ type: "zoom", delta: -1 });
   });
 
-  it("uses pinch wheel deltas for fractional touchpad zoom", () => {
-    const gesture = mapWheelGesture(0, -5, 0, true);
-    expect(gesture.type).toBe("zoom");
-    if (gesture.type === "zoom") expect(gesture.delta).toBeCloseTo(0.1);
+  it("uses faster pinch zoom in than zoom out", () => {
+    const zoomIn = mapWheelGesture(0, -5, 0, true);
+    const zoomOut = mapWheelGesture(0, 5, 0, true);
+    expect(zoomIn.type).toBe("zoom");
+    expect(zoomOut.type).toBe("zoom");
+    if (zoomIn.type === "zoom") expect(zoomIn.delta).toBeCloseTo(0.25);
+    if (zoomOut.type === "zoom") expect(zoomOut.delta).toBeCloseTo(-0.075);
   });
 
   it("pans with unmodified two-finger touchpad scrolling", () => {

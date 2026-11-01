@@ -190,11 +190,15 @@ describe("MapView location fallback", () => {
     await flushPromises();
 
     const container = mapMocks.createMap.mock.calls[0]?.[0] as HTMLDivElement;
-    const wheel = new WheelEvent("wheel", { deltaX: 8, deltaY: 20, bubbles: true, cancelable: true });
-    container.dispatchEvent(wheel);
+    const first = new WheelEvent("wheel", { deltaX: 8, deltaY: 20, bubbles: true, cancelable: true });
+    const fast = new WheelEvent("wheel", { deltaX: 20, deltaY: 140, bubbles: true, cancelable: true });
+    container.dispatchEvent(first);
+    container.dispatchEvent(fast);
 
-    expect(wheel.defaultPrevented).toBe(true);
+    expect(first.defaultPrevented).toBe(true);
+    expect(fast.defaultPrevented).toBe(true);
     expect(mapMocks.panBy).toHaveBeenCalledWith(-8, -20);
+    expect(mapMocks.panBy).toHaveBeenCalledWith(-20, -140);
     expect(mapMocks.setZoom).not.toHaveBeenCalled();
     wrapper.unmount();
   });
