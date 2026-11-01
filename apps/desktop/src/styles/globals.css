@@ -76,6 +76,11 @@
     @apply px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-[0.08em] text-muted-foreground uppercase;
   }
 
+  /* AMap puts a transparent iframe above the canvas; without this it swallows map drag events. */
+  .amap-container > iframe {
+    pointer-events: none !important;
+  }
+
 
   .theme-icon-enter-active,
   .theme-icon-leave-active {

@@ -296,6 +296,10 @@ describe("startup compatibility assets", () => {
     expect(result).toEqual({ hasOwn: true, findLast: 2, replaceAll: "a_b_c", reversed: [3, 2, 1], sorted: [1, 2, 3], spliced: [1, 9, 3] });
   });
 
+  it("keeps AMap's transparent iframe from swallowing map drag events", () => {
+    expect(globalsCss).toMatch(/\.amap-container > iframe \{[^}]*pointer-events: none !important;/s);
+  });
+
   it("ships solid token fallbacks for legacy WebKit", () => {
     expect(globalsCss).toContain("html.cirrus-legacy-webview {");
     expect(globalsCss).toContain("--border: rgba(0, 0, 0, 0.09)");
