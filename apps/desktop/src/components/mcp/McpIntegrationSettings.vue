@@ -302,16 +302,30 @@ onMounted(() => void loadAll());
       </div>
 
       <div v-if="managementTab === 'access'" class="space-y-5 p-4">
-        <div class="flex items-center gap-1 overflow-x-auto border-b border-border" role="tablist" :aria-label="locale.t('settings.mcpTransportTabs')">
-          <button type="button" role="tab" class="relative flex h-8 shrink-0 items-center gap-1.5 px-2 text-xs transition-colors" :class="transportTab === 'stdio' ? 'font-medium text-foreground' : 'text-muted-foreground'" :aria-selected="transportTab === 'stdio'" @click="transportTab = 'stdio'">
-            <Terminal :size="13" />
-            {{ locale.t("settings.mcpStdioTab") }}
-            <span v-if="transportTab === 'stdio'" class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary"></span>
+        <div class="grid w-[280px] max-w-full grid-cols-2 border-b border-border" role="tablist" :aria-label="locale.t('settings.mcpTransportTabs')">
+          <button
+            type="button"
+            role="tab"
+            class="relative flex h-8 min-w-0 items-center justify-center gap-1.5 px-2 text-xs transition-colors"
+            :class="transportTab === 'stdio' ? 'font-medium text-foreground' : 'text-muted-foreground'"
+            :aria-selected="transportTab === 'stdio'"
+            @click="transportTab = 'stdio'"
+          >
+            <Terminal :size="13" class="shrink-0" />
+            <span class="truncate">{{ locale.t("settings.mcpStdioTab") }}</span>
+            <span v-if="transportTab === 'stdio'" class="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary"></span>
           </button>
-          <button type="button" role="tab" class="relative flex h-8 shrink-0 items-center gap-1.5 px-2 text-xs transition-colors" :class="transportTab === 'http' ? 'font-medium text-foreground' : 'text-muted-foreground'" :aria-selected="transportTab === 'http'" @click="transportTab = 'http'">
-            <Globe :size="13" />
-            {{ locale.t("settings.mcpHttpTab") }}
-            <span v-if="transportTab === 'http'" class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary"></span>
+          <button
+            type="button"
+            role="tab"
+            class="relative flex h-8 min-w-0 items-center justify-center gap-1.5 px-2 text-xs transition-colors"
+            :class="transportTab === 'http' ? 'font-medium text-foreground' : 'text-muted-foreground'"
+            :aria-selected="transportTab === 'http'"
+            @click="transportTab = 'http'"
+          >
+            <Globe :size="13" class="shrink-0" />
+            <span class="truncate">{{ locale.t("settings.mcpHttpTab") }}</span>
+            <span v-if="transportTab === 'http'" class="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary"></span>
           </button>
         </div>
 
