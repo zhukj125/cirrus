@@ -10,6 +10,7 @@ import AppShell from "@/components/layout/AppShell.vue";
 import AppTabBar from "@/components/layout/AppTabBar.vue";
 import TitleBar from "@/components/layout/TitleBar.vue";
 import UpdateDialog from "@/components/layout/UpdateDialog.vue";
+import McpCallHistoryDialog from "@/components/mcp/McpCallHistoryDialog.vue";
 import DownloadManagerDialog from "@/components/photos/DownloadManagerDialog.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import Toaster from "@/components/ui/Toaster.vue";
@@ -30,6 +31,7 @@ import { devMockEnabled, mockDevicesResponse } from "@/dev/mock";
 import { isTrayAvailable, mcpAuthorize, mcpCancelLogin, mcpCompleteLogin, mcpPendingAuthorization, quitApp, setTrayLabels } from "@/lib/api";
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
+import { MCP_CALL_HISTORY_OPEN_EVENT } from "@/lib/mcpCallHistory";
 import type { DevicesResponse, McpAuthorizationRequest } from "@/types";
 import { StorageKey, isShellView, type ShellView, type View, type WorkspaceTab } from "@/constants";
 
@@ -216,12 +218,17 @@ type CloseBehavior = "background" | "quit";
 const mcpAuthorization = ref<McpAuthorizationRequest | null>(null);
 const mcpAuthorizing = ref(false);
 const mcpLoginRequestId = ref<string | null>(null);
+const mcpHistoryOpen = ref(false);
 let unlistenMcpAuthorization: (() => void) | null = null;
 let unlistenMcpAuthorizationFinished: (() => void) | null = null;
 let unlistenMcpLoginRequest: (() => void) | null = null;
 let unlistenMcpLoginFinished: (() => void) | null = null;
 let unlistenMcpAccountsChanged: (() => void) | null = null;
 let unlistenMcpDownloadCompleted: (() => void) | null = null;
+
+function handleOpenMcpHistory(): void {
+  mcpHistoryOpen.value = true;
+}
 
 function clearMcpLoginRequest(requestId?: string): void {
   if (requestId && mcpLoginRequestId.value !== requestId) return;
@@ -373,6 +380,7 @@ async function flushBeforeExit(): Promise<void> {
 }
 
 onMounted(async () => {
+  window.addEventListener(MCP_CALL_HISTORY_OPEN_EVENT, handleOpenMcpHistory);
   void downloads.initDownloadTracking();
   void refreshTrayAvailability().then(syncTrayLabels);
   if (!devMockEnabled) void store.restore();
@@ -427,6 +435,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener(MCP_CALL_HISTORY_OPEN_EVENT, handleOpenMcpHistory);
   unlistenClose?.();
   unlistenTrayQuit?.();
   unlistenMcpAuthorization?.();
@@ -443,6 +452,7 @@ onUnmounted(() => {
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <TitleBar :show-settings="true" :show-update="true" :checking-update="updater.checking" :update-available="updater.hasUpdate" :settings-active="view === 'settings'" :context-label="titleBarContext" @settings="toggleSettings" @check-update="handleTitleBarUpdate" />
+    <McpCallHistoryDialog :open="mcpHistoryOpen" @close="mcpHistoryOpen = false" />
 
     <div class="flex min-h-0 flex-1 flex-col">
       <AppTabBar v-if="signedIn && !restoring" :tabs="openWorkspaceTabs" :active="activeWorkspaceTab" @select="activateWorkspaceTab" @close="closeWorkspaceTab" @add="activateWorkspaceTab" />

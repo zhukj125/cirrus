@@ -2,13 +2,14 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Monitor, Moon, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
+import { Copy, History, Minus, Monitor, Moon, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
 import ToolbarUpdateIcon from "@/components/layout/ToolbarUpdateIcon.vue";
 import { openExternal } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
+import { openMcpCallHistory } from "@/lib/mcpCallHistory";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 
@@ -127,6 +128,9 @@ onUnmounted(() => unlisten?.());
         <Transition name="theme-icon" mode="out-in">
           <component :is="themeMeta.icon" :key="theme.mode" :size="14" />
         </Transition>
+      </button>
+      <button type="button" class="grid w-10 place-items-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="locale.t('settings.mcpOpenHistory')" :title="locale.t('settings.mcpOpenHistory')" @click="openMcpCallHistory">
+        <History :size="14" />
       </button>
       <button
         v-if="props.showSettings"
