@@ -9,6 +9,7 @@ const mapMocks = vi.hoisted(() => ({
   createMarker: vi.fn(),
   createAccuracyCircle: vi.fn(),
   setTheme: vi.fn(),
+  setZoom: vi.fn(),
 }));
 
 vi.mock("@/lib/maps", () => ({
@@ -82,6 +83,7 @@ describe("MapView location fallback", () => {
     geocodeMock.mockReset();
     geocodeMock.mockResolvedValue(null);
     mapMocks.setTheme.mockReset();
+    mapMocks.setZoom.mockReset();
     mapMocks.createMap.mockReset();
     mapMocks.createMarker.mockReset();
     mapMocks.createAccuracyCircle.mockReset();
@@ -89,7 +91,7 @@ describe("MapView location fallback", () => {
       getRotation: () => 0,
       setRotation: vi.fn(),
       getZoom: () => 11,
-      setZoom: vi.fn(),
+      setZoom: mapMocks.setZoom,
       setZoomAndCenter: vi.fn(),
       fitMarkers: vi.fn(),
       zoomIn: vi.fn(),
@@ -150,6 +152,19 @@ describe("MapView location fallback", () => {
     expect(geocodeMock).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain("Second address");
     expect(wrapper.text()).not.toContain("First address");
+    wrapper.unmount();
+  });
+
+  it("zooms with the mouse wheel over the AMap container", async () => {
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    const container = mapMocks.createMap.mock.calls[0]?.[0] as HTMLDivElement;
+    const wheel = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    container.dispatchEvent(wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(mapMocks.setZoom).toHaveBeenCalledWith(12);
     wrapper.unmount();
   });
 });

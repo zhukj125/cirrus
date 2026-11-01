@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/lib/common/toast";
 import { reverseGeocode } from "@/lib/geocode";
 import { createMapAdapter, type AddressInfo, type MapAdapter, type MapInstance, type MapMarker, type MapOverlay, type MapPadding } from "@/lib/maps";
+import { wheelZoomDelta } from "@/lib/maps/wheel-zoom";
 import { relativeTimeLabel, staleTimeLabel as formatStaleTimeLabel } from "@/lib/time";
 import { useAppStore } from "@/stores/app";
 import { useLocaleStore } from "@/stores/locale";
@@ -37,6 +38,8 @@ const CLUSTER_RADIUS_M = 100;
 const MARKER_BASE_SIZE = 56;
 
 const MARKER_CLICK_GRACE_MS = 300;
+
+const MAP_MAX_ZOOM = 20;
 
 const FIT_VIEW_MARGINS: MapPadding = [100, 80, 360, 80];
 const FIT_VIEW_MARGINS_COLLAPSED: MapPadding = [80, 80, 80, 80];
@@ -202,6 +205,7 @@ let markerClickAt = 0;
 let compassDrag: { startX: number; startY: number; startRot: number; moved: boolean } | null = null;
 let pollTimer: number | null = null;
 let scrollRaf: number | null = null;
+let mapWheelTarget: HTMLDivElement | null = null;
 
 let disposed = false;
 
@@ -594,6 +598,36 @@ function zoomOut(): void {
   mapInstance.zoomOut();
 }
 
+function onMapWheel(event: WheelEvent): void {
+  const mapInstance = map;
+  if (!mapInstance) return;
+
+  const pageHeight = Math.max(mapContainer.value?.clientHeight ?? window.innerHeight, 1);
+  const delta = wheelZoomDelta(event.deltaY, event.deltaMode, event.ctrlKey, pageHeight);
+  if (delta === 0) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  const target = Math.min(MAP_MAX_ZOOM, Math.max(minimumWorldZoom(), mapInstance.getZoom() + delta));
+  mapInstance.setZoom(target);
+}
+
+function detachMapWheelZoom(): void {
+  mapWheelTarget?.removeEventListener("wheel", onMapWheel, true);
+  mapWheelTarget = null;
+}
+
+function attachMapWheelZoom(): void {
+  detachMapWheelZoom();
+  if (mapAdapter?.providerId !== "amap") return;
+
+  const container = mapContainer.value;
+  if (!container) return;
+  container.addEventListener("wheel", onMapWheel, { capture: true, passive: false });
+  mapWheelTarget = container;
+}
+
 function onRotate(): void {
   const mapInstance = map;
   if (!mapInstance) return;
@@ -684,7 +718,7 @@ onMounted(async () => {
       center: [120.1, 30.28],
       zoom: 11,
       minZoom: minimumWorldZoom(),
-      maxZoom: 20,
+      maxZoom: MAP_MAX_ZOOM,
       dark: theme.isDark,
       callbacks: {
         onRotate,
@@ -695,6 +729,7 @@ onMounted(async () => {
     });
     map = instance;
     applyMapStyle();
+    attachMapWheelZoom();
 
     window.addEventListener("resize", enforceMapMinZoom);
     onRotate();
@@ -721,6 +756,7 @@ onUnmounted(() => {
   }
   window.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("resize", enforceMapMinZoom);
+  detachMapWheelZoom();
   for (const timer of addressRetryTimers.values()) clearTimeout(timer);
   addressRetryTimers.clear();
   markers.clear();
