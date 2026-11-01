@@ -396,6 +396,7 @@
   "settings.none": "Нет соответствующих настроек.",
   "settings.appearance": "Внешний вид",
   "settings.maps": "Карты",
+  "settings.mapsDesc": "Выберите поставщика карт и сохраните данные для отображения карты и поиска адресов.",
   "settings.downloads": "Загрузки",
   "settings.about": "О нас",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: Настройки → MCP → Добавить вручную, затем вставьте JSON.",
   "settings.mcpLoadFailed": "Не удалось загрузить настройки MCP: {error}",
   "settings.mcpServerTitle": "Движок MCP",
-  "settings.mcpServerDesc": "Установите отдельный stdio-launcher MCP для ИИ-клиентов независимо от пакета Cirrus.",
+  "settings.mcpServerDesc": "Сохраняет подключения ИИ-инструментов при обновлении Cirrus без повторной настройки.",
   "settings.mcpServerInstall": "Установить",
   "settings.mcpServerUpdate": "Обновить",
   "settings.mcpServerReinstall": "Переустановить",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "Режим пропажи включён",
   "device.lostModePending": "Обновление режима пропажи…",
   "device.activationLockOn": "Блокировка активации включена",
-  "device.activationLockOff": "Блокировка активации выключена"
+  "device.activationLockOff": "Блокировка активации выключена",
+  "settings.aboutDescription": "Локальный клиент iCloud для компьютера, объединяющий Фото, Локатор, Заметки, Контакты и Календарь в одном окне.",
+  "settings.mcpLoginOnly": "Вход и конфиденциальные данные всегда вводятся в нативном окне Cirrus."
 }

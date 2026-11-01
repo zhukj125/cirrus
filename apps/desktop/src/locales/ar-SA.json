@@ -396,6 +396,7 @@
   "settings.none": "لا توجد إعدادات مطابقة",
   "settings.appearance": "المظهر",
   "settings.maps": "الخرائط",
+  "settings.mapsDesc": "اختر مزوّد الخرائط واحفظ بيانات الاعتماد لعرض الخريطة والبحث عن العناوين.",
   "settings.downloads": "التنزيلات",
   "settings.about": "حول",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: الإعدادات → MCP → إضافة يدوية، ثم الصق JSON.",
   "settings.mcpLoadFailed": "تعذر تحميل إعدادات MCP: {error}",
   "settings.mcpServerTitle": "محرك MCP",
-  "settings.mcpServerDesc": "ثبّت مشغّل MCP stdio مستقلاً لعملاء الذكاء الاصطناعي دون الاعتماد على حزمة Cirrus.",
+  "settings.mcpServerDesc": "يحافظ على اتصالات أدوات الذكاء الاصطناعي عند تحديث Cirrus دون إعادة إعدادها.",
   "settings.mcpServerInstall": "تثبيت",
   "settings.mcpServerUpdate": "تحديث",
   "settings.mcpServerReinstall": "إعادة التثبيت",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "وضع الفقدان مفعّل",
   "device.lostModePending": "جارٍ تحديث وضع الفقدان…",
   "device.activationLockOn": "قفل التنشيط مفعّل",
-  "device.activationLockOff": "قفل التنشيط متوقف"
+  "device.activationLockOff": "قفل التنشيط متوقف",
+  "settings.aboutDescription": "عميل iCloud لسطح المكتب يعمل محليًا أولاً ويجمع الصور والأجهزة والملاحظات وجهات الاتصال والتقويم في نافذة واحدة.",
+  "settings.mcpLoginOnly": "يتم دائمًا إدخال تسجيل الدخول وبيانات الاعتماد الحساسة في نافذة Cirrus الأصلية."
 }

@@ -396,6 +396,7 @@
   "settings.none": "沒有符合的設定項",
   "settings.appearance": "外觀",
   "settings.maps": "地圖",
+  "settings.mapsDesc": "選擇地圖服務商，並儲存用於地圖顯示與地址解析的憑證。",
   "settings.downloads": "下載",
   "settings.about": "關於",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder：設定 → MCP → 手動新增，然後貼上 JSON。",
   "settings.mcpLoadFailed": "無法載入 MCP 設定：{error}",
   "settings.mcpServerTitle": "MCP 引擎",
-  "settings.mcpServerDesc": "為 AI 用戶端獨立安裝 stdio MCP launcher，不再依賴 Cirrus 安裝目錄。",
+  "settings.mcpServerDesc": "獨立儲存 MCP 元件，更新 Cirrus 時無需重新設定 AI 工具。",
   "settings.mcpServerInstall": "安裝",
   "settings.mcpServerUpdate": "更新",
   "settings.mcpServerReinstall": "重新安裝",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "遺失模式已開啟",
   "device.lostModePending": "正在更新遺失模式…",
   "device.activationLockOn": "啟用鎖定已開啟",
-  "device.activationLockOff": "啟用鎖定已關閉"
+  "device.activationLockOff": "啟用鎖定已關閉",
+  "settings.aboutDescription": "一個本機優先的 iCloud 桌面用戶端，把照片、裝置、備忘錄、聯絡人和行事曆帶到一個視窗裡。",
+  "settings.mcpLoginOnly": "登入和敏感憑證始終在 Cirrus 原生視窗內輸入。"
 }

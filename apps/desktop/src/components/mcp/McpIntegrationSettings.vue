@@ -329,7 +329,7 @@ onMounted(() => void loadAll());
           </button>
         </div>
 
-        <div class="grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
+        <div class="grid min-h-[84px] content-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-2" :class="transportTab === 'http' ? 'lg:grid-cols-6' : 'sm:grid-cols-3'">
           <div>
             <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpTransport") }}</p>
             <p class="mt-1 font-medium">{{ locale.t(transportTab === "http" ? "settings.mcpHttpTab" : "settings.mcpStdioTab") }}</p>
@@ -342,6 +342,18 @@ onMounted(() => void loadAll());
             <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpAccounts") }}</p>
             <p class="mt-1 font-medium">{{ enabledAccounts }} / {{ accounts.length }}</p>
           </div>
+          <template v-if="transportTab === 'http'">
+            <div>
+              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpStatus") }}</p>
+              <p class="mt-1 font-medium" :class="info?.httpRunning ? 'text-success' : 'text-warning'">
+                {{ locale.t(info?.httpRunning ? "settings.mcpHttpRunning" : "settings.mcpHttpStopped") }}
+              </p>
+            </div>
+            <div class="min-w-0 lg:col-span-2">
+              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpEndpoint") }}</p>
+              <p class="mt-1 truncate font-mono text-[11px]" :title="info?.httpEndpoint ?? ''">{{ info?.httpEndpoint ?? "—" }}</p>
+            </div>
+          </template>
         </div>
 
         <div v-if="transportTab === 'stdio'" class="space-y-2.5">
@@ -442,24 +454,7 @@ onMounted(() => void loadAll());
           </div>
         </div>
 
-        <div v-else class="space-y-5 p-4">
-          <div class="grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
-            <div>
-              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpTransport") }}</p>
-              <p class="mt-1 font-medium">Streamable HTTP</p>
-            </div>
-            <div>
-              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpStatus") }}</p>
-              <p class="mt-1 font-medium" :class="info?.httpRunning ? 'text-success' : 'text-warning'">
-                {{ locale.t(info?.httpRunning ? "settings.mcpHttpRunning" : "settings.mcpHttpStopped") }}
-              </p>
-            </div>
-            <div class="min-w-0">
-              <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpHttpEndpoint") }}</p>
-              <p class="mt-1 truncate font-mono text-[11px]" :title="info?.httpEndpoint ?? ''">{{ info?.httpEndpoint ?? "—" }}</p>
-            </div>
-          </div>
-
+        <div v-else class="space-y-5">
           <div v-if="info?.httpError" class="rounded-md border border-warning/30 bg-warning/8 px-3 py-2.5 text-xs leading-5 text-warning">
             {{ info.httpError }}
           </div>

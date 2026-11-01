@@ -396,6 +396,7 @@
   "settings.none": "Aucun paramètre correspondant",
   "settings.appearance": "Apparence",
   "settings.maps": "Cartes",
+  "settings.mapsDesc": "Choisissez un fournisseur de cartes et enregistrez les identifiants nécessaires à l’affichage et à la recherche d’adresses.",
   "settings.downloads": "Téléchargements",
   "settings.about": "À propos",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder : Paramètres → MCP → Ajout manuel, puis collez le JSON.",
   "settings.mcpLoadFailed": "Impossible de charger les paramètres MCP : {error}",
   "settings.mcpServerTitle": "Moteur MCP",
-  "settings.mcpServerDesc": "Installez un lanceur MCP stdio autonome pour les clients IA, indépendamment du paquet Cirrus.",
+  "settings.mcpServerDesc": "Conserve les connexions des outils IA lors des mises à jour de Cirrus, sans reconfiguration.",
   "settings.mcpServerInstall": "Installer",
   "settings.mcpServerUpdate": "Mettre à jour",
   "settings.mcpServerReinstall": "Réinstaller",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "Le mode Perdu est activé",
   "device.lostModePending": "Mise à jour du mode Perdu…",
   "device.activationLockOn": "Le verrouillage d’activation est activé",
-  "device.activationLockOff": "Le verrouillage d’activation est désactivé"
+  "device.activationLockOff": "Le verrouillage d’activation est désactivé",
+  "settings.aboutDescription": "Un client de bureau iCloud local-first qui réunit Photos, Localiser, Notes, Contacts et Calendrier dans une seule fenêtre.",
+  "settings.mcpLoginOnly": "La connexion et les identifiants sensibles sont toujours saisis dans la fenêtre native de Cirrus."
 }

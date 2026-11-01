@@ -396,6 +396,7 @@
   "settings.none": "一致する設定がありません",
   "settings.appearance": "外観",
   "settings.maps": "マップ",
+  "settings.mapsDesc": "地図プロバイダーを選び、地図表示と住所解決に使う認証情報を保存します。",
   "settings.downloads": "ダウンロード",
   "settings.about": "概要",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: [設定] → [MCP] → [手動追加] を選択し、JSON を貼り付けます。",
   "settings.mcpLoadFailed": "MCP 設定をロードできませんでした: {error}",
   "settings.mcpServerTitle": "MCP エンジン",
-  "settings.mcpServerDesc": "AI クライアント用の stdio MCP ランチャーを Cirrus 本体とは独立してインストールします。",
+  "settings.mcpServerDesc": "MCP コンポーネントを独立して保持し、Cirrus 更新時に AI ツールを再設定する必要を減らします。",
   "settings.mcpServerInstall": "インストール",
   "settings.mcpServerUpdate": "更新",
   "settings.mcpServerReinstall": "再インストール",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "紛失モードがオンです",
   "device.lostModePending": "紛失モードを更新中…",
   "device.activationLockOn": "アクティベーションロックがオンです",
-  "device.activationLockOff": "アクティベーションロックがオフです"
+  "device.activationLockOff": "アクティベーションロックがオフです",
+  "settings.aboutDescription": "写真、デバイス、メモ、連絡先、カレンダーを 1 つのウィンドウにまとめるローカル優先の iCloud デスクトップクライアントです。",
+  "settings.mcpLoginOnly": "サインインと機密認証情報は常に Cirrus のネイティブウィンドウで入力します。"
 }

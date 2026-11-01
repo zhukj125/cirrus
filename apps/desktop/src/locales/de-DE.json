@@ -396,6 +396,7 @@
   "settings.none": "Keine passenden Einstellungen",
   "settings.appearance": "Aussehen",
   "settings.maps": "Karten",
+  "settings.mapsDesc": "Wähle einen Kartenanbieter und speichere Zugangsdaten für Kartendarstellung und Adresssuche.",
   "settings.downloads": "Downloads",
   "settings.about": "Ungefähr",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: Einstellungen → MCP → Manuell hinzufügen, dann JSON einfügen.",
   "settings.mcpLoadFailed": "MCP-Einstellungen konnten nicht geladen werden: {error}",
   "settings.mcpServerTitle": "MCP-Engine",
-  "settings.mcpServerDesc": "Installiert einen eigenständigen stdio-MCP-Launcher für KI-Clients, unabhängig vom Cirrus-App-Paket.",
+  "settings.mcpServerDesc": "Behält KI-Tool-Verbindungen bei Cirrus-Updates bei, ohne sie neu konfigurieren zu müssen.",
   "settings.mcpServerInstall": "Installieren",
   "settings.mcpServerUpdate": "Aktualisieren",
   "settings.mcpServerReinstall": "Neu installieren",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "Verloren-Modus ist an",
   "device.lostModePending": "Verloren-Modus wird aktualisiert…",
   "device.activationLockOn": "Aktivierungssperre ist an",
-  "device.activationLockOff": "Aktivierungssperre ist aus"
+  "device.activationLockOff": "Aktivierungssperre ist aus",
+  "settings.aboutDescription": "Ein Local-first-iCloud-Desktop-Client, der Fotos, Wo ist?, Notizen, Kontakte und Kalender in einem Fenster vereint.",
+  "settings.mcpLoginOnly": "Anmeldung und sensible Zugangsdaten werden immer im nativen Cirrus-Fenster eingegeben."
 }

@@ -396,6 +396,7 @@
   "settings.none": "No matching settings",
   "settings.appearance": "Appearance",
   "settings.maps": "Maps",
+  "settings.mapsDesc": "Choose a map provider and save credentials for map display and address lookup.",
   "settings.downloads": "Downloads",
   "settings.about": "About",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: Settings → MCP → Manual add, then paste the JSON.",
   "settings.mcpLoadFailed": "Could not load MCP settings: {error}",
   "settings.mcpServerTitle": "MCP engine",
-  "settings.mcpServerDesc": "Install a standalone stdio MCP launcher for AI clients, independent of the Cirrus app bundle.",
+  "settings.mcpServerDesc": "Keeps AI tool connections working across Cirrus updates, with reinstall and removal available at any time.",
   "settings.mcpServerInstall": "Install",
   "settings.mcpServerUpdate": "Update",
   "settings.mcpServerReinstall": "Reinstall",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "Lost Mode is on",
   "device.lostModePending": "Updating Lost Mode…",
   "device.activationLockOn": "Activation Lock is on",
-  "device.activationLockOff": "Activation Lock is off"
+  "device.activationLockOff": "Activation Lock is off",
+  "settings.aboutDescription": "A local-first iCloud desktop client that brings Photos, Find My, Notes, Contacts, and Calendar into one window.",
+  "settings.mcpLoginOnly": "Sign-in and sensitive credentials are always entered in the native Cirrus window."
 }

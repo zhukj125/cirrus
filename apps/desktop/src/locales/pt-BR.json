@@ -396,6 +396,7 @@
   "settings.none": "Nenhuma configuração correspondente",
   "settings.appearance": "Aparência",
   "settings.maps": "Mapas",
+  "settings.mapsDesc": "Escolha um provedor de mapas e salve as credenciais para exibir o mapa e buscar endereços.",
   "settings.downloads": "Downloads",
   "settings.about": "Sobre",
   "settings.mcp": "MCP",
@@ -478,7 +479,7 @@
   "settings.mcpPath.qoder": "Qoder: Configurações → MCP → Adição manual e cole o JSON.",
   "settings.mcpLoadFailed": "Não foi possível carregar as configurações do MCP: {error}",
   "settings.mcpServerTitle": "Motor MCP",
-  "settings.mcpServerDesc": "Instale um inicializador MCP stdio independente para clientes de IA, sem depender do pacote do Cirrus.",
+  "settings.mcpServerDesc": "Mantém as conexões das ferramentas de IA ao atualizar o Cirrus, sem reconfigurá-las.",
   "settings.mcpServerInstall": "Instalar",
   "settings.mcpServerUpdate": "Atualizar",
   "settings.mcpServerReinstall": "Reinstalar",
@@ -806,5 +807,7 @@
   "device.lostModeOn": "O Modo Perdido está ativado",
   "device.lostModePending": "Atualizando o Modo Perdido…",
   "device.activationLockOn": "O Bloqueio de Ativação está ativado",
-  "device.activationLockOff": "O Bloqueio de Ativação está desativado"
+  "device.activationLockOff": "O Bloqueio de Ativação está desativado",
+  "settings.aboutDescription": "Um cliente desktop do iCloud local-first que reúne Fotos, Buscar, Notas, Contatos e Calendário em uma única janela.",
+  "settings.mcpLoginOnly": "O login e as credenciais sensíveis são sempre inseridos na janela nativa do Cirrus."
 }
