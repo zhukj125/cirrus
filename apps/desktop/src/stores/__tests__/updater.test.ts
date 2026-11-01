@@ -22,8 +22,8 @@ vi.mock("@/lib/api", () => ({
 import { useUpdaterStore } from "@/stores/updater";
 
 const update = {
-  currentVersion: "1.4.9",
-  version: "1.5.0",
+  currentVersion: "1.5.0",
+  version: "1.5.1",
   body: "A signed update.",
   date: "2026-10-30T00:00:00Z",
 };
@@ -51,7 +51,7 @@ describe("updater store", () => {
     const updater = useUpdaterStore();
 
     await updater.check();
-    expect(updater.info?.version).toBe("1.5.0");
+    expect(updater.info?.version).toBe("1.5.1");
 
     await updater.download();
     expect(api.download).toHaveBeenCalledOnce();

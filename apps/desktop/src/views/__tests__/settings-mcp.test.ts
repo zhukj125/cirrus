@@ -32,7 +32,7 @@ vi.mock("@/lib/api", () => ({
     httpEndpoint: "http://127.0.0.1:5226/mcp",
     httpAccessToken: "test-http-token",
     httpError: null,
-    version: "1.4.9",
+    version: "1.5.0",
   })),
   mcpSetEnabled: vi.fn(async (enabled: boolean) => ({
     enabled,
@@ -46,14 +46,14 @@ vi.mock("@/lib/api", () => ({
     httpEndpoint: enabled ? "http://127.0.0.1:5226/mcp" : null,
     httpAccessToken: enabled ? "test-http-token" : null,
     httpError: null,
-    version: "1.4.9",
+    version: "1.5.0",
   })),
   mcpToolAccess: vi.fn(async () => ({ disabledTools: [] })),
   mcpSetToolEnabled: vi.fn(async () => ({ disabledTools: [] })),
   mcpServerStatus: vi.fn(async () => ({
     installed: true,
-    installedVersion: "1.4.9",
-    bundledVersion: "1.4.9",
+    installedVersion: "1.5.0",
+    bundledVersion: "1.5.0",
     updateAvailable: false,
     activeSource: "installed" as const,
     installDir: String.raw`C:\Users\me\.cirrus\bin`,
@@ -112,7 +112,7 @@ describe("SettingsView MCP", () => {
     expect(wrapper.text()).toContain("Running · local access only");
     expect(wrapper.text()).toContain("MCP engine");
     expect(wrapper.text()).toContain("Independent install");
-    expect(wrapper.text()).toContain("1.4.9");
+    expect(wrapper.text()).toContain("1.5.0");
     expect(wrapper.text()).toContain("Codex");
     expect(wrapper.text()).toContain("Configured");
     expect(wrapper.text()).toContain("[mcp_servers.cirrus]");

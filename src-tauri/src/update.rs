@@ -363,14 +363,14 @@ mod tests {
     #[test]
     fn update_contract_uses_frontend_friendly_field_names() {
         let info = AppUpdateInfo {
-            current_version: "1.4.9".to_string(),
-            version: "1.5.0".to_string(),
+            current_version: "1.5.0".to_string(),
+            version: "1.5.1".to_string(),
             body: Some("Changes".to_string()),
             date: None,
         };
         let value = serde_json::to_value(info).expect("serialize update info");
-        assert_eq!(value["currentVersion"], "1.4.9");
-        assert_eq!(value["version"], "1.5.0");
+        assert_eq!(value["currentVersion"], "1.5.0");
+        assert_eq!(value["version"], "1.5.1");
 
         let progress = AppUpdateProgress { downloaded: 12, total: Some(24) };
         let value = serde_json::to_value(progress).expect("serialize update progress");

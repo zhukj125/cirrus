@@ -25,8 +25,8 @@ import UpdateDialog from "@/components/layout/UpdateDialog.vue";
 import { useUpdaterStore } from "@/stores/updater";
 
 const update = {
-  currentVersion: "1.4.9",
-  version: "1.5.0",
+  currentVersion: "1.5.0",
+  version: "1.5.1",
   body: "### Changes\n- Device address fix",
   date: "2026-10-30T00:00:00Z",
 };
@@ -54,11 +54,11 @@ describe("UpdateDialog", () => {
     api.check.mockResolvedValue(update);
     const updater = useUpdaterStore();
     await updater.check();
-    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.4.9" }, global: { plugins: [pinia] } });
+    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.5.0" }, global: { plugins: [pinia] } });
 
     expect(wrapper.get('[role="dialog"]').text()).toContain("Update center");
     expect(wrapper.text()).toContain("Changelog");
-    expect(wrapper.text()).toContain("Current version v1.4.9. Latest version v1.5.0.");
+    expect(wrapper.text()).toContain("Current version v1.5.0. Latest version v1.5.1.");
     expect(wrapper.text()).toContain("Device address fix");
     expect(wrapper.findAll("button").some((button) => button.text().includes("Download in background"))).toBe(true);
 
@@ -76,7 +76,7 @@ describe("UpdateDialog", () => {
     api.check.mockResolvedValue(null);
     const updater = useUpdaterStore();
     await updater.check();
-    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.4.9" }, global: { plugins: [pinia] } });
+    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.5.0" }, global: { plugins: [pinia] } });
     await flushPromises();
 
     await wrapper
@@ -100,7 +100,7 @@ describe("UpdateDialog", () => {
     api.check.mockResolvedValue({ ...update, body: `- Device address fix\n- Compare with ${privateReference}` });
     const updater = useUpdaterStore();
     await updater.check();
-    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.4.9" }, global: { plugins: [pinia] } });
+    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.5.0" }, global: { plugins: [pinia] } });
 
     expect(wrapper.text()).toContain("Device address fix");
     expect(wrapper.text()).not.toContain(privateReference);
@@ -109,9 +109,9 @@ describe("UpdateDialog", () => {
     api.check.mockResolvedValue(null);
     const updater = useUpdaterStore();
     await updater.check();
-    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.4.9" }, global: { plugins: [pinia] } });
+    const wrapper = mount(UpdateDialog, { props: { currentVersion: "1.5.0" }, global: { plugins: [pinia] } });
 
-    expect(wrapper.text()).toContain("Version v1.4.9 is up to date.");
+    expect(wrapper.text()).toContain("Version v1.5.0 is up to date.");
     expect(wrapper.findAll("button").some((button) => button.text().includes("Check again"))).toBe(true);
   });
 });

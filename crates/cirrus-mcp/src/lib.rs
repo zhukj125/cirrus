@@ -16,6 +16,7 @@ use axum::{
 };
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Url;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -440,7 +441,7 @@ async fn handle_message(payload: Value, client: &mut ClientIdentity, bridge: Opt
                         "name": CLIENT_NAME,
                         "version": env!("CARGO_PKG_VERSION")
                     },
-                    "instructions": "Cirrus exposes iCloud sign-in and authorized-account listing. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed."
+                    "instructions": "Cirrus exposes iCloud sign-in and authorized-account listing. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed. Preserve the first Markdown summary, including artwork URLs when provided. Render native MCP image content blocks when present, and include each device's last location update timestamp when presenting device lists."
                 }),
             ))
         }
@@ -489,8 +490,15 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_list_devices",
                 "title": "List Find My devices",
-                "description": "List Apple devices for an MCP-enabled account. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Returns deviceCount and devices[] with name, model, online status, battery, location, artwork, and deviceId. When artwork is available it is returned both as an MCP image block and as a base64 data URL in structuredContent.devices[].deviceImageDataUrl. Use the exact returned deviceId with cirrus_play_sound.",
-                "inputSchema": account_schema(json!({})),
+                "description": "List Apple devices for an MCP-enabled account. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Returns retrievedAt, deviceCount, and devices[] with name, model, online status, activation lock state, battery, location, artwork, and deviceId. Each device includes lastLocationUpdatedAt and an artwork object. includeArtwork defaults to url, which returns stable Apple-hosted artwork URLs without fetching image bytes. dataUri additionally returns native MCP image content blocks with inline base64 data and structuredContent.artwork.dataUri; none omits artwork. The first text block is a device summary, followed by a detailed table. Include the last location update in user-facing output. Use the exact returned deviceId with cirrus_play_sound.",
+                "inputSchema": account_schema(json!({
+                    "includeArtwork": {
+                        "type": "string",
+                        "enum": ["url", "dataUri", "none"],
+                        "default": "url",
+                        "description": "Artwork payload mode. url returns stable Apple-hosted artwork URLs, dataUri additionally returns native MCP image content blocks with inline base64 data, and none omits artwork."
+                    }
+                })),
                 "outputSchema": tool_output_schema("cirrus_list_devices"),
                 "annotations": { "title": "List Find My devices", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
@@ -663,6 +671,21 @@ fn account_schema_required(extra: Value, extra_required: &[&str]) -> Value {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtworkMode {
+    Url,
+    DataUri,
+    None,
+}
+
+fn artwork_mode(arguments: &Value) -> ArtworkMode {
+    match arguments.get("includeArtwork").and_then(Value::as_str) {
+        Some(value) if value.eq_ignore_ascii_case("dataUri") => ArtworkMode::DataUri,
+        Some(value) if value.eq_ignore_ascii_case("none") => ArtworkMode::None,
+        _ => ArtworkMode::Url,
+    }
+}
+
 async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bridge: Option<&BridgeTarget>) -> Value {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, -32602, "Missing tool name");
@@ -681,11 +704,30 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
         return success_response(id, result);
     }
 
-    match call_bridge(name, &arguments, client, bridge).await {
+    let artwork_mode = artwork_mode(&arguments);
+    let mut bridge_arguments = arguments.clone();
+    if name == "cirrus_list_devices" {
+        if let Some(object) = bridge_arguments.as_object_mut() {
+            object.remove("includeArtwork");
+        }
+    }
+    match call_bridge(name, &bridge_arguments, client, bridge).await {
         Ok(mut result) => {
-            let mut content = result_image_content(name, &mut result).await;
+            if name == "cirrus_list_devices" {
+                annotate_device_list_timestamps(&mut result, now_millis());
+            }
+            let mut content = result_image_content(name, &mut result, artwork_mode).await;
             let text_result = result_without_inline_artwork(&result);
-            let structured_result = result_for_structured_content(name, &result, &text_result);
+            if name == "cirrus_list_devices" {
+                content.insert(
+                    0,
+                    json!({
+                        "type": "text",
+                        "text": devices_summary_markdown(&result, artwork_mode)
+                    }),
+                );
+            }
+            let structured_result = result_for_structured_content(name, &result, &text_result, artwork_mode);
             content.push(json!({
                 "type": "text",
                 "text": tool_result_text(name, &text_result)
@@ -743,7 +785,7 @@ async fn record_mcp_history(
         "error": error,
         "response": response
     });
-    let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() else {
+    let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).no_proxy().build() else {
         return;
     };
     let _ = http.post(format!("{}/v1/history", target.base_url)).bearer_auth(target.token).json(&body).send().await;
@@ -1037,6 +1079,7 @@ fn device_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "retrievedAt": { "type": "integer", "description": "Unix timestamp in milliseconds when the device list was fetched from Cirrus." },
             "deviceCount": { "type": "integer", "description": "Number of devices returned." },
             "devices": {
                 "type": "array",
@@ -1048,14 +1091,25 @@ fn device_output_schema() -> Value {
                         "name": { "type": "string", "description": "Device name shown by Find My." },
                         "deviceDisplayName": { "type": "string", "description": "Human-readable Apple model name." },
                         "deviceStatus": { "type": "string", "description": "Raw Find My status code; 200 means online." },
+                        "activationLocked": { "type": ["boolean", "null"], "description": "Whether Activation Lock is enabled on the device." },
                         "batteryLevel": { "type": ["number", "null"], "description": "Battery fraction from 0 to 1. Use batteryStatus when it is Unknown." },
                         "batteryStatus": { "type": ["string", "null"], "description": "Find My battery status label." },
-                        "location": { "type": ["object", "null"], "description": "Last known coordinates and accuracy. Null when unavailable." },
+                        "location": { "type": ["object", "null"], "description": "Last known coordinates, accuracy, and raw Find My timestamp. Null when unavailable." },
+                        "lastLocationUpdatedAt": { "type": ["integer", "null"], "description": "Unix timestamp in milliseconds of the latest Find My location report." },
                         "locationEnabled": { "type": ["boolean", "null"], "description": "Whether Location Services is enabled on the device." },
                         "deviceImageMimeType": { "type": ["string", "null"], "description": "MIME type of the image block returned alongside this result." },
-                        "deviceImageDataUrl": { "type": ["string", "null"], "description": "Base64 data URL for the device artwork. This field can be very large." },
-                        "deviceImageUrl": { "type": ["string", "null"], "description": "Apple-hosted artwork URL." },
-                        "deviceImageError": { "type": ["string", "null"], "description": "Why artwork could not be included, when applicable." }
+                        "deviceImageUrl": { "type": ["string", "null"], "description": "Apple-hosted artwork URL suitable for Markdown image syntax." },
+                        "deviceImageError": { "type": ["string", "null"], "description": "Why artwork could not be included, when applicable." },
+                        "artwork": {
+                            "type": ["object", "null"],
+                            "description": "Normalized artwork metadata. dataUri is present only when includeArtwork=dataUri.",
+                            "properties": {
+                                "mimeType": { "type": ["string", "null"], "description": "Image MIME type." },
+                                "url": { "type": ["string", "null"], "description": "Stable Apple-hosted artwork URL for Markdown rendering." },
+                                "dataUri": { "type": ["string", "null"], "description": "Inline base64 data URI when includeArtwork=dataUri." },
+                                "alt": { "type": "string", "description": "Accessible image label." }
+                            }
+                        }
                     },
                     "required": ["deviceId", "name"]
                 }
@@ -1474,6 +1528,39 @@ fn tool_error_text(message: &str) -> String {
     }
 }
 
+fn devices_summary_markdown(result: &Value, mode: ArtworkMode) -> String {
+    let devices = result.get("devices").and_then(Value::as_array).cloned().unwrap_or_default();
+    let online =
+        devices.iter().filter(|device| device.get("deviceStatus").and_then(Value::as_str) == Some("200")).count();
+    let offline = devices.len().saturating_sub(online);
+    let mut output = format!("# Find My devices ({})\n\n{} online, {} offline.", devices.len(), online, offline);
+    for device in devices {
+        let name = device.get("name").and_then(Value::as_str).unwrap_or("Apple device");
+        let model = device
+            .get("deviceDisplayName")
+            .and_then(Value::as_str)
+            .or_else(|| device.get("modelDisplayName").and_then(Value::as_str))
+            .unwrap_or("Unknown");
+        output.push_str(&format!(
+            "\n- **{}** ({}) — {} · battery {} · activation lock {} · last location {}",
+            name,
+            model,
+            device_status_text(&device),
+            device_battery_text(&device),
+            device_activation_lock_text(&device),
+            device_last_location_updated_text(&device),
+        ));
+        if mode == ArtworkMode::Url {
+            if let Some(url) = device_artwork_url(&device) {
+                output.push_str(&format!("\n  ![Device artwork]({url})"));
+            }
+        } else if mode == ArtworkMode::DataUri {
+            output.push_str("\n  Artwork embedded as native image content.");
+        }
+    }
+    output
+}
+
 fn devices_markdown(result: &Value) -> String {
     let devices = result.get("devices").and_then(Value::as_array).cloned().unwrap_or_default();
     let count = result.get("deviceCount").and_then(Value::as_u64).unwrap_or(devices.len() as u64);
@@ -1482,8 +1569,8 @@ fn devices_markdown(result: &Value) -> String {
         output.push_str("No devices were returned for this account.");
         return output;
     }
-    output.push_str("| Name | Model | Status | Battery | Location | Artwork | Device ID |\n");
-    output.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    output.push_str("| Name | Model | Status | Activation lock | Battery | Last location update | Location | Artwork | Device ID |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
     for device in devices {
         let name = device.get("name").and_then(Value::as_str).unwrap_or("Apple device");
         let model = device
@@ -1493,17 +1580,22 @@ fn devices_markdown(result: &Value) -> String {
             .unwrap_or("Unknown");
         let id = device.get("deviceId").and_then(Value::as_str).unwrap_or("Unknown");
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | `{}` |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | `{}` |\n",
             markdown_cell(name),
             markdown_cell(model),
             device_status_text(&device),
+            device_activation_lock_text(&device),
             device_battery_text(&device),
+            device_last_location_updated_text(&device),
             markdown_cell(device_location_text(&device)),
             device_artwork_text(&device),
             markdown_cell(id),
         ));
     }
-    output.push_str("\nUse the exact `deviceId` with `cirrus_play_sound`.");
+    if let Some(retrieved_at) = result.get("retrievedAt").and_then(Value::as_i64) {
+        output.push_str(&format!("\n\nData retrieved: {}. The per-device update time is the latest location report from Find My, not a general device-online timestamp.", format_timestamp_millis(retrieved_at)));
+    }
+    output.push_str("\n\nUse the exact `deviceId` with `cirrus_play_sound`.");
     output
 }
 
@@ -1558,6 +1650,14 @@ fn device_status_text(device: &Value) -> &'static str {
     }
 }
 
+fn device_activation_lock_text(device: &Value) -> &'static str {
+    match device.get("activationLocked").and_then(Value::as_bool) {
+        Some(true) => "Locked",
+        Some(false) => "Unlocked",
+        None => "Unknown",
+    }
+}
+
 fn device_battery_text(device: &Value) -> String {
     if device.get("batteryStatus").and_then(Value::as_str).is_some_and(|value| value.eq_ignore_ascii_case("unknown")) {
         return "Unknown".to_string();
@@ -1593,8 +1693,64 @@ fn device_location_text(device: &Value) -> String {
     format!("{latitude:.6}, {longitude:.6}{accuracy}{}", if stale { " · stale" } else { "" })
 }
 
+fn device_last_location_updated_at(device: &Value) -> Option<i64> {
+    device
+        .get("lastLocationUpdatedAt")
+        .and_then(Value::as_i64)
+        .or_else(|| device.get("location").and_then(|location| location.get("timeStamp")).and_then(Value::as_i64))
+}
+
+fn device_last_location_updated_text(device: &Value) -> String {
+    device_last_location_updated_at(device).map(format_timestamp_millis).unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn format_timestamp_millis(value: i64) -> String {
+    DateTime::<Utc>::from_timestamp_millis(value)
+        .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Secs, true))
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn device_artwork_url(device: &Value) -> Option<&str> {
+    device
+        .pointer("/artwork/url")
+        .and_then(Value::as_str)
+        .or_else(|| device.get("deviceImageUrl").and_then(Value::as_str))
+        .filter(|url| is_apple_device_image_url(url))
+}
+
+fn annotate_device_artwork_url(device: &mut Value) {
+    let url = device
+        .get("deviceImageUrl")
+        .and_then(Value::as_str)
+        .filter(|url| is_apple_device_image_url(url))
+        .map(str::to_string);
+    let alt = device_label(device);
+    let Some(device_object) = device.as_object_mut() else { return };
+    match url {
+        Some(url) => {
+            device_object.insert("artwork".to_string(), json!({ "mimeType": "image/png", "url": url, "alt": alt }));
+        }
+        None => {
+            device_object.insert("artwork".to_string(), Value::Null);
+        }
+    }
+}
+
+fn remove_device_artwork(device: &mut Value) {
+    let Some(device) = device.as_object_mut() else { return };
+    for key in ["artwork", "deviceImageUrl", "deviceImageMimeType", "deviceImageDataUrl", "deviceImageError"] {
+        device.remove(key);
+    }
+}
+
 fn device_artwork_text(device: &Value) -> &'static str {
-    if device.get("deviceImageMimeType").and_then(Value::as_str).is_some() {
+    if device.pointer("/artwork/dataUri").and_then(Value::as_str).is_some() {
+        "Embedded"
+    } else if device.pointer("/artwork/url").and_then(Value::as_str).is_some()
+        || device.get("deviceImageUrl").and_then(Value::as_str).is_some()
+    {
+        "URL"
+    } else if device.get("deviceImageMimeType").and_then(Value::as_str).is_some() {
         "Included"
     } else if device.get("deviceImageError").and_then(Value::as_str).is_some() {
         "Unavailable"
@@ -1663,7 +1819,14 @@ fn device_summary_text(device: &Value) -> String {
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite())
         .map(|value| format!("Battery: {:.0}%", value.clamp(0.0, 1.0) * 100.0));
-    [Some(device_label(device)), Some(location), Some(status.to_string()), battery]
+    let activation = match device.get("activationLocked").and_then(Value::as_bool) {
+        Some(true) => Some("Activation lock: enabled".to_string()),
+        Some(false) => Some("Activation lock: disabled".to_string()),
+        None => None,
+    };
+    let updated = device_last_location_updated_at(device)
+        .map(|value| format!("Last location update: {}", format_timestamp_millis(value)));
+    [Some(device_label(device)), Some(location), Some(status.to_string()), activation, battery, updated]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -1754,7 +1917,7 @@ async fn device_image_content(
     )
 }
 
-async fn result_image_content(tool: &str, result: &mut Value) -> Vec<Value> {
+async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode) -> Vec<Value> {
     if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" {
         let data_url = result.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
         let image = parse_image_data_url(data_url);
@@ -1775,17 +1938,34 @@ async fn result_image_content(tool: &str, result: &mut Value) -> Vec<Value> {
     let Some(devices) = result.get_mut("devices").and_then(Value::as_array_mut) else {
         return Vec::new();
     };
+    if mode != ArtworkMode::DataUri {
+        for device in devices {
+            if mode == ArtworkMode::Url {
+                annotate_device_artwork_url(device);
+            } else {
+                remove_device_artwork(device);
+            }
+        }
+        return Vec::new();
+    }
     let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() else {
         return Vec::new();
     };
     let mut content = Vec::new();
     for device in devices {
+        annotate_device_artwork_url(device);
+        let alt = device_label(device);
         let (items, artwork, error) = device_image_content(&client, device).await;
         content.extend(items);
         if let Some(device) = device.as_object_mut() {
             if let Some((mime_type, data_url)) = artwork {
                 device.insert("deviceImageMimeType".to_string(), json!(mime_type));
-                device.insert("deviceImageDataUrl".to_string(), json!(data_url));
+                device.insert("deviceImageDataUrl".to_string(), json!(data_url.clone()));
+                let artwork = device.entry("artwork").or_insert_with(|| json!({ "alt": alt }));
+                if let Some(artwork) = artwork.as_object_mut() {
+                    artwork.insert("mimeType".to_string(), json!(mime_type));
+                    artwork.insert("dataUri".to_string(), json!(data_url));
+                }
             }
             if let Some(error) = error {
                 device.insert("deviceImageError".to_string(), json!(error));
@@ -1806,11 +1986,42 @@ fn parse_image_data_url(value: &str) -> Option<(String, String, usize)> {
     Some((mime_type.to_string(), encoded.to_string(), bytes.len()))
 }
 
-fn result_for_structured_content(tool: &str, result: &Value, text_result: &Value) -> Value {
-    if tool == "cirrus_list_devices" {
-        result.clone()
+fn annotate_device_list_timestamps(result: &mut Value, retrieved_at: i64) {
+    let Some(result) = result.as_object_mut() else { return };
+    result.insert("retrievedAt".to_string(), json!(retrieved_at));
+    let Some(devices) = result.get_mut("devices").and_then(Value::as_array_mut) else { return };
+    for device in devices {
+        let updated_at = device.pointer("/location/timeStamp").and_then(Value::as_i64);
+        if let Some(device) = device.as_object_mut() {
+            device.insert("lastLocationUpdatedAt".to_string(), json!(updated_at));
+        }
+    }
+}
+
+fn result_for_structured_content(tool: &str, result: &Value, text_result: &Value, mode: ArtworkMode) -> Value {
+    if tool == "cirrus_list_devices" && mode == ArtworkMode::DataUri {
+        let mut structured = result.clone();
+        strip_flat_device_image_data_urls(&mut structured);
+        structured
     } else {
         text_result.clone()
+    }
+}
+
+fn strip_flat_device_image_data_urls(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.remove("deviceImageDataUrl");
+            for value in fields.values_mut() {
+                strip_flat_device_image_data_urls(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                strip_flat_device_image_data_urls(value);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1825,6 +2036,7 @@ fn strip_inline_artwork(value: &mut Value) {
         Value::Object(fields) => {
             fields.remove("deviceImageDataUrl");
             fields.remove("dataUrl");
+            fields.remove("dataUri");
             for value in fields.values_mut() {
                 strip_inline_artwork(value);
             }
@@ -1856,6 +2068,8 @@ async fn call_bridge(
     };
     let response = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(13 * 60))
+        // MCP clients can inherit a system proxy; the Cirrus bridge is loopback-only.
+        .no_proxy()
         .build()
         .map_err(|error| format!("Could not create the Cirrus MCP client: {error}"))?
         .post(format!("{}/v1/call", target.base_url))
@@ -2051,6 +2265,7 @@ mod tests {
                 "deviceDisplayName": "iPhone",
                 "deviceId": "device-id-123",
                 "deviceStatus": "200",
+                "activationLocked": false,
                 "batteryLevel": 0.82,
                 "deviceImageMimeType": "image/png",
                 "deviceImageDataUrl": "data:image/png;base64,large",
@@ -2058,6 +2273,7 @@ mod tests {
                     "latitude": 30.1234567,
                     "longitude": 120.7654321,
                     "horizontalAccuracy": 9.6,
+                    "timeStamp": 1_700_000_000_000i64,
                     "isOld": false
                 }
             }]
@@ -2066,7 +2282,7 @@ mod tests {
         let text = tool_result_text("cirrus_list_devices", &visible);
         assert!(text.contains("# Find My devices (1)"));
         assert!(text.contains(
-            "| Test Phone | iPhone | Online | 82% | 30.123457, 120.765432 ±10 m | Included | `device-id-123` |"
+            "| Test Phone | iPhone | Online | Unlocked | 82% | 2023-11-14T22:13:20Z | 30.123457, 120.765432 ±10 m | Included | `device-id-123` |"
         ));
         assert!(!text.contains("base64"));
         assert!(!visible.to_string().contains("base64"));
@@ -2084,7 +2300,51 @@ mod tests {
         let properties = &schema["properties"]["devices"]["items"]["properties"];
         assert!(properties.get("deviceId").is_some());
         assert!(properties.get("location").is_some());
-        assert!(properties.get("deviceImageDataUrl").is_some());
+        assert!(properties.get("deviceImageDataUrl").is_none());
+        assert!(properties.get("deviceImageMimeType").is_some());
+        assert!(properties.get("activationLocked").is_some());
+        assert!(properties.get("lastLocationUpdatedAt").is_some());
+        assert!(schema["properties"].get("retrievedAt").is_some());
+    }
+
+    #[test]
+    fn device_text_uses_native_image_block_without_external_markdown() {
+        let result = json!({
+            "retrievedAt": 1_700_000_000_000i64,
+            "deviceCount": 1,
+            "devices": [{
+                "name": "Test Phone",
+                "deviceDisplayName": "iPhone",
+                "deviceId": "device-id-123",
+                "deviceStatus": "200",
+                "lastLocationUpdatedAt": 1_700_000_000_000i64,
+                "deviceImageUrl": "https://statici.icloud.com/fmipmobile/deviceImages-9.0/iPhone/iPhone18,3/online-sourcelist.png",
+                "deviceImageMimeType": "image/png",
+                "location": {
+                    "latitude": 30.1234567,
+                    "longitude": 120.7654321,
+                    "horizontalAccuracy": 9.6,
+                    "timeStamp": 1_700_000_000_000i64,
+                    "isOld": false
+                }
+            }]
+        });
+        let text = tool_result_text("cirrus_list_devices", &result);
+        assert!(!text.contains("![Device artwork](https://"));
+        assert!(text.contains("| URL |"));
+        assert!(text.contains("2023-11-14T22:13:20Z"));
+        assert!(text.contains("Data retrieved: 2023-11-14T22:13:20Z"));
+    }
+
+    #[test]
+    fn device_list_timestamps_are_annotated() {
+        let mut result = json!({
+            "deviceCount": 1,
+            "devices": [{ "location": { "timeStamp": 1_700_000_000_000i64 } }]
+        });
+        annotate_device_list_timestamps(&mut result, 1_700_000_100_000i64);
+        assert_eq!(result["retrievedAt"], 1_700_000_100_000i64);
+        assert_eq!(result["devices"][0]["lastLocationUpdatedAt"], 1_700_000_000_000i64);
     }
 
     #[test]
@@ -2107,7 +2367,7 @@ mod tests {
     }
 
     #[test]
-    fn device_structured_content_keeps_base64_artwork() {
+    fn device_structured_content_does_not_duplicate_base64_artwork() {
         let result = json!({
             "devices": [{
                 "name": "Phone",
@@ -2116,9 +2376,67 @@ mod tests {
             }]
         });
         let text_result = result_without_inline_artwork(&result);
-        let structured = result_for_structured_content("cirrus_list_devices", &result, &text_result);
-        assert_eq!(structured["devices"][0]["deviceImageDataUrl"], "data:image/png;base64,YWJj");
+        let structured = result_for_structured_content("cirrus_list_devices", &result, &text_result, ArtworkMode::Url);
+        assert!(structured["devices"][0].get("deviceImageDataUrl").is_none());
+        assert_eq!(structured["devices"][0]["deviceImageMimeType"], "image/png");
         assert!(text_result["devices"][0].get("deviceImageDataUrl").is_none());
+    }
+
+    #[tokio::test]
+    async fn image_tools_return_native_base64_image_content() {
+        let mut result = json!({ "dataUrl": "data:image/png;base64,YWJj" });
+        let content = result_image_content("cirrus_get_account_avatar", &mut result, ArtworkMode::Url).await;
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["data"], "YWJj");
+        assert_eq!(content[0]["mimeType"], "image/png");
+        assert_eq!(result["imageIncluded"], true);
+        assert_eq!(result["byteLength"], 3);
+    }
+
+    #[test]
+    fn artwork_mode_defaults_to_url_and_supports_explicit_modes() {
+        assert_eq!(artwork_mode(&json!({})), ArtworkMode::Url);
+        assert_eq!(artwork_mode(&json!({ "includeArtwork": "url" })), ArtworkMode::Url);
+        assert_eq!(artwork_mode(&json!({ "includeArtwork": "dataUri" })), ArtworkMode::DataUri);
+        assert_eq!(artwork_mode(&json!({ "includeArtwork": "none" })), ArtworkMode::None);
+    }
+
+    #[tokio::test]
+    async fn url_artwork_mode_returns_text_fallback_without_fetching_images() {
+        let url = "https://statici.icloud.com/fmipmobile/deviceImages-9.0/iPhone/iPhone18,3/online-sourcelist.png";
+        let mut result = json!({
+            "devices": [{
+                "name": "Test Phone",
+                "deviceDisplayName": "iPhone",
+                "deviceImageUrl": url
+            }]
+        });
+        let content = result_image_content("cirrus_list_devices", &mut result, ArtworkMode::Url).await;
+        assert!(content.is_empty());
+        assert_eq!(result["devices"][0]["artwork"]["url"], url);
+        assert!(result["devices"][0]["artwork"].get("dataUri").is_none());
+        let summary = devices_summary_markdown(&result, ArtworkMode::Url);
+        assert!(summary.contains(&format!("![Device artwork]({url})")));
+    }
+
+    #[test]
+    fn data_uri_structured_content_keeps_nested_data_uri_only() {
+        let result = json!({
+            "devices": [{
+                "artwork": {
+                    "url": "https://statici.icloud.com/example.png",
+                    "dataUri": "data:image/png;base64,YWJj"
+                },
+                "deviceImageDataUrl": "data:image/png;base64,YWJj"
+            }]
+        });
+        let text_result = result_without_inline_artwork(&result);
+        let structured =
+            result_for_structured_content("cirrus_list_devices", &result, &text_result, ArtworkMode::DataUri);
+        assert!(structured["devices"][0].get("deviceImageDataUrl").is_none());
+        assert_eq!(structured["devices"][0]["artwork"]["dataUri"], "data:image/png;base64,YWJj");
+        assert!(text_result["devices"][0]["artwork"].get("dataUri").is_none());
     }
 
     #[tokio::test]
