@@ -1,5 +1,7 @@
 !macro StopCirrusMcpSidecar
   DetailPrint "Stopping Cirrus MCP sidecar..."
+  nsExec::ExecToLog 'taskkill /F /IM cirrus-mcp-server.exe'
+  Pop $0
   nsExec::ExecToLog 'taskkill /F /IM cirrus-mcp.exe'
   Pop $0
   Sleep 400

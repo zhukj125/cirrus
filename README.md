@@ -170,13 +170,13 @@ The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, an
 Cirrus supports two MCP transports:
 
 - **Streamable HTTP** runs inside the desktop process and listens on `http://127.0.0.1:5226/mcp` when enabled. It does not start a separate console process.
-- **stdio** remains a separate `cirrus-mcp` executable (`cirrus-mcp.exe` on Windows) for MCP clients that launch local commands. In development, Cirrus looks for it next to the running application, for example:
+- **stdio** uses a `cirrus-mcp-server` launcher (`cirrus-mcp-server.exe` on Windows), matching DBX's `dbx-mcp-server` wrapper. The launcher starts the native `cirrus-mcp` binary with hidden Windows console handling while inheriting stdin/stdout for MCP. In development, Cirrus looks for it next to the running application, for example:
 
 ```text
-target/debug/cirrus-mcp.exe
+target/debug/cirrus-mcp-server.exe
 ```
 
-If **Settings → MCP** reports that `cirrus-mcp` was not found, build the development executable first:
+If **Settings → MCP** reports that the MCP launcher was not found, build the development executables first:
 
 ```sh
 cargo build -p cirrus-mcp
@@ -184,13 +184,13 @@ cargo build -p cirrus-mcp
 pnpm build:mcp
 ```
 
-Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds the release executable and copies it to `src-tauri/binaries/cirrus-mcp-<target>` (with an `.exe` suffix on Windows), where `src-tauri/tauri.mcp.conf.json` includes it as a Tauri sidecar in the installer.
+Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds and copies both `cirrus-mcp-<target>` and `cirrus-mcp-server-<target>` (with `.exe` suffixes on Windows), where `src-tauri/tauri.mcp.conf.json` includes both as Tauri sidecars in the installer.
 
-The standalone executable can still be used manually for either transport:
+The native executable can still be used manually for HTTP, and the launcher for stdio:
 
 ```sh
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
-cirrus-mcp
+cirrus-mcp-server
 ```
 
 ## Limitations

@@ -4,6 +4,6 @@
     "beforeBuildCommand": "pnpm build:checked && pnpm build:mcp:sidecar"
   },
   "bundle": {
-    "externalBin": ["binaries/cirrus-mcp"]
+    "externalBin": ["binaries/cirrus-mcp", "binaries/cirrus-mcp-server"]
   }
 }

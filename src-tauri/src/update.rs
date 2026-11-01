@@ -259,10 +259,15 @@ fn terminate_mcp_sidecars() -> Result<usize, String> {
     const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
     const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-    let Some(binary) = crate::mcp::mcp_binary_path().filter(|path| path.is_file()) else {
+    let expected = [crate::mcp::mcp_binary_path(), crate::mcp::mcp_native_binary_path()]
+        .into_iter()
+        .flatten()
+        .filter(|path| path.is_file())
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+        .collect::<Vec<_>>();
+    if expected.is_empty() {
         return Ok(0);
-    };
-    let expected = std::fs::canonicalize(&binary).unwrap_or(binary);
+    }
     let mut system = System::new_all();
     let mut terminated = HashSet::new();
     let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
@@ -275,7 +280,7 @@ fn terminate_mcp_sidecars() -> Result<usize, String> {
                 continue;
             };
             let actual = std::fs::canonicalize(actual).unwrap_or_else(|_| actual.to_path_buf());
-            if !same_executable_path(&actual, &expected) {
+            if !expected.iter().any(|expected| same_executable_path(&actual, expected)) {
                 continue;
             }
             matched_pids.push(pid.as_u32());

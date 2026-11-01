@@ -170,13 +170,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 Cirrus 支持两种 MCP 传输：
 
 - **Streamable HTTP** 在桌面主进程内运行，启用后监听 `http://127.0.0.1:5226/mcp`，不会再启动独立的控制台进程。
-- **stdio** 仍使用独立的 `cirrus-mcp` 可执行文件（Windows 为 `cirrus-mcp.exe`），供需要启动本地命令的 MCP 客户端使用。开发模式下，Cirrus 会查找与当前程序同目录的可执行文件，例如：
+- **stdio** 使用 `cirrus-mcp-server` launcher（Windows 为 `cirrus-mcp-server.exe`），与 DBX 的 `dbx-mcp-server` 包装器保持一致。launcher 会以隐藏控制台的方式启动原生 `cirrus-mcp`，同时继承 stdin/stdout 供 MCP 通信。开发模式下，Cirrus 会查找与当前程序同目录的 launcher，例如：
 
 ```text
-target/debug/cirrus-mcp.exe
+target/debug/cirrus-mcp-server.exe
 ```
 
-如果 **设置 → MCP** 提示未找到 `cirrus-mcp`，先构建开发用可执行文件：
+如果 **设置 → MCP** 提示未找到 MCP launcher，先构建开发用可执行文件：
 
 ```sh
 cargo build -p cirrus-mcp
@@ -184,13 +184,13 @@ cargo build -p cirrus-mcp
 pnpm build:mcp
 ```
 
-构建后重新打开 MCP 设置或重启 Cirrus。正式打包时使用 `pnpm build:mcp:sidecar`，脚本会构建 release 版本并复制到 `src-tauri/binaries/cirrus-mcp-<target>`（Windows 带 `.exe` 后缀），再由 `src-tauri/tauri.mcp.conf.json` 作为 Tauri sidecar 打入安装包。
+构建后重新打开 MCP 设置或重启 Cirrus。正式打包时使用 `pnpm build:mcp:sidecar`，脚本会构建并复制 `cirrus-mcp-<target>` 和 `cirrus-mcp-server-<target>`（Windows 带 `.exe` 后缀），再由 `src-tauri/tauri.mcp.conf.json` 将两者一起作为 Tauri sidecar 打入安装包。
 
-独立可执行文件仍可手动启动两种传输：
+原生可执行文件仍可手动启动 HTTP，launcher 用于 stdio：
 
 ```sh
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
-cirrus-mcp
+cirrus-mcp-server
 ```
 
 ## 限制

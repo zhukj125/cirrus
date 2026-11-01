@@ -12,15 +12,18 @@ function hostTarget() {
 const target = process.env.TAURI_ENV_TARGET_TRIPLE || process.env.CARGO_BUILD_TARGET || hostTarget();
 const debug = process.argv.includes("--debug");
 const profile = debug ? "debug" : "release";
-const executable = process.platform === "win32" ? "cirrus-mcp.exe" : "cirrus-mcp";
+const extension = process.platform === "win32" ? ".exe" : "";
 const targetRoot = resolve(process.env.CARGO_TARGET_DIR || "target");
-const source = join(targetRoot, target, profile, executable);
 const destinationDir = join("src-tauri", "binaries");
-const destination = join(destinationDir, `cirrus-mcp-${target}${process.platform === "win32" ? ".exe" : ""}`);
 
 execFileSync("cargo", ["build", "-p", "cirrus-mcp", "--target", target, ...(debug ? [] : ["--release"])], {
   stdio: "inherit",
 });
 mkdirSync(destinationDir, { recursive: true });
-copyFileSync(source, destination);
-console.log(`MCP sidecar written to ${destination}`);
+
+for (const executable of ["cirrus-mcp", "cirrus-mcp-server"]) {
+  const source = join(targetRoot, target, profile, `${executable}${extension}`);
+  const destination = join(destinationDir, `${executable}-${target}${extension}`);
+  copyFileSync(source, destination);
+  console.log(`MCP sidecar written to ${destination}`);
+}

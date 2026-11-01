@@ -1086,11 +1086,17 @@ fn escape_toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
+fn mcp_sibling_path(file_name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let file_name = if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" };
-    Some(dir.join(file_name))
+    Some(exe.parent()?.join(if cfg!(windows) { format!("{file_name}.exe") } else { file_name.to_string() }))
+}
+
+pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
+    mcp_sibling_path("cirrus-mcp-server")
+}
+
+pub(crate) fn mcp_native_binary_path() -> Option<PathBuf> {
+    mcp_sibling_path("cirrus-mcp")
 }
 
 fn load_enabled_setting(data_dir: &Path) -> bool {
@@ -1149,7 +1155,10 @@ mod tests {
 
     #[test]
     fn toml_escaping_handles_windows_paths() {
-        assert_eq!(escape_toml_string(r#"C:\Users\me\cirrus-mcp.exe"#), r#"C:\\Users\\me\\cirrus-mcp.exe"#);
+        assert_eq!(
+            escape_toml_string(r#"C:\Users\me\cirrus-mcp-server.exe"#),
+            r#"C:\\Users\\me\\cirrus-mcp-server.exe"#
+        );
     }
 
     #[test]
@@ -1192,7 +1201,7 @@ mod tests {
     fn mcp_binary_uses_the_app_sibling_name() {
         let path = mcp_binary_path().expect("binary path");
         let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
-        assert_eq!(name, if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" });
+        assert_eq!(name, if cfg!(windows) { "cirrus-mcp-server.exe" } else { "cirrus-mcp-server" });
     }
 
     #[test]

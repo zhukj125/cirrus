@@ -393,7 +393,7 @@ mod tests {
         let path = dir.join("mcp.json");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, r#"{"mcpServers":{"other":{"command":"other.exe"}}}"#).expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
 
         write_json_config(&path, ClientKind::Claude, binary, true).expect("install");
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
@@ -413,7 +413,7 @@ mod tests {
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, "model = \"test\"\n\n[mcp_servers.other]\ncommand = \"other\"\n").expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
 
         write_codex_config(&path, binary, true).expect("install");
         let content = std::fs::read_to_string(&path).expect("read");
