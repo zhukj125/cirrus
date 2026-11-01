@@ -36,6 +36,7 @@ const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
 const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
+const BRIDGE_FILE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -217,6 +218,7 @@ struct ActiveLogin {
 
 struct ServerRuntime {
     task: JoinHandle<()>,
+    refresh_task: JoinHandle<()>,
 }
 
 struct HttpRuntime {
@@ -487,10 +489,7 @@ impl McpService {
             listener.local_addr().map_err(|error| format!("Could not read the MCP bridge address: {error}"))?.port();
         let token = Uuid::new_v4().simple().to_string();
 
-        write_private_file(&data_dir.join(PORT_FILE), port.to_string().as_bytes())
-            .map_err(|error| format!("Could not write the MCP port file: {error}"))?;
-        write_private_file(&data_dir.join(TOKEN_FILE), token.as_bytes())
-            .map_err(|error| format!("Could not write the MCP token file: {error}"))?;
+        ensure_bridge_files(data_dir, port, &token)?;
 
         let service = Arc::downgrade(self);
         let weak_state = Arc::downgrade(&state);
@@ -499,14 +498,31 @@ impl McpService {
         let task = tauri::async_runtime::spawn(async move {
             accept_loop(listener, service, weak_state, task_app, task_token).await;
         });
+        let refresh_service = Arc::downgrade(self);
+        let refresh_data_dir = data_dir.clone();
+        let refresh_token = token.clone();
+        let refresh_task = tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(BRIDGE_FILE_REFRESH_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                if refresh_service.upgrade().is_none() {
+                    break;
+                }
+                if let Err(error) = ensure_bridge_files(&refresh_data_dir, port, &refresh_token) {
+                    log::warn!("[MCP] could not refresh the bridge runtime files: {error}");
+                }
+            }
+        });
 
         {
             let mut inner = self.inner.lock().await;
             if inner.runtime.is_some() {
                 task.abort();
+                refresh_task.abort();
                 return Ok(());
             }
-            inner.runtime = Some(ServerRuntime { task });
+            inner.runtime = Some(ServerRuntime { task, refresh_task });
         }
         self.enabled.store(true, Ordering::Relaxed);
         self.running_port.store(port, Ordering::Release);
@@ -537,6 +553,7 @@ impl McpService {
         };
         if let Some(runtime) = runtime {
             runtime.task.abort();
+            runtime.refresh_task.abort();
             log::info!("[MCP] local bridge stopped");
         }
         if let Some(pending) = pending {
@@ -1150,6 +1167,29 @@ fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {
     }
 }
 
+fn ensure_bridge_files(data_dir: &Path, port: u16, token: &str) -> Result<(), String> {
+    let port_path = data_dir.join(PORT_FILE);
+    let token_path = data_dir.join(TOKEN_FILE);
+    let port_value = port.to_string();
+    let port_matches = runtime_file_matches(&port_path, &port_value);
+    let token_matches = runtime_file_matches(&token_path, token);
+    if port_matches && token_matches {
+        return Ok(());
+    }
+
+    // Write the token first and the port last so the port value acts as the
+    // commit marker for clients reading the two files during a refresh.
+    write_private_file(&token_path, token.as_bytes())
+        .map_err(|error| format!("Could not write the MCP token file: {error}"))?;
+    write_private_file(&port_path, port_value.as_bytes())
+        .map_err(|error| format!("Could not write the MCP port file: {error}"))?;
+    Ok(())
+}
+
+fn runtime_file_matches(path: &Path, expected: &str) -> bool {
+    std::fs::read_to_string(path).map(|value| value.trim() == expected).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1191,6 +1231,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cirrus-mcp-default-enabled-{}", Uuid::new_v4()));
         let service = McpService::new(Some(&dir));
         assert!(service.enabled());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bridge_runtime_files_are_refreshed_when_stale() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-files-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(dir.join(PORT_FILE), "51997").expect("seed port");
+        std::fs::write(dir.join(TOKEN_FILE), "stale-token").expect("seed token");
+
+        ensure_bridge_files(&dir, 60241, "c8ef2f10b25f483cae6ca03e855e2629").expect("refresh files");
+
+        assert_eq!(std::fs::read_to_string(dir.join(PORT_FILE)).expect("port"), "60241");
+        assert_eq!(std::fs::read_to_string(dir.join(TOKEN_FILE)).expect("token"), "c8ef2f10b25f483cae6ca03e855e2629");
         let _ = std::fs::remove_dir_all(dir);
     }
 
