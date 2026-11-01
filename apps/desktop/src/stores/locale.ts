@@ -433,7 +433,7 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "settings.mcpHistoryClear": { zh: "清空", en: "Clear" },
   "settings.mcpHistoryEmpty": { zh: "还没有 MCP 调用记录", en: "No MCP calls recorded yet" },
   "settings.mcpHistoryRequest": { zh: "请求参数", en: "Request" },
-  "settings.mcpHistoryResponse": { zh: "响应摘要", en: "Response" },
+  "settings.mcpHistoryResponse": { zh: "响应内容", en: "Response" },
   "settings.mcpHistoryLoadFailed": { zh: "加载 MCP 历史失败：{error}", en: "Could not load MCP history: {error}" },
   "settings.mcpHistoryCleared": { zh: "MCP 历史已清空", en: "MCP history cleared" },
   "settings.mcpHistoryClearFailed": { zh: "清空 MCP 历史失败：{error}", en: "Could not clear MCP history: {error}" },

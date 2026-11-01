@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 const MAX_HISTORY_ENTRIES: i64 = 1_000;
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
-const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,34 +127,39 @@ fn sanitize_history_value(value: &Value, depth: usize) -> Value {
         return json!("[depth limit]");
     }
     match value {
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .take(64)
-                .map(|(key, value)| {
-                    let lower = key.to_ascii_lowercase();
-                    let redacted = [
-                        "password",
-                        "passwd",
-                        "secret",
-                        "token",
-                        "credential",
-                        "authorization",
-                        "private_key",
-                        "apikey",
-                        "api_key",
-                        "deviceimagedata",
-                        "base64",
-                    ]
+        Value::Object(fields) => {
+            let media_block =
+                fields.get("type").and_then(Value::as_str).is_some_and(|kind| kind == "image" || kind == "audio");
+            Value::Object(
+                fields
                     .iter()
-                    .any(|part| lower.contains(part));
-                    (
-                        truncate_chars(key, 128),
-                        if redacted { json!("[redacted]") } else { sanitize_history_value(value, depth + 1) },
-                    )
-                })
-                .collect(),
-        ),
+                    .take(64)
+                    .map(|(key, value)| {
+                        let lower = key.to_ascii_lowercase();
+                        let redacted = (media_block && key == "data")
+                            || [
+                                "password",
+                                "passwd",
+                                "secret",
+                                "token",
+                                "credential",
+                                "authorization",
+                                "private_key",
+                                "apikey",
+                                "api_key",
+                                "deviceimagedata",
+                                "base64",
+                            ]
+                            .iter()
+                            .any(|part| lower.contains(part));
+                        (
+                            truncate_chars(key, 128),
+                            if redacted { json!("[redacted]") } else { sanitize_history_value(value, depth + 1) },
+                        )
+                    })
+                    .collect(),
+            )
+        }
         Value::Array(values) => {
             Value::Array(values.iter().take(32).map(|value| sanitize_history_value(value, depth + 1)).collect())
         }
@@ -188,7 +193,11 @@ mod tests {
                 error: None,
                 request_json: Some(json!({ "accountKey": "dsid:1", "token": "secret" }).to_string()),
                 response_json: Some(
-                    json!({ "deviceImageDataUrl": "data:image/png;base64,large", "name": "Phone" }).to_string(),
+                    json!({
+                        "content": [{ "type": "image", "data": "large-image-base64", "mimeType": "image/png" }],
+                        "structuredContent": { "deviceImageDataUrl": "data:image/png;base64,large", "name": "Phone" }
+                    })
+                    .to_string(),
                 ),
             })
             .expect("record");
@@ -197,6 +206,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].request_json.as_deref().unwrap().contains("secret"));
         assert!(!entries[0].response_json.as_deref().unwrap().contains("base64"));
+        assert!(!entries[0].response_json.as_deref().unwrap().contains("large-image"));
         repository.clear().expect("clear");
         assert!(repository.list(20).expect("list").is_empty());
         let _ = std::fs::remove_dir_all(dir);

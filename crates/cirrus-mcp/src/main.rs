@@ -3,6 +3,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -423,7 +424,7 @@ async fn handle_message(payload: Value, client: &mut ClientIdentity) -> Option<V
                         "name": CLIENT_NAME,
                         "version": env!("CARGO_PKG_VERSION")
                     },
-                    "instructions": "Cirrus exposes iCloud sign-in and authorized-account listing. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP."
+                    "instructions": "Cirrus exposes iCloud sign-in and authorized-account listing. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed."
                 }),
             ))
         }
@@ -442,6 +443,7 @@ fn tools_list() -> Value {
                 "title": "Sign in to iCloud with Cirrus",
                 "description": "Ask the user to approve an iCloud sign-in in the Cirrus desktop app, then open the Cirrus sign-in window so the user can enter their Apple ID, password, and two-factor code privately. This tool does not accept credentials and waits for the Cirrus sign-in flow to finish.",
                 "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+                "outputSchema": tool_output_schema(LOGIN_TOOL),
                 "annotations": { "title": "Sign in to iCloud with Cirrus", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true }
             },
             {
@@ -449,6 +451,7 @@ fn tools_list() -> Value {
                 "title": "List MCP-enabled iCloud accounts",
                 "description": "List iCloud accounts that are allowed for MCP operations. Accounts disabled in Cirrus Settings > MCP are omitted.",
                 "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+                "outputSchema": tool_output_schema(LIST_ACCOUNTS_TOOL),
                 "annotations": { "title": "List MCP-enabled iCloud accounts", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             },
             {
@@ -456,6 +459,7 @@ fn tools_list() -> Value {
                 "title": "Get iCloud account status",
                 "description": "Return verification and sign-in status for an MCP-enabled Cirrus account.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_account_status"),
                 "annotations": { "title": "Get iCloud account status", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             },
             {
@@ -463,22 +467,25 @@ fn tools_list() -> Value {
                 "title": "Sign out of an iCloud account",
                 "description": "Remove the local Cirrus session and mark the selected account as signed out. This does not change the Apple account.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_logout"),
                 "annotations": { "title": "Sign out of an iCloud account", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
             },
             {
                 "name": "cirrus_list_devices",
                 "title": "List Find My devices",
-                "description": "List Apple devices, locations, battery status, and Find My state for an account. Device artwork is returned as MCP image content when available.",
+                "description": "List Apple devices for an MCP-enabled account. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Returns deviceCount and devices[] with name, model, online status, battery, location, artwork, and deviceId. When artwork is available it is returned both as an MCP image block and as a base64 data URL in structuredContent.devices[].deviceImageDataUrl. Use the exact returned deviceId with cirrus_play_sound.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_list_devices"),
                 "annotations": { "title": "List Find My devices", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
                 "name": "cirrus_play_sound",
                 "title": "Play sound on an Apple device",
-                "description": "Ask Apple Find My to play a sound on the selected device.",
+                "description": "Ask Apple Find My to play a sound. Call cirrus_list_devices first and pass the exact deviceId for the target device.",
                 "inputSchema": account_schema_required(json!({
                     "deviceId": { "type": "string", "description": "Find My deviceId returned by cirrus_list_devices." }
                 }), &["deviceId"]),
+                "outputSchema": tool_output_schema("cirrus_play_sound"),
                 "annotations": { "title": "Play sound on an Apple device", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true }
             },
             {
@@ -486,10 +493,11 @@ fn tools_list() -> Value {
                 "title": "List iCloud Photos",
                 "description": "List iCloud Photos assets with metadata, thumbnail URLs, and original media URLs.",
                 "inputSchema": account_schema(json!({
-                    "cursor": { "type": "string" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
-                    "startRank": { "type": "integer", "minimum": 0 }
+                    "cursor": { "type": "string", "description": "Optional opaque pagination cursor from a previous nextCursor value." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20, "description": "Maximum number of assets to return, from 1 to 200." },
+                    "startRank": { "type": "integer", "minimum": 0, "description": "Optional zero-based rank into the timeline. Prefer cursor for normal pagination." }
                 })),
+                "outputSchema": tool_output_schema("cirrus_list_photos"),
                 "annotations": { "title": "List iCloud Photos", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -497,6 +505,7 @@ fn tools_list() -> Value {
                 "title": "Get iCloud Photos totals",
                 "description": "Return total photo, video, and asset counts for an iCloud Photo Library.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_photos_total"),
                 "annotations": { "title": "Get iCloud Photos totals", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -504,6 +513,7 @@ fn tools_list() -> Value {
                 "title": "Get iCloud Photos timeline",
                 "description": "Return the library timeline distribution grouped by year and month.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_photos_timeline"),
                 "annotations": { "title": "Get iCloud Photos timeline", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -511,9 +521,10 @@ fn tools_list() -> Value {
                 "title": "Get exact iCloud Photos month count",
                 "description": "Return the exact photo count and rank range for a year and month.",
                 "inputSchema": account_schema_required(json!({
-                    "year": { "type": "integer", "minimum": 1 },
-                    "month": { "type": "integer", "minimum": 1, "maximum": 12 }
+                    "year": { "type": "integer", "minimum": 1, "description": "Four-digit calendar year, for example 2026." },
+                    "month": { "type": "integer", "minimum": 1, "maximum": 12, "description": "Calendar month from 1 to 12." }
                 }), &["year", "month"]),
+                "outputSchema": tool_output_schema("cirrus_photos_month_exact"),
                 "annotations": { "title": "Get exact iCloud Photos month count", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -523,11 +534,12 @@ fn tools_list() -> Value {
                 "inputSchema": account_schema_required(json!({
                     "url": { "type": "string", "description": "Original media URL returned by cirrus_list_photos." },
                     "photoId": { "type": "string", "description": "Optional photo ID used in download history." },
-                    "name": { "type": "string" },
+                    "name": { "type": "string", "description": "Optional display file name. The final extension may be corrected from the downloaded content type." },
                     "targetPath": { "type": "string", "description": "Absolute destination file path." },
                     "transferId": { "type": "string", "description": "Optional caller-generated ID used for progress and cancellation." },
                     "partialKey": { "type": "string", "description": "Optional stable key used for resumable partial files." }
                 }), &["url", "targetPath"]),
+                "outputSchema": tool_output_schema("cirrus_download_photo"),
                 "annotations": { "title": "Download an iCloud photo or video", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -537,6 +549,7 @@ fn tools_list() -> Value {
                 "inputSchema": account_schema_required(json!({
                     "transferId": { "type": "string", "description": "Transfer ID supplied to cirrus_download_photo." }
                 }), &["transferId"]),
+                "outputSchema": tool_output_schema("cirrus_cancel_download"),
                 "annotations": { "title": "Cancel an MCP download", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             },
             {
@@ -544,29 +557,33 @@ fn tools_list() -> Value {
                 "title": "List MCP download history",
                 "description": "List persisted download tasks for the selected iCloud account.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_list_download_tasks"),
                 "annotations": { "title": "List MCP download history", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
             },
             {
                 "name": "cirrus_get_account_avatar",
                 "title": "Get iCloud account avatar",
-                "description": "Return the cached or fetched Apple account avatar as a data URL.",
+                "description": "Return the Apple account avatar as an MCP image content block. The text and structuredContent only describe the image and never include the Base64 payload.",
                 "inputSchema": account_schema(json!({})),
+                "outputSchema": tool_output_schema("cirrus_get_account_avatar"),
                 "annotations": { "title": "Get iCloud account avatar", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
                 "name": "cirrus_get_contact_photo",
                 "title": "Get an iCloud contact photo",
-                "description": "Fetch an Apple-hosted contact photo URL as a data URL.",
+                "description": "Fetch an Apple-hosted contact photo and return it as an MCP image content block. The text and structuredContent only describe the image and never include the Base64 payload.",
                 "inputSchema": account_schema_required(json!({
                     "url": { "type": "string", "description": "Contact photoUrl returned by cirrus_list_contacts." }
                 }), &["url"]),
+                "outputSchema": tool_output_schema("cirrus_get_contact_photo"),
                 "annotations": { "title": "Get an iCloud contact photo", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
                 "name": "cirrus_list_notes",
                 "title": "List iCloud Notes",
                 "description": "List folders and notes visible to the selected iCloud account.",
-                "inputSchema": account_schema(json!({ "cursor": { "type": "string" } })),
+                "inputSchema": account_schema(json!({ "cursor": { "type": "string", "description": "Optional opaque pagination cursor from a previous nextCursor value." } })),
+                "outputSchema": tool_output_schema("cirrus_list_notes"),
                 "annotations": { "title": "List iCloud Notes", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -576,13 +593,15 @@ fn tools_list() -> Value {
                 "inputSchema": account_schema_required(json!({
                     "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." }
                 }), &["noteId"]),
+                "outputSchema": tool_output_schema("cirrus_get_note"),
                 "annotations": { "title": "Read an iCloud Note", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
                 "name": "cirrus_list_contacts",
                 "title": "List iCloud Contacts",
                 "description": "List contacts, phone numbers, email addresses, postal addresses, and other contact fields.",
-                "inputSchema": account_schema(json!({ "locale": { "type": "string", "default": "zh-CN" } })),
+                "inputSchema": account_schema(json!({ "locale": { "type": "string", "default": "zh-CN", "description": "Language for Apple contact formatting. Use zh-CN or en-US." } })),
+                "outputSchema": tool_output_schema("cirrus_list_contacts"),
                 "annotations": { "title": "List iCloud Contacts", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
@@ -592,9 +611,10 @@ fn tools_list() -> Value {
                 "inputSchema": account_schema_required(json!({
                     "startDate": { "type": "string", "description": "Inclusive start date, YYYY-MM-DD." },
                     "endDate": { "type": "string", "description": "Inclusive end date, YYYY-MM-DD." },
-                    "timezone": { "type": "string", "default": "Asia/Shanghai" },
-                    "locale": { "type": "string", "default": "zh-CN" }
+                    "timezone": { "type": "string", "default": "Asia/Shanghai", "description": "IANA timezone such as Asia/Shanghai or America/Los_Angeles." },
+                    "locale": { "type": "string", "default": "zh-CN", "description": "Language for Apple calendar formatting. Use zh-CN or en-US." }
                 }), &["startDate", "endDate"]),
+                "outputSchema": tool_output_schema("cirrus_load_calendar"),
                 "annotations": { "title": "Load iCloud Calendar events", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             }
         ]
@@ -614,7 +634,7 @@ fn account_schema_required(extra: Value, extra_required: &[&str]) -> Value {
         "accountKey".to_string(),
         json!({
             "type": "string",
-            "description": "Account key returned by cirrus_list_accounts."
+            "description": "Required. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Do not guess or construct this value."
         }),
     );
     let mut required = vec![json!("accountKey")];
@@ -632,42 +652,936 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity) -> 
         return error_response(id, -32602, "Missing tool name");
     };
     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let started_at = now_millis();
+    let started = Instant::now();
     if (name == LOGIN_TOOL || name == LIST_ACCOUNTS_TOOL)
         && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
     {
-        return success_response(
-            id,
-            json!({
-                "content": [{ "type": "text", "text": format!("{name} does not accept arguments.") }],
-                "isError": true
-            }),
-        );
+        let result = json!({
+            "content": [{ "type": "text", "text": format!("{name} does not accept arguments.") }],
+            "isError": true
+        });
+        record_mcp_history(name, &arguments, client, started_at, started, &result).await;
+        return success_response(id, result);
     }
 
     match call_bridge(name, &arguments, client).await {
         Ok(mut result) => {
             let mut content = result_image_content(name, &mut result).await;
             let text_result = result_without_inline_artwork(&result);
+            let structured_result = result_for_structured_content(name, &result, &text_result);
             content.push(json!({
                 "type": "text",
-                "text": serde_json::to_string_pretty(&text_result).unwrap_or_else(|_| text_result.to_string())
+                "text": tool_result_text(name, &text_result)
             }));
-            success_response(
-                id,
-                json!({
-                    "content": content,
-                    "structuredContent": result,
-                    "isError": false
-                }),
-            )
+            let result = json!({
+                "content": content,
+                "structuredContent": structured_result,
+                "isError": false
+            });
+            record_mcp_history(name, &arguments, client, started_at, started, &result).await;
+            success_response(id, result)
         }
-        Err(message) => success_response(
-            id,
-            json!({
-                "content": [{ "type": "text", "text": message }],
+        Err(message) => {
+            let result = json!({
+                "content": [{ "type": "text", "text": tool_error_text(&message) }],
                 "isError": true
+            });
+            record_mcp_history(name, &arguments, client, started_at, started, &result).await;
+            success_response(id, result)
+        }
+    }
+}
+
+async fn record_mcp_history(
+    tool: &str,
+    arguments: &Value,
+    client: &ClientIdentity,
+    started_at: i64,
+    started: Instant,
+    response: &Value,
+) {
+    let Ok(target) = discover_bridge() else {
+        return;
+    };
+    let error = response.get("isError").and_then(Value::as_bool).unwrap_or(false).then(|| {
+        response
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("MCP tool call failed")
+            .to_string()
+    });
+    let body = json!({
+        "tool": tool,
+        "arguments": arguments,
+        "clientName": client.name.as_deref().unwrap_or("MCP client"),
+        "clientVersion": client.version,
+        "startedAt": started_at,
+        "durationMs": started.elapsed().as_millis() as i64,
+        "success": response.get("isError").and_then(Value::as_bool) != Some(true),
+        "error": error,
+        "response": response
+    });
+    let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() else {
+        return;
+    };
+    let _ = http.post(format!("{}/v1/history", target.base_url)).bearer_auth(target.token).json(&body).send().await;
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_millis() as i64).unwrap_or(0)
+}
+
+fn tool_output_schema(tool: &str) -> Value {
+    match tool {
+        LOGIN_TOOL => object_schema(
+            json!({
+                "authenticated": { "type": "boolean", "description": "Whether sign-in completed successfully." },
+                "approved": { "type": "boolean", "description": "Whether the user approved the Cirrus sign-in request." },
+                "message": { "type": ["string", "null"], "description": "Optional status or error message." },
+                "account": {
+                    "type": ["object", "null"],
+                    "description": "Signed-in account summary when authentication succeeds.",
+                    "properties": {
+                        "accountKey": { "type": "string" },
+                        "appleId": { "type": "string" },
+                        "displayName": { "type": "string" },
+                        "mcpEnabled": { "type": "boolean" }
+                    }
+                }
             }),
+            &["authenticated", "approved"],
         ),
+        LIST_ACCOUNTS_TOOL => object_schema(
+            json!({
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "accountKey": { "type": "string", "description": "Pass this value to account-scoped tools." },
+                            "appleId": { "type": "string" },
+                            "firstName": { "type": ["string", "null"] },
+                            "lastName": { "type": ["string", "null"] },
+                            "signedIn": { "type": "boolean" },
+                            "active": { "type": "boolean" },
+                            "lastUsedAt": { "type": "integer", "description": "Unix timestamp in milliseconds." }
+                        }
+                    }
+                },
+                "count": { "type": "integer" }
+            }),
+            &["accounts", "count"],
+        ),
+        "cirrus_account_status" => object_schema(
+            json!({
+                "accountKey": { "type": "string" },
+                "appleId": { "type": "string" },
+                "dsid": { "type": ["string", "null"] },
+                "firstName": { "type": ["string", "null"] },
+                "lastName": { "type": ["string", "null"] },
+                "signedIn": { "type": "boolean" },
+                "verified": { "type": "boolean" },
+                "lastUsedAt": { "type": "integer", "description": "Unix timestamp in milliseconds." }
+            }),
+            &["accountKey", "appleId", "signedIn", "verified"],
+        ),
+        "cirrus_logout" => object_schema(
+            json!({ "accountKey": { "type": "string" }, "signedOut": { "type": "boolean" } }),
+            &["accountKey", "signedOut"],
+        ),
+        "cirrus_list_devices" => device_output_schema(),
+        "cirrus_play_sound" => object_schema(
+            json!({ "success": { "type": "boolean" }, "message": { "type": ["string", "null"] } }),
+            &["success"],
+        ),
+        "cirrus_list_photos" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "photos": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "fileName": { "type": ["string", "null"] },
+                            "takenAt": { "type": ["integer", "null"], "description": "Capture time as Unix milliseconds." },
+                            "isVideo": { "type": ["boolean", "null"] },
+                            "isLivePhoto": { "type": ["boolean", "null"] },
+                            "width": { "type": ["integer", "null"] },
+                            "height": { "type": ["integer", "null"] },
+                            "sizeBytes": { "type": ["integer", "null"] },
+                            "thumbUrl": { "type": "string" },
+                            "displayUrl": { "type": ["string", "null"] },
+                            "originalUrl": { "type": ["string", "null"] },
+                            "videoUrl": { "type": ["string", "null"] }
+                        }
+                    }
+                },
+                "nextCursor": { "type": ["string", "null"], "description": "Pass this value as cursor to fetch the next page." }
+            }),
+            &["status", "photos"],
+        ),
+        "cirrus_photos_total" => object_schema(
+            json!({
+                "photos": { "type": "integer" },
+                "videos": { "type": "integer" },
+                "assets": { "type": "integer" }
+            }),
+            &["photos", "videos", "assets"],
+        ),
+        "cirrus_photos_timeline" => object_schema(
+            json!({
+                "distribution": {
+                    "type": "object",
+                    "properties": {
+                        "bucketWidthMs": { "type": "integer" },
+                        "total": { "type": "integer" },
+                        "buckets": { "type": "array", "items": { "type": "object" } }
+                    }
+                },
+                "timeline": {
+                    "type": "object",
+                    "properties": {
+                        "total": { "type": "integer" },
+                        "years": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "year": { "type": "integer" },
+                                    "count": { "type": "integer" },
+                                    "months": { "type": "array", "items": { "type": "object" } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+            &["distribution", "timeline"],
+        ),
+        "cirrus_photos_month_exact" => object_schema(
+            json!({
+                "year": { "type": "integer" },
+                "month": { "type": "integer" },
+                "count": { "type": "integer" },
+                "newestRank": { "type": "integer" },
+                "oldestRank": { "type": "integer" }
+            }),
+            &["year", "month", "count", "newestRank", "oldestRank"],
+        ),
+        "cirrus_download_photo" => object_schema(
+            json!({
+                "transferId": { "type": "string" },
+                "accountKey": { "type": "string" },
+                "path": { "type": "string", "description": "Absolute path of the saved file." },
+                "sizeBytes": { "type": "integer" },
+                "fileName": { "type": "string" },
+                "persisted": { "type": "boolean", "description": "Whether the download task was saved to history." }
+            }),
+            &["transferId", "path", "sizeBytes", "fileName", "persisted"],
+        ),
+        "cirrus_cancel_download" => object_schema(
+            json!({
+                "transferId": { "type": "string" },
+                "cancelled": { "type": "boolean", "description": "Whether an active transfer was found and cancelled." }
+            }),
+            &["transferId", "cancelled"],
+        ),
+        "cirrus_list_download_tasks" => object_schema(
+            json!({
+                "tasks": { "type": "array", "items": { "type": "object", "description": "Persisted download task." } },
+                "persistenceEnabled": { "type": "boolean" },
+                "writable": { "type": "boolean" },
+                "warning": { "type": ["string", "null"] }
+            }),
+            &["tasks", "persistenceEnabled", "writable"],
+        ),
+        "cirrus_get_account_avatar" | "cirrus_get_contact_photo" => object_schema(
+            json!({
+                "imageIncluded": { "type": "boolean", "description": "Whether an image content block was returned." },
+                "mimeType": { "type": ["string", "null"], "description": "MIME type of the image content block." },
+                "byteLength": { "type": ["integer", "null"], "description": "Decoded image size in bytes." }
+            }),
+            &["imageIncluded"],
+        ),
+        "cirrus_list_notes" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "folders": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" } } } },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "title": { "type": "string" },
+                            "snippet": { "type": "string" },
+                            "folderId": { "type": ["string", "null"] },
+                            "createdAt": { "type": ["integer", "null"], "description": "Unix milliseconds." },
+                            "modifiedAt": { "type": ["integer", "null"], "description": "Unix milliseconds." },
+                            "pinned": { "type": "boolean" },
+                            "deleted": { "type": "boolean" },
+                            "firstAttachmentUti": { "type": ["string", "null"] }
+                        }
+                    }
+                },
+                "nextCursor": { "type": ["string", "null"] }
+            }),
+            &["status", "folders", "notes"],
+        ),
+        "cirrus_get_note" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "note": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "body": { "type": "string", "description": "Plain-text note body." },
+                        "bodyHtml": { "type": "string", "description": "Rich HTML note body." },
+                        "folderId": { "type": ["string", "null"] },
+                        "createdAt": { "type": ["integer", "null"] },
+                        "modifiedAt": { "type": ["integer", "null"] },
+                        "attachments": { "type": "array", "items": { "type": "object" } }
+                    }
+                }
+            }),
+            &["status"],
+        ),
+        "cirrus_list_contacts" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "contacts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "displayName": { "type": "string" },
+                            "firstName": { "type": "string" },
+                            "lastName": { "type": "string" },
+                            "phones": { "type": "array", "items": { "type": "object" } },
+                            "emails": { "type": "array", "items": { "type": "object" } },
+                            "addresses": { "type": "array", "items": { "type": "object" } },
+                            "photoUrl": { "type": ["string", "null"], "description": "Pass to cirrus_get_contact_photo to fetch the image." }
+                        }
+                    }
+                }
+            }),
+            &["status", "contacts"],
+        ),
+        "cirrus_load_calendar" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "calendars": { "type": "array", "items": { "type": "object" } },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "title": { "type": "string" },
+                            "calendarId": { "type": "string" },
+                            "start": { "type": "string" },
+                            "end": { "type": "string" },
+                            "allDay": { "type": "boolean" },
+                            "recurring": { "type": "boolean" },
+                            "location": { "type": "string" },
+                            "notes": { "type": "string" }
+                        }
+                    }
+                }
+            }),
+            &["status", "calendars", "events"],
+        ),
+        _ => json!({ "type": "object" }),
+    }
+}
+
+fn object_schema(properties: Value, required: &[&str]) -> Value {
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required
+    })
+}
+
+fn device_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "deviceCount": { "type": "integer", "description": "Number of devices returned." },
+            "devices": {
+                "type": "array",
+                "description": "Find My devices for the selected account.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "deviceId": { "type": "string", "description": "Opaque Find My identifier. Pass verbatim to cirrus_play_sound." },
+                        "name": { "type": "string", "description": "Device name shown by Find My." },
+                        "deviceDisplayName": { "type": "string", "description": "Human-readable Apple model name." },
+                        "deviceStatus": { "type": "string", "description": "Raw Find My status code; 200 means online." },
+                        "batteryLevel": { "type": ["number", "null"], "description": "Battery fraction from 0 to 1. Use batteryStatus when it is Unknown." },
+                        "batteryStatus": { "type": ["string", "null"], "description": "Find My battery status label." },
+                        "location": { "type": ["object", "null"], "description": "Last known coordinates and accuracy. Null when unavailable." },
+                        "locationEnabled": { "type": ["boolean", "null"], "description": "Whether Location Services is enabled on the device." },
+                        "deviceImageMimeType": { "type": ["string", "null"], "description": "MIME type of the image block returned alongside this result." },
+                        "deviceImageDataUrl": { "type": ["string", "null"], "description": "Base64 data URL for the device artwork. This field can be very large." },
+                        "deviceImageUrl": { "type": ["string", "null"], "description": "Apple-hosted artwork URL." },
+                        "deviceImageError": { "type": ["string", "null"], "description": "Why artwork could not be included, when applicable." }
+                    },
+                    "required": ["deviceId", "name"]
+                }
+            }
+        },
+        "required": ["deviceCount", "devices"]
+    })
+}
+
+fn tool_result_text(tool: &str, result: &Value) -> String {
+    match tool {
+        LOGIN_TOOL => login_markdown(result),
+        LIST_ACCOUNTS_TOOL => accounts_markdown(result),
+        "cirrus_account_status" => account_status_markdown(result),
+        "cirrus_logout" => logout_markdown(result),
+        "cirrus_list_devices" => devices_markdown(result),
+        "cirrus_play_sound" => play_sound_markdown(result),
+        "cirrus_list_photos" => photos_markdown(result),
+        "cirrus_photos_total" => photos_total_markdown(result),
+        "cirrus_photos_timeline" => photos_timeline_markdown(result),
+        "cirrus_photos_month_exact" => month_exact_markdown(result),
+        "cirrus_download_photo" => download_photo_markdown(result),
+        "cirrus_cancel_download" => cancel_download_markdown(result),
+        "cirrus_list_download_tasks" => download_tasks_markdown(result),
+        "cirrus_get_account_avatar" | "cirrus_get_contact_photo" => image_markdown(result),
+        "cirrus_list_notes" => notes_list_markdown(result),
+        "cirrus_get_note" => note_detail_markdown(result),
+        "cirrus_list_contacts" => contacts_markdown(result),
+        "cirrus_load_calendar" => calendar_markdown(result),
+        _ => serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string()),
+    }
+}
+
+fn login_markdown(result: &Value) -> String {
+    let mut rows = vec![
+        ("Authenticated", yes_no(result.get("authenticated")).to_string()),
+        ("Approved", yes_no(result.get("approved")).to_string()),
+    ];
+    if let Some(account) = result.get("account").filter(|value| !value.is_null()) {
+        rows.push(("Account", string_field(account, "displayName")));
+        rows.push(("Apple ID", string_field(account, "appleId")));
+        rows.push(("Account key", code_field(account, "accountKey")));
+        rows.push(("MCP enabled", yes_no(account.get("mcpEnabled")).to_string()));
+    }
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        rows.push(("Message", message.to_string()));
+    }
+    key_value_markdown("Cirrus sign-in", &rows)
+}
+
+fn account_status_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Account key", code_field(result, "accountKey")),
+        ("Apple ID", string_field(result, "appleId")),
+        ("First name", string_field(result, "firstName")),
+        ("Last name", string_field(result, "lastName")),
+        ("Signed in", yes_no(result.get("signedIn")).to_string()),
+        ("Verified", yes_no(result.get("verified")).to_string()),
+        ("Last used", number_field(result, "lastUsedAt")),
+    ];
+    key_value_markdown("Account status", &rows)
+}
+
+fn logout_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Account key", code_field(result, "accountKey")),
+        ("Signed out", yes_no(result.get("signedOut")).to_string()),
+    ];
+    key_value_markdown("Account sign-out", &rows)
+}
+
+fn play_sound_markdown(result: &Value) -> String {
+    let mut rows = vec![("Success", yes_no(result.get("success")).to_string())];
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        rows.push(("Message", message.to_string()));
+    }
+    key_value_markdown("Play sound", &rows)
+}
+
+fn photos_markdown(result: &Value) -> String {
+    let photos = result.get("photos").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# iCloud Photos ({})\n\n", photos.len());
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        output.push_str(&format!("Status: {message}\n\n"));
+    }
+    if photos.is_empty() {
+        output.push_str("No photos were returned for this page.");
+    } else {
+        output.push_str("| # | ID | File | Taken at | Type | Dimensions | Size | Favorite |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        for (index, photo) in photos.iter().enumerate() {
+            let kind = if photo.get("isVideo").and_then(Value::as_bool).unwrap_or(false) { "Video" } else { "Photo" };
+            let dimensions =
+                match (photo.get("width").and_then(Value::as_i64), photo.get("height").and_then(Value::as_i64)) {
+                    (Some(width), Some(height)) => format!("{width}×{height}"),
+                    _ => "Unknown".to_string(),
+                };
+            output.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
+                index + 1,
+                markdown_cell(string_field(photo, "id")),
+                markdown_cell(string_field(photo, "fileName")),
+                number_field(photo, "takenAt"),
+                kind,
+                dimensions,
+                byte_size_field(photo, "sizeBytes"),
+                yes_no(photo.get("isFavorite")),
+            ));
+        }
+        output.push_str("\nUse `structuredContent.photos` for exact thumbnail and original media URLs.");
+    }
+    if let Some(cursor) = result.get("nextCursor").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        output.push_str(&format!("\n\nNext cursor: `{cursor}`"));
+    }
+    output
+}
+
+fn photos_total_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Photos", number_field(result, "photos")),
+        ("Videos", number_field(result, "videos")),
+        ("Assets", number_field(result, "assets")),
+    ];
+    key_value_markdown("iCloud Photos totals", &rows)
+}
+
+fn photos_timeline_markdown(result: &Value) -> String {
+    let timeline = result.get("timeline").unwrap_or(result);
+    let total = timeline.get("total").and_then(Value::as_i64).unwrap_or(0);
+    let mut output = format!("# iCloud Photos timeline ({total} assets)\n\n");
+    let years = timeline.get("years").and_then(Value::as_array).cloned().unwrap_or_default();
+    if years.is_empty() {
+        output.push_str("No timeline buckets were returned.");
+        return output;
+    }
+    output.push_str("| Year | Year count | Month | Month count | Start rank |\n");
+    output.push_str("| --- | --- | --- | --- | --- |\n");
+    for year in years {
+        let year_number = year.get("year").and_then(Value::as_i64).unwrap_or(0);
+        let year_count = year.get("count").and_then(Value::as_i64).unwrap_or(0);
+        let months = year.get("months").and_then(Value::as_array).cloned().unwrap_or_default();
+        if months.is_empty() {
+            output.push_str(&format!("| {year_number} | {year_count} | - | - | - |\n"));
+            continue;
+        }
+        for month in months {
+            output.push_str(&format!(
+                "| {year_number} | {year_count} | {} | {} | {} |\n",
+                number_field(&month, "month"),
+                number_field(&month, "count"),
+                number_field(&month, "startRank"),
+            ));
+        }
+    }
+    output
+}
+
+fn month_exact_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Year", number_field(result, "year")),
+        ("Month", number_field(result, "month")),
+        ("Count", number_field(result, "count")),
+        ("Newest rank", number_field(result, "newestRank")),
+        ("Oldest rank", number_field(result, "oldestRank")),
+    ];
+    key_value_markdown("Exact monthly photo count", &rows)
+}
+
+fn download_photo_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Transfer ID", code_field(result, "transferId")),
+        ("File name", string_field(result, "fileName")),
+        ("Saved path", code_field(result, "path")),
+        ("Size", byte_size_field(result, "sizeBytes")),
+        ("History persisted", yes_no(result.get("persisted")).to_string()),
+    ];
+    key_value_markdown("Download completed", &rows)
+}
+
+fn cancel_download_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Transfer ID", code_field(result, "transferId")),
+        ("Cancelled", yes_no(result.get("cancelled")).to_string()),
+    ];
+    key_value_markdown("Download cancellation", &rows)
+}
+
+fn download_tasks_markdown(result: &Value) -> String {
+    let tasks = result.get("tasks").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# Download tasks ({})\n\n", tasks.len());
+    if tasks.is_empty() {
+        output.push_str("No persisted download tasks were found.");
+    } else {
+        output.push_str("| # | Title | Status | Completed | Failed | Directory | Created at |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for (index, task) in tasks.iter().enumerate() {
+            let failed = task.get("failed").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                index + 1,
+                markdown_cell(string_field(task, "title")),
+                markdown_cell(string_field(task, "status")),
+                number_field(task, "done"),
+                failed,
+                markdown_cell(string_field(task, "directory")),
+                number_field(task, "createdAt"),
+            ));
+        }
+    }
+    if let Some(warning) = result.get("warning").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        output.push_str(&format!("\n\nWarning: {warning}"));
+    }
+    output
+}
+
+fn image_markdown(result: &Value) -> String {
+    if result.get("imageIncluded").and_then(Value::as_bool) == Some(true) {
+        let mime = string_field(result, "mimeType");
+        let bytes = result.get("byteLength").and_then(Value::as_u64).unwrap_or(0);
+        format!("Image included as MCP image content.\n\nMIME type: {mime}\nSize: {} bytes", human_bytes(bytes))
+    } else {
+        "No image data was returned.".to_string()
+    }
+}
+
+fn notes_list_markdown(result: &Value) -> String {
+    let folders = result.get("folders").and_then(Value::as_array).cloned().unwrap_or_default();
+    let notes = result.get("notes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# iCloud Notes ({})\n\n", notes.len());
+    if !folders.is_empty() {
+        let names = folders.iter().map(|folder| string_field(folder, "name")).collect::<Vec<_>>().join(", ");
+        output.push_str(&format!("Folders: {names}\n\n"));
+    }
+    if notes.is_empty() {
+        output.push_str("No notes were returned for this page.");
+    } else {
+        output.push_str("| # | ID | Title | Folder | Pinned | Modified at | Snippet |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for (index, note) in notes.iter().enumerate() {
+            output.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} | {} | {} |\n",
+                index + 1,
+                markdown_cell(string_field(note, "id")),
+                markdown_cell(string_field(note, "title")),
+                markdown_cell(string_field(note, "folderId")),
+                yes_no(note.get("pinned")),
+                number_field(note, "modifiedAt"),
+                markdown_cell(truncate_text(&string_field(note, "snippet"), 240)),
+            ));
+        }
+    }
+    if let Some(cursor) = result.get("nextCursor").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        output.push_str(&format!("\n\nNext cursor: `{cursor}`"));
+    }
+    output
+}
+
+fn note_detail_markdown(result: &Value) -> String {
+    let Some(note) = result.get("note").filter(|value| !value.is_null()) else {
+        return format!("# iCloud Note\n\n{}", string_field(result, "message"));
+    };
+    let attachments = note.get("attachments").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+    let mut output = format!(
+        "# {}\n\n| Field | Value |\n| --- | --- |\n| Note ID | `{}` |\n| Folder ID | {} |\n| Created at | {} |\n| Modified at | {} |\n| Attachments | {} |\n\n",
+        string_field(note, "title"),
+        markdown_cell(string_field(note, "id")),
+        markdown_cell(string_field(note, "folderId")),
+        number_field(note, "createdAt"),
+        number_field(note, "modifiedAt"),
+        attachments,
+    );
+    output.push_str("## Body\n\n");
+    output.push_str(&truncate_text(&string_field(note, "body"), 4_000));
+    if string_field(note, "body").chars().count() > 4_000 {
+        output.push_str("\n\n[Body summary truncated. Read structuredContent.note.body for the full text.]");
+    }
+    output
+}
+
+fn contacts_markdown(result: &Value) -> String {
+    let contacts = result.get("contacts").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# iCloud Contacts ({})\n\n", contacts.len());
+    if contacts.is_empty() {
+        output.push_str("No contacts were returned.");
+    } else {
+        output.push_str("| Name | Company | Phones | Emails | Birthday | Contact ID |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- |\n");
+        for contact in contacts {
+            let phones = field_values(contact.get("phones"));
+            let emails = field_values(contact.get("emails"));
+            output.push_str(&format!(
+                "| {} | {} | {} | {} | {} | `{}` |\n",
+                markdown_cell(string_field(&contact, "displayName")),
+                markdown_cell(string_field(&contact, "companyName")),
+                markdown_cell(&phones),
+                markdown_cell(&emails),
+                markdown_cell(string_field(&contact, "birthday")),
+                markdown_cell(string_field(&contact, "id")),
+            ));
+        }
+        output.push_str(
+            "\nUse `structuredContent.contacts[].photoUrl` with `cirrus_get_contact_photo` when a photo is available.",
+        );
+    }
+    output
+}
+
+fn calendar_markdown(result: &Value) -> String {
+    let calendars = result.get("calendars").and_then(Value::as_array).cloned().unwrap_or_default();
+    let events = result.get("events").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# iCloud Calendar ({} events)\n\n", events.len());
+    if !calendars.is_empty() {
+        let names = calendars.iter().map(|calendar| string_field(calendar, "title")).collect::<Vec<_>>().join(", ");
+        output.push_str(&format!("Calendars: {names}\n\n"));
+    }
+    if events.is_empty() {
+        output.push_str("No events were returned for this date range.");
+    } else {
+        output.push_str("| Title | Start | End | Calendar ID | Location | All day | Recurring |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for event in events {
+            output.push_str(&format!(
+                "| {} | {} | {} | `{}` | {} | {} | {} |\n",
+                markdown_cell(string_field(&event, "title")),
+                markdown_cell(string_field(&event, "start")),
+                markdown_cell(string_field(&event, "end")),
+                markdown_cell(string_field(&event, "calendarId")),
+                markdown_cell(string_field(&event, "location")),
+                yes_no(event.get("allDay")),
+                yes_no(event.get("recurring")),
+            ));
+        }
+    }
+    output
+}
+
+fn key_value_markdown(title: &str, rows: &[(&str, String)]) -> String {
+    let mut output = format!("# {title}\n\n| Field | Value |\n| --- | --- |\n");
+    for (label, value) in rows {
+        output.push_str(&format!("| {label} | {} |\n", markdown_cell(value)));
+    }
+    output
+}
+
+fn string_field(value: &Value, key: &str) -> String {
+    value.get(key).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+fn code_field(value: &Value, key: &str) -> String {
+    let text = string_field(value, key);
+    if text.is_empty() {
+        "Unknown".to_string()
+    } else {
+        format!("`{text}`")
+    }
+}
+
+fn number_field(value: &Value, key: &str) -> String {
+    value.get(key).map(|value| value.to_string()).unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn byte_size_field(value: &Value, key: &str) -> String {
+    value.get(key).and_then(Value::as_u64).map(human_bytes).unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.2} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+fn field_values(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| string_field(item, "value"))
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+fn truncate_text(value: &str, limit: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
+}
+
+fn tool_error_text(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("accountkey") {
+        format!(
+            "{message}\n\nCall cirrus_list_accounts first and pass the returned accounts[].accountKey as accountKey."
+        )
+    } else if lower.contains("deviceid") {
+        format!("{message}\n\nCall cirrus_list_devices first and pass the exact deviceId for the target device.")
+    } else {
+        message.to_string()
+    }
+}
+
+fn devices_markdown(result: &Value) -> String {
+    let devices = result.get("devices").and_then(Value::as_array).cloned().unwrap_or_default();
+    let count = result.get("deviceCount").and_then(Value::as_u64).unwrap_or(devices.len() as u64);
+    let mut output = format!("# Find My devices ({count})\n\n");
+    if devices.is_empty() {
+        output.push_str("No devices were returned for this account.");
+        return output;
+    }
+    output.push_str("| Name | Model | Status | Battery | Location | Artwork | Device ID |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    for device in devices {
+        let name = device.get("name").and_then(Value::as_str).unwrap_or("Apple device");
+        let model = device
+            .get("deviceDisplayName")
+            .and_then(Value::as_str)
+            .or_else(|| device.get("modelDisplayName").and_then(Value::as_str))
+            .unwrap_or("Unknown");
+        let id = device.get("deviceId").and_then(Value::as_str).unwrap_or("Unknown");
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | `{}` |\n",
+            markdown_cell(name),
+            markdown_cell(model),
+            device_status_text(&device),
+            device_battery_text(&device),
+            markdown_cell(device_location_text(&device)),
+            device_artwork_text(&device),
+            markdown_cell(id),
+        ));
+    }
+    output.push_str("\nUse the exact `deviceId` with `cirrus_play_sound`.");
+    output
+}
+
+fn accounts_markdown(result: &Value) -> String {
+    let accounts = result.get("accounts").and_then(Value::as_array).cloned().unwrap_or_default();
+    let count = result.get("count").and_then(Value::as_u64).unwrap_or(accounts.len() as u64);
+    let mut output = format!("# MCP-enabled iCloud accounts ({count})\n\n");
+    if accounts.is_empty() {
+        output.push_str("No MCP-enabled accounts are available.");
+        return output;
+    }
+    output.push_str("| Name | Apple ID | Account key | Signed in | Active |\n");
+    output.push_str("| --- | --- | --- | --- | --- |\n");
+    for account in accounts {
+        let first = account.get("firstName").and_then(Value::as_str).unwrap_or("");
+        let last = account.get("lastName").and_then(Value::as_str).unwrap_or("");
+        let display_name = format!("{first} {last}").trim().to_string();
+        let name = if display_name.is_empty() {
+            account.get("appleId").and_then(Value::as_str).unwrap_or("Unknown")
+        } else {
+            &display_name
+        };
+        output.push_str(&format!(
+            "| {} | {} | `{}` | {} | {} |\n",
+            markdown_cell(name),
+            markdown_cell(account.get("appleId").and_then(Value::as_str).unwrap_or("Unknown")),
+            markdown_cell(account.get("accountKey").and_then(Value::as_str).unwrap_or("Unknown")),
+            yes_no(account.get("signedIn")),
+            yes_no(account.get("active")),
+        ));
+    }
+    output.push_str("\nUse the exact `accountKey` for account-scoped tools.");
+    output
+}
+
+fn markdown_cell(value: impl AsRef<str>) -> String {
+    value.as_ref().replace('\\', "\\\\").replace('|', "\\|").replace(['\r', '\n'], " ").trim().to_string()
+}
+
+fn yes_no(value: Option<&Value>) -> &'static str {
+    match value.and_then(Value::as_bool) {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    }
+}
+
+fn device_status_text(device: &Value) -> &'static str {
+    match device.get("deviceStatus").and_then(Value::as_str) {
+        Some("200") => "Online",
+        _ => "Offline",
+    }
+}
+
+fn device_battery_text(device: &Value) -> String {
+    if device.get("batteryStatus").and_then(Value::as_str).is_some_and(|value| value.eq_ignore_ascii_case("unknown")) {
+        return "Unknown".to_string();
+    }
+    device
+        .get("batteryLevel")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| format!("{:.0}%", value.clamp(0.0, 1.0) * 100.0))
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn device_location_text(device: &Value) -> String {
+    let Some(location) = device.get("location").filter(|value| !value.is_null()) else {
+        return if device.get("locationEnabled").and_then(Value::as_bool) == Some(false) {
+            "Services off".to_string()
+        } else {
+            "Unavailable".to_string()
+        };
+    };
+    let (Some(latitude), Some(longitude)) =
+        (location.get("latitude").and_then(Value::as_f64), location.get("longitude").and_then(Value::as_f64))
+    else {
+        return "Unavailable".to_string();
+    };
+    let accuracy = location
+        .get("horizontalAccuracy")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| format!(" ±{value:.0} m"))
+        .unwrap_or_default();
+    let stale = location.get("isOld").and_then(Value::as_bool).unwrap_or(false);
+    format!("{latitude:.6}, {longitude:.6}{accuracy}{}", if stale { " · stale" } else { "" })
+}
+
+fn device_artwork_text(device: &Value) -> &'static str {
+    if device.get("deviceImageMimeType").and_then(Value::as_str).is_some() {
+        "Included"
+    } else if device.get("deviceImageError").and_then(Value::as_str).is_some() {
+        "Unavailable"
+    } else {
+        "Not provided"
     }
 }
 
@@ -823,6 +1737,20 @@ async fn device_image_content(
 }
 
 async fn result_image_content(tool: &str, result: &mut Value) -> Vec<Value> {
+    if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" {
+        let data_url = result.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
+        let image = parse_image_data_url(data_url);
+        if let Some(object) = result.as_object_mut() {
+            object.insert("imageIncluded".to_string(), json!(image.is_some()));
+            if let Some((mime_type, _, byte_length)) = &image {
+                object.insert("mimeType".to_string(), json!(mime_type));
+                object.insert("byteLength".to_string(), json!(byte_length));
+            }
+        }
+        return image
+            .map(|(mime_type, encoded, _)| vec![json!({ "type": "image", "data": encoded, "mimeType": mime_type })])
+            .unwrap_or_default();
+    }
     if tool != "cirrus_list_devices" {
         return Vec::new();
     }
@@ -849,16 +1777,47 @@ async fn result_image_content(tool: &str, result: &mut Value) -> Vec<Value> {
     content
 }
 
+fn parse_image_data_url(value: &str) -> Option<(String, String, usize)> {
+    let rest = value.strip_prefix("data:")?;
+    let (metadata, encoded) = rest.split_once(',')?;
+    let mime_type = metadata.split(';').next().filter(|value| value.starts_with("image/"))?;
+    if !metadata.split(';').any(|part| part.eq_ignore_ascii_case("base64")) {
+        return None;
+    }
+    let bytes = BASE64.decode(encoded).ok()?;
+    Some((mime_type.to_string(), encoded.to_string(), bytes.len()))
+}
+
+fn result_for_structured_content(tool: &str, result: &Value, text_result: &Value) -> Value {
+    if tool == "cirrus_list_devices" {
+        result.clone()
+    } else {
+        text_result.clone()
+    }
+}
+
 fn result_without_inline_artwork(result: &Value) -> Value {
     let mut visible = result.clone();
-    if let Some(devices) = visible.get_mut("devices").and_then(Value::as_array_mut) {
-        for device in devices {
-            if let Some(device) = device.as_object_mut() {
-                device.remove("deviceImageDataUrl");
+    strip_inline_artwork(&mut visible);
+    visible
+}
+
+fn strip_inline_artwork(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.remove("deviceImageDataUrl");
+            fields.remove("dataUrl");
+            for value in fields.values_mut() {
+                strip_inline_artwork(value);
             }
         }
+        Value::Array(values) => {
+            for value in values {
+                strip_inline_artwork(value);
+            }
+        }
+        _ => {}
     }
-    visible
 }
 
 #[derive(Debug)]
@@ -996,6 +1955,38 @@ mod tests {
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),
             Some(false)
         );
+        let devices = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("cirrus_list_devices"))
+            .expect("devices tool");
+        assert!(devices.get("outputSchema").is_some());
+    }
+
+    #[test]
+    fn every_tool_documents_inputs_and_structured_output() {
+        let tools = tools_list();
+        let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
+        for tool in tools {
+            let name = tool.get("name").and_then(Value::as_str).expect("tool name");
+            let schema = tool.get("outputSchema").unwrap_or_else(|| panic!("{name} outputSchema"));
+            assert_eq!(schema.get("type").and_then(Value::as_str), Some("object"), "{name}");
+            assert!(
+                schema.get("properties").and_then(Value::as_object).is_some_and(|properties| !properties.is_empty()),
+                "{name} output properties"
+            );
+
+            let properties = tool
+                .get("inputSchema")
+                .and_then(|value| value.get("properties"))
+                .and_then(Value::as_object)
+                .expect("input properties");
+            for (property, definition) in properties {
+                assert!(
+                    definition.get("description").and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty()),
+                    "{name}.{property} must have a description"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1023,6 +2014,85 @@ mod tests {
         assert_eq!(visible["devices"][0]["deviceImageMimeType"], "image/png");
         assert!(visible["devices"][0].get("deviceImageDataUrl").is_none());
         assert_eq!(result["devices"][0]["deviceImageDataUrl"], "data:image/png;base64,large");
+    }
+
+    #[test]
+    fn device_text_is_a_readable_table_without_inline_artwork() {
+        let result = json!({
+            "deviceCount": 1,
+            "devices": [{
+                "name": "Test Phone",
+                "deviceDisplayName": "iPhone",
+                "deviceId": "device-id-123",
+                "deviceStatus": "200",
+                "batteryLevel": 0.82,
+                "deviceImageMimeType": "image/png",
+                "deviceImageDataUrl": "data:image/png;base64,large",
+                "location": {
+                    "latitude": 30.1234567,
+                    "longitude": 120.7654321,
+                    "horizontalAccuracy": 9.6,
+                    "isOld": false
+                }
+            }]
+        });
+        let visible = result_without_inline_artwork(&result);
+        let text = tool_result_text("cirrus_list_devices", &visible);
+        assert!(text.contains("# Find My devices (1)"));
+        assert!(text.contains(
+            "| Test Phone | iPhone | Online | 82% | 30.123457, 120.765432 ±10 m | Included | `device-id-123` |"
+        ));
+        assert!(!text.contains("base64"));
+        assert!(!visible.to_string().contains("base64"));
+    }
+
+    #[test]
+    fn account_and_device_errors_explain_the_next_step() {
+        assert!(tool_error_text("Missing required argument: accountKey").contains("Call cirrus_list_accounts first"));
+        assert!(tool_error_text("missing deviceId").contains("Call cirrus_list_devices first"));
+    }
+
+    #[test]
+    fn device_output_schema_exposes_identifiers_and_location() {
+        let schema = device_output_schema();
+        let properties = &schema["properties"]["devices"]["items"]["properties"];
+        assert!(properties.get("deviceId").is_some());
+        assert!(properties.get("location").is_some());
+        assert!(properties.get("deviceImageDataUrl").is_some());
+    }
+
+    #[test]
+    fn image_results_are_moved_out_of_structured_content() {
+        let result = json!({
+            "dataUrl": "data:image/png;base64,YWJj",
+            "imageIncluded": true,
+            "mimeType": "image/png",
+            "byteLength": 3
+        });
+        let visible = result_without_inline_artwork(&result);
+        assert!(visible.get("dataUrl").is_none());
+        assert_eq!(visible["imageIncluded"], true);
+        let text = tool_result_text("cirrus_get_account_avatar", &visible);
+        assert!(text.contains("image/png"));
+        assert!(!text.contains("YWJj"));
+        let parsed = parse_image_data_url("data:image/png;base64,YWJj").expect("data URL");
+        assert_eq!(parsed.0, "image/png");
+        assert_eq!(parsed.2, 3);
+    }
+
+    #[test]
+    fn device_structured_content_keeps_base64_artwork() {
+        let result = json!({
+            "devices": [{
+                "name": "Phone",
+                "deviceImageMimeType": "image/png",
+                "deviceImageDataUrl": "data:image/png;base64,YWJj"
+            }]
+        });
+        let text_result = result_without_inline_artwork(&result);
+        let structured = result_for_structured_content("cirrus_list_devices", &result, &text_result);
+        assert_eq!(structured["devices"][0]["deviceImageDataUrl"], "data:image/png;base64,YWJj");
+        assert!(text_result["devices"][0].get("deviceImageDataUrl").is_none());
     }
 
     #[test]

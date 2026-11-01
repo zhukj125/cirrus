@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use cirrus_core::{load_app_state_json, save_app_state_json};
 use http_body_util::{BodyExt, Full};
@@ -36,6 +36,7 @@ const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
 const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
+const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_HTTP_BODY: usize = 64 * 1024;
@@ -152,6 +153,39 @@ struct LoginOutcome {
     approved: bool,
     message: Option<String>,
     account: Option<McpAccountSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpHistoryReport {
+    tool: String,
+    #[serde(default)]
+    arguments: Value,
+    client_name: Option<String>,
+    client_version: Option<String>,
+    started_at: i64,
+    duration_ms: i64,
+    success: bool,
+    error: Option<String>,
+    response: Value,
+}
+
+impl McpHistoryReport {
+    fn into_entry(self) -> McpCallHistoryEntry {
+        McpCallHistoryEntry {
+            id: Uuid::new_v4().to_string(),
+            account_key: self.arguments.get("accountKey").and_then(Value::as_str).map(ToOwned::to_owned),
+            tool_name: self.tool,
+            client_name: self.client_name,
+            client_version: self.client_version,
+            started_at: self.started_at,
+            duration_ms: self.duration_ms,
+            success: self.success,
+            error: self.error,
+            request_json: Some(self.arguments.to_string()),
+            response_json: Some(self.response.to_string()),
+        }
+    }
 }
 
 impl LoginOutcome {
@@ -723,6 +757,18 @@ async fn handle_request(
             json!({ "ok": true, "app": "cirrus", "version": env!("CARGO_PKG_VERSION") }),
         );
     }
+    if request.method() == Method::POST && path == "/v1/history" {
+        if !authorized_bearer(&request, &bridge_token) {
+            return json_response(StatusCode::UNAUTHORIZED, json!({ "ok": false, "error": "Unauthorized" }));
+        }
+        let Some(app_state) = app_state.upgrade() else {
+            return json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "ok": false, "error": "Cirrus is shutting down" }),
+            );
+        };
+        return handle_history(request, &app_state).await;
+    }
     if request.method() != Method::POST || path != "/v1/call" {
         return json_response(StatusCode::NOT_FOUND, json!({ "ok": false, "error": "Not found" }));
     }
@@ -742,6 +788,34 @@ async fn handle_request(
         );
     };
     handle_call(request, service, app_state, app).await
+}
+
+async fn handle_history(request: Request<hyper::body::Incoming>, app_state: &AppState) -> Response<Full<Bytes>> {
+    let body = match read_body_with_limit(request, MAX_HISTORY_BODY).await {
+        Ok(body) => body,
+        Err(error) => return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
+    };
+    let report: McpHistoryReport = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "error": format!("Invalid history report: {error}") }),
+            )
+        }
+    };
+    if !report.tool.starts_with("cirrus_") {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": format!("Unknown Cirrus tool: {}", report.tool) }),
+        );
+    }
+    match app_state.mcp_history.record(report.into_entry()) {
+        Ok(()) => json_response(StatusCode::OK, json!({ "ok": true })),
+        Err(error) => {
+            json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error.to_string() }))
+        }
+    }
 }
 
 async fn handle_call(
@@ -786,8 +860,6 @@ async fn handle_call(
         .to_string();
     let client_version =
         payload.get("client").and_then(|value| value.get("version")).and_then(Value::as_str).map(ToOwned::to_owned);
-    let started_at = Instant::now();
-    let started_ms = cirrus_core::now_millis();
     if (tool == LOGIN_TOOL || tool == LIST_ACCOUNTS_TOOL)
         && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
     {
@@ -799,16 +871,6 @@ async fn handle_call(
     if tool == LIST_ACCOUNTS_TOOL {
         let result =
             service.visible_accounts().and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()));
-        record_mcp_call_history(
-            &app_state,
-            tool,
-            &arguments,
-            &client_name,
-            client_version.as_deref(),
-            started_ms,
-            started_at,
-            &result,
-        );
         return match result {
             Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
             Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
@@ -816,16 +878,6 @@ async fn handle_call(
     }
     if tool != LOGIN_TOOL {
         let result = crate::mcp_operations::call_tool(tool, &arguments, &app_state, &service, &app).await;
-        record_mcp_call_history(
-            &app_state,
-            tool,
-            &arguments,
-            &client_name,
-            client_version.as_deref(),
-            started_ms,
-            started_at,
-            &result,
-        );
         return match result {
             Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
             Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
@@ -915,47 +967,9 @@ async fn handle_call(
         log::info!("[MCP] sign-in request completed successfully");
     }
     let result = serde_json::to_value(&outcome).map_err(|error| error.to_string());
-    record_mcp_call_history(
-        &app_state,
-        tool,
-        &arguments,
-        &client_name,
-        client_version.as_deref(),
-        started_ms,
-        started_at,
-        &result,
-    );
     match result {
         Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
         Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
-    }
-}
-
-fn record_mcp_call_history(
-    state: &AppState,
-    tool: &str,
-    arguments: &Value,
-    client_name: &str,
-    client_version: Option<&str>,
-    started_at: i64,
-    started: Instant,
-    result: &Result<Value, String>,
-) {
-    let entry = McpCallHistoryEntry {
-        id: Uuid::new_v4().to_string(),
-        tool_name: tool.to_string(),
-        account_key: arguments.get("accountKey").and_then(Value::as_str).map(ToOwned::to_owned),
-        client_name: Some(client_name.to_string()),
-        client_version: client_version.map(ToOwned::to_owned),
-        started_at,
-        duration_ms: started.elapsed().as_millis() as i64,
-        success: result.is_ok(),
-        error: result.as_ref().err().cloned(),
-        request_json: Some(arguments.to_string()),
-        response_json: result.as_ref().ok().map(Value::to_string),
-    };
-    if let Err(error) = state.mcp_history.record(entry) {
-        log::warn!("[MCP] could not save call history: {error}");
     }
 }
 
@@ -979,8 +993,12 @@ fn authorized_bearer(request: &Request<hyper::body::Incoming>, expected: &str) -
 }
 
 async fn read_body(request: Request<hyper::body::Incoming>) -> Result<Vec<u8>, String> {
+    read_body_with_limit(request, MAX_HTTP_BODY).await
+}
+
+async fn read_body_with_limit(request: Request<hyper::body::Incoming>, max_bytes: usize) -> Result<Vec<u8>, String> {
     let size_hint = request.body().size_hint().upper().unwrap_or(0);
-    if size_hint > MAX_HTTP_BODY as u64 {
+    if size_hint > max_bytes as u64 {
         return Err("Request body is too large".to_string());
     }
     let body = request
@@ -989,7 +1007,7 @@ async fn read_body(request: Request<hyper::body::Incoming>) -> Result<Vec<u8>, S
         .await
         .map_err(|error| format!("Could not read request body: {error}"))?
         .to_bytes();
-    if body.len() > MAX_HTTP_BODY {
+    if body.len() > max_bytes {
         return Err("Request body is too large".to_string());
     }
     Ok(body.to_vec())
@@ -1186,5 +1204,33 @@ mod tests {
         let path = mcp_binary_path().expect("binary path");
         let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
         assert_eq!(name, if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" });
+    }
+
+    #[test]
+    fn history_report_preserves_the_complete_mcp_response() {
+        let report: McpHistoryReport = serde_json::from_value(json!({
+            "tool": "cirrus_list_devices",
+            "arguments": { "accountKey": "dsid:123" },
+            "clientName": "Codex",
+            "clientVersion": "1.0",
+            "startedAt": 100,
+            "durationMs": 25,
+            "success": true,
+            "error": null,
+            "response": {
+                "content": [{ "type": "text", "text": "# Find My devices" }],
+                "structuredContent": { "deviceCount": 0, "devices": [] },
+                "isError": false
+            }
+        }))
+        .expect("history report");
+        let entry = report.into_entry();
+        assert_eq!(entry.tool_name, "cirrus_list_devices");
+        assert_eq!(entry.account_key.as_deref(), Some("dsid:123"));
+        assert_eq!(entry.client_name.as_deref(), Some("Codex"));
+        let response = entry.response_json.expect("response");
+        assert!(response.contains("\"structuredContent\""));
+        assert!(response.contains("\"content\""));
+        assert!(response.contains("\"isError\":false"));
     }
 }
