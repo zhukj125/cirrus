@@ -14,7 +14,7 @@ import { openExternal } from "@/lib/api";
 import { DEFAULT_MAP_PROVIDER_ID, MAP_PROVIDERS, getMapProvider } from "@/lib/maps/providers";
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
-import { useLocaleStore } from "@/stores/locale";
+import { LOCALE_OPTIONS, isLocale, useLocaleStore } from "@/stores/locale";
 import { useInterfaceScaleStore } from "@/stores/interfaceScale";
 import { useThemeStore } from "@/stores/theme";
 import { useUpdaterStore } from "@/stores/updater";
@@ -163,7 +163,7 @@ function openProjectGithub(): void {
 
 function onLocaleChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
-  if (value === "zh-CN" || value === "en-US") locale.setLocale(value);
+  if (isLocale(value)) locale.setLocale(value);
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -214,8 +214,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                 <label for="settings-language" class="mb-2 block text-sm font-medium">{{ locale.t("settings.language") }}</label>
                 <div class="relative">
                   <select id="settings-language" :value="locale.locale" class="h-10 w-full appearance-none rounded-lg border border-border bg-card pr-10 pl-3 text-sm text-foreground outline-none transition-colors focus:border-ring" @change="onLocaleChange">
-                    <option value="zh-CN">{{ locale.t("settings.chinese") }}</option>
-                    <option value="en-US">English</option>
+                    <option v-for="option in LOCALE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
                   <ChevronDown :size="15" class="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground" />
                 </div>

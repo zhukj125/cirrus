@@ -241,7 +241,7 @@ function accountStatusClass(account: KnownAccount): string {
             <span v-else class="grid size-7 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-semibold">{{ accountName(item).charAt(0).toUpperCase() }}</span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium">{{ accountName(item) }}</span>
-              <span class="block truncate text-2xs text-muted-foreground" :title="item.appleId">{{ item.appleId }} · {{ recentTimeLabel(item.lastUsedAt, Date.now(), locale.isEnglish) }}</span>
+              <span class="block truncate text-2xs text-muted-foreground" :title="item.appleId">{{ item.appleId }} · {{ recentTimeLabel(item.lastUsedAt, Date.now(), locale.formatLocale) }}</span>
             </span>
             <span class="shrink-0 text-right">
               <span v-if="item.key === activeAccountKey" class="sr-only">{{ locale.t("sidebar.current") }}</span>

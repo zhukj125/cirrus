@@ -136,7 +136,7 @@ function folderLabel(path: string): string {
 }
 
 function formatTaskCreatedAt(createdAt: number): string {
-  return new Date(createdAt).toLocaleString(locale.isEnglish ? "en-US" : "zh-CN", {
+  return new Date(createdAt).toLocaleString(locale.formatLocale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

@@ -26,7 +26,7 @@ const placeholderLabel = computed(() => props.placeholder || t("photos.selectDat
 const triggerLabel = computed(() => {
   const { after, before } = props.modelValue;
   if (after === null || before === null) return placeholderLabel.value;
-  return `${formatDateInput(after)}${locale.isEnglish ? " to " : " 至 "}${formatDateInput(addDays(before, -1))}`;
+  return t("photos.rangeSummary", { after: formatDateInput(after), before: formatDateInput(addDays(before, -1)) });
 });
 
 function onOpenChange(next: boolean): void {

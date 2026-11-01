@@ -5,6 +5,13 @@ export function hasLockBadge(device: Device): boolean {
   return Boolean(device.lostModeEnabled) || Boolean(device.lostModePending);
 }
 
+export function deviceLockKey(device: Device): string {
+  if (device.lostModeEnabled) return "device.lostModeOn";
+  if (device.lostModePending) return "device.lostModePending";
+  if (device.activationLocked) return "device.activationLockOn";
+  return "device.activationLockOff";
+}
+
 export function deviceLockLabel(device: Device, english = true): string {
   if (device.lostModeEnabled) return english ? "Lost Mode is on" : "丢失模式已开启";
   if (device.lostModePending) return english ? "Updating Lost Mode…" : "正在更新丢失模式…";
@@ -24,7 +31,7 @@ const locale = useLocaleStore();
 const props = withDefaults(defineProps<{ device: Device; size?: number }>(), { size: 20 });
 
 const show = computed(() => hasLockBadge(props.device));
-const label = computed(() => deviceLockLabel(props.device, locale.isEnglish));
+const label = computed(() => locale.t(deviceLockKey(props.device)));
 </script>
 
 <template>

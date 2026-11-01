@@ -5,7 +5,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, CircleAlert, Crosshair, Volume2, X }
 
 import BatteryIcon from "@/components/BatteryIcon.vue";
 import DeviceIcon, { deviceEmoji } from "@/components/DeviceIcon.vue";
-import LockBadge, { deviceLockLabel, hasLockBadge } from "@/components/LockBadge.vue";
+import LockBadge, { deviceLockKey, hasLockBadge } from "@/components/LockBadge.vue";
 import RadarGlyph from "@/components/RadarGlyph.vue";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -107,12 +107,12 @@ function locationTimeMs(timestamp: number | null | undefined): number | null {
 
 function timeAgo(timestamp: number | null | undefined): string {
   const ms = locationTimeMs(timestamp);
-  return ms == null ? "" : relativeTimeLabel(ms, Date.now(), locale.isEnglish);
+  return ms == null ? "" : relativeTimeLabel(ms, Date.now(), locale.formatLocale);
 }
 
 function staleTimeLabel(timestamp: number | null | undefined): string {
   const ms = locationTimeMs(timestamp);
-  return ms == null ? "" : formatStaleTimeLabel(ms, new Date(), locale.isEnglish);
+  return ms == null ? "" : formatStaleTimeLabel(ms, new Date(), locale.formatLocale);
 }
 
 function isDeviceReportedOnline(device: Device): boolean {
@@ -529,7 +529,7 @@ function resolveAddresses(): void {
     if (retryAt != null && Date.now() < retryAt) continue;
 
     addressInflight.add(cacheKey);
-    void reverseGeocode(position, locale.isEnglish ? "en" : "zh")
+    void reverseGeocode(position, locale.isChinese ? "zh" : "en")
       .then((info) => {
         addressInflight.delete(cacheKey);
         if (disposed) return;
@@ -875,7 +875,7 @@ onUnmounted(() => {
             </div>
             <div class="flex items-center gap-3 px-3 py-2">
               <span class="w-14 shrink-0 text-sm text-muted-foreground">{{ t("map.security") }}</span>
-              <span class="min-w-0 flex-1 text-base">{{ deviceLockLabel(selectedDevice, locale.isEnglish) }}</span>
+              <span class="min-w-0 flex-1 text-base">{{ locale.t(deviceLockKey(selectedDevice)) }}</span>
               <LockBadge :device="selectedDevice" :size="16" />
             </div>
           </div>

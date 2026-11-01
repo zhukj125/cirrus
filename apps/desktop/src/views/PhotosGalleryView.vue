@@ -100,7 +100,7 @@ function selectCustomRangeFromPicker(value: DateBounds): void {
 const rangeLabel = computed(() => {
   const { after, before } = activeRange.value;
   if (after === null || before === null) return null;
-  return `${formatDateInput(after)}${locale.isEnglish ? " to " : " 至 "}${formatDateInput(addDays(before, -1))}`;
+  return locale.t("photos.rangeSummary", { after: formatDateInput(after), before: formatDateInput(addDays(before, -1)) });
 });
 
 const isUnfiltered = computed(() => range.value === "all");
@@ -264,7 +264,7 @@ const countLabel = computed(() => {
       exact: activeExactCount.value,
       exactLoading: exactCountLoading.value,
     },
-    locale.isEnglish,
+    (key, params) => locale.t(key, params),
   );
 });
 
@@ -363,7 +363,7 @@ const skeletonCount = computed(() => {
   return visiblePhotos.value.length === 0 ? 12 : hasMore.value || truncated.value ? 4 : 0;
 });
 
-const sections = computed(() => groupByDay(visiblePhotos.value, new Date(), locale.locale));
+const sections = computed(() => groupByDay(visiblePhotos.value, new Date(), locale.formatLocale, locale.t("photos.unknownDate")));
 
 const selectedPhotoIds = reactive(new Set<string>());
 const selectionAnchorIndex = ref<number | null>(null);

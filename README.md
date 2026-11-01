@@ -61,7 +61,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 
 ### Desktop workspace
 
-- English and Simplified Chinese UI.
+- 11 interface languages: English, Simplified and Traditional Chinese, Japanese, Korean, Spanish, French, German, Portuguese, Russian, and Arabic.
 - Light, dark, and system themes.
 - Multiple Apple accounts with session reuse.
 - Local storage for accounts, avatars, encrypted sessions, and download history.
