@@ -21,7 +21,7 @@ describe("App 启动分支", () => {
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find("h1").text()).toBe("Sign in to iCloud");
-    expect(wrapper.text()).toContain("Sign in to view iCloud Photos and Find My devices");
+    expect(wrapper.text()).toContain("Sign in to access iCloud Photos, Find My devices, Notes, Contacts, and Calendar");
     expect(wrapper.text()).toContain("Two-factor authentication is required");
     expect(wrapper.text()).not.toContain("Mainland China account");
 

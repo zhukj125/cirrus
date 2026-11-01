@@ -61,6 +61,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const showReloginPrompt = computed(() => props.loginContext.mode === "relogin-expired" && !reloginConfirmed.value && !pendingSessionId.value);
 const lockAppleId = computed(() => props.loginContext.mode === "relogin-expired" && reloginConfirmed.value);
+const loginTitle = computed(() => locale.t(props.loginContext.mode === "mcp" ? "login.mcpTitle" : "login.title"));
+const loginSubtitle = computed(() => (props.loginContext.mode === "mcp" ? locale.t("login.mcpSubtitle", { client: props.loginContext.clientName ?? "MCP" }) : locale.t("login.subtitle")));
 const showFirstStep = computed(() => !pendingSessionId.value && !showReloginPrompt.value);
 const showKnownAccounts = computed(() => props.loginContext.mode !== "mcp" && !pendingSessionId.value && !showReloginPrompt.value && props.accounts.length > 0);
 
@@ -384,8 +386,8 @@ function switchToOtherAccount(): void {
   <div class="flex h-full min-h-0 items-center justify-center overflow-y-auto bg-background px-5 py-8 sm:px-8">
     <div class="w-full max-w-[380px]">
       <div class="mb-6">
-        <h1 class="text-2xl font-semibold tracking-tight">{{ locale.t("login.title") }}</h1>
-        <p class="mt-2 text-sm leading-5 text-muted-foreground">{{ locale.t("login.subtitle") }}</p>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ loginTitle }}</h1>
+        <p class="mt-2 text-sm leading-5 text-muted-foreground">{{ loginSubtitle }}</p>
       </div>
 
       <div v-if="loginContext.mode === 'mcp'" class="mb-4 flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5" data-testid="mcp-login-banner">

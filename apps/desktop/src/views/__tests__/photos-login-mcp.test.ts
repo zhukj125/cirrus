@@ -30,6 +30,8 @@ describe("MCP sign-in login view", () => {
     });
 
     const banner = wrapper.get('[data-testid="mcp-login-banner"]');
+    expect(wrapper.get("h1").text()).toBe("Sign in to iCloud with Cirrus");
+    expect(wrapper.text()).toContain("Codex is requesting access to your iCloud Photos, Find My devices, Notes, Contacts, and Calendar through Cirrus");
     expect(banner.text()).toContain("Codex");
     expect(banner.text()).toContain("is authorized to start sign-in");
 
