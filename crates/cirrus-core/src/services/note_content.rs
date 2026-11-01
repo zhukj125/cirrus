@@ -11,13 +11,12 @@ use crate::models::NoteAttachment;
 
 const MAX_DECODED_BYTES: usize = 64 * 1024 * 1024;
 
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum Wire<'a> {
     Varint(u64),
-    Fixed64(&'a [u8]),
+    Fixed64,
     Bytes(&'a [u8]),
-    Fixed32(&'a [u8]),
+    Fixed32,
 }
 
 #[derive(Clone, Default)]
@@ -40,12 +39,10 @@ struct AttributeRun {
     attachment_id: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
-enum ObjectValue<'a> {
+enum ObjectValue {
     Ref(u64),
     Uint(u64),
-    String(&'a [u8]),
 }
 
 pub fn render_body_html(encoded: &str, attachments: &[NoteAttachment]) -> AppResult<String> {
@@ -358,14 +355,11 @@ fn table_grid(document: &[u8]) -> AppResult<Vec<Vec<String>>> {
         return Err(AppError::other("Table object pool is empty"));
     }
     let table = custom_entries(objects[0], &keys).ok_or_else(|| AppError::other("Table root object is missing"))?;
-    let cr_rows =
-        table.get("crRows").and_then(resolve_ref).ok_or_else(|| AppError::other("Table is missing crRows"))?;
+    let cr_rows = table.get("crRows").and_then(object_ref).ok_or_else(|| AppError::other("Table is missing crRows"))?;
     let cr_columns =
-        table.get("crColumns").and_then(resolve_ref).ok_or_else(|| AppError::other("Table is missing crColumns"))?;
-    let cell_columns = table
-        .get("cellColumns")
-        .and_then(resolve_ref)
-        .ok_or_else(|| AppError::other("Table is missing cellColumns"))?;
+        table.get("crColumns").and_then(object_ref).ok_or_else(|| AppError::other("Table is missing crColumns"))?;
+    let cell_columns =
+        table.get("cellColumns").and_then(object_ref).ok_or_else(|| AppError::other("Table is missing cellColumns"))?;
     let (row_ids, row_redirects) = ordered_set(&objects, &uuids, cr_rows)?;
     let (column_ids, column_redirects) = ordered_set(&objects, &uuids, cr_columns)?;
     let row_positions = positions(&objects, &keys, &row_ids, &row_redirects)?;
@@ -468,7 +462,7 @@ fn uuid_index(objects: &[&[u8]], keys: &[String], reference: u64) -> AppResult<u
     }
 }
 
-fn dictionary_pairs<'a>(objects: &'a [&'a [u8]], reference: u64) -> AppResult<Vec<(ObjectValue<'a>, ObjectValue<'a>)>> {
+fn dictionary_pairs(objects: &[&[u8]], reference: u64) -> AppResult<Vec<(ObjectValue, ObjectValue)>> {
     let object = pool_object(objects, reference)?;
     let dictionary = field_bytes(object, 6).ok_or_else(|| AppError::other("Table dictionary is missing"))?;
     let mut pairs = Vec::new();
@@ -494,7 +488,7 @@ fn cell_text(objects: &[&[u8]], reference: u64) -> String {
         .to_string()
 }
 
-fn custom_entries<'a>(object: &'a [u8], keys: &[String]) -> Option<HashMap<String, ObjectValue<'a>>> {
+fn custom_entries(object: &[u8], keys: &[String]) -> Option<HashMap<String, ObjectValue>> {
     let custom = field_bytes(object, 13)?;
     let mut entries = HashMap::new();
     for entry in field_bytes_all(custom, 3) {
@@ -507,25 +501,19 @@ fn custom_entries<'a>(object: &'a [u8], keys: &[String]) -> Option<HashMap<Strin
     Some(entries)
 }
 
-fn object_value(data: &[u8]) -> Option<ObjectValue<'_>> {
+fn object_value(data: &[u8]) -> Option<ObjectValue> {
     if let Some(reference) = field_varint(data, 6) {
         Some(ObjectValue::Ref(reference))
-    } else if let Some(number) = field_varint(data, 2) {
-        Some(ObjectValue::Uint(number))
     } else {
-        field_bytes(data, 4).map(ObjectValue::String)
+        field_varint(data, 2).map(ObjectValue::Uint)
     }
 }
 
-fn object_ref(value: &ObjectValue<'_>) -> Option<u64> {
+fn object_ref(value: &ObjectValue) -> Option<u64> {
     match value {
         ObjectValue::Ref(reference) => Some(*reference),
         _ => None,
     }
-}
-
-fn resolve_ref(value: &ObjectValue<'_>) -> Option<u64> {
-    object_ref(value)
 }
 
 fn pool_object<'a>(objects: &'a [&'a [u8]], reference: u64) -> AppResult<&'a [u8]> {
@@ -545,10 +533,9 @@ fn parse_proto(data: &[u8]) -> AppResult<Vec<(u64, u8, Wire<'_>)>> {
         let value = match wire {
             0 => Wire::Varint(proto_varint(data, &mut position)?),
             1 => {
-                let bytes =
-                    data.get(position..position + 8).ok_or_else(|| AppError::other("Protobuf fixed64 is truncated"))?;
+                data.get(position..position + 8).ok_or_else(|| AppError::other("Protobuf fixed64 is truncated"))?;
                 position += 8;
-                Wire::Fixed64(bytes)
+                Wire::Fixed64
             }
             2 => {
                 let length = proto_varint(data, &mut position)? as usize;
@@ -561,10 +548,9 @@ fn parse_proto(data: &[u8]) -> AppResult<Vec<(u64, u8, Wire<'_>)>> {
                 Wire::Bytes(bytes)
             }
             5 => {
-                let bytes =
-                    data.get(position..position + 4).ok_or_else(|| AppError::other("Protobuf fixed32 is truncated"))?;
+                data.get(position..position + 4).ok_or_else(|| AppError::other("Protobuf fixed32 is truncated"))?;
                 position += 4;
-                Wire::Fixed32(bytes)
+                Wire::Fixed32
             }
             other => return Err(AppError::other(format!("Unsupported protobuf wire type: {other}"))),
         };
