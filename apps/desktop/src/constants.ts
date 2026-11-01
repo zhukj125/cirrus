@@ -28,6 +28,7 @@ export const StorageKey = {
   amapSecurityCode: "cirrus.amapSecurityCode",
   photosView: "cirrus.photosView",
   workspaceTabs: "cirrus.workspaceTabs",
+  interfaceScale: "cirrus.interfaceScale",
 } as const;
 
 export const SHELL_VIEWS = ["findmy", "photos-gallery", "notes", "contacts", "calendar"] as const;

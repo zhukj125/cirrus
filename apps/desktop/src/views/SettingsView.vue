@@ -15,6 +15,7 @@ import { DEFAULT_MAP_PROVIDER_ID, MAP_PROVIDERS, getMapProvider } from "@/lib/ma
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
+import { useInterfaceScaleStore } from "@/stores/interfaceScale";
 import { useThemeStore } from "@/stores/theme";
 import { useUpdaterStore } from "@/stores/updater";
 
@@ -36,6 +37,7 @@ const props = withDefaults(
 const emit = defineEmits<{ back: [] }>();
 const theme = useThemeStore();
 const locale = useLocaleStore();
+const interfaceScale = useInterfaceScaleStore();
 const updater = useUpdaterStore();
 const query = ref("");
 const active = ref(props.initialCategory);
@@ -49,6 +51,10 @@ watch(closeBehavior, (value) => {
 function resetClosePrompt(): void {
   writeStored(StorageKey.closeBehaviorPrompted, "0");
   toast.success(locale.t("settings.closePromptResetDone"));
+}
+
+function onScaleChange(event: Event): void {
+  void interfaceScale.setScale((event.target as HTMLSelectElement).value);
 }
 
 watch(
@@ -215,8 +221,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                 </div>
               </div>
               <div>
-                <p class="mb-2 text-sm font-medium">{{ locale.t("settings.zoom") }}</p>
-                <div class="flex h-10 items-center rounded-lg border border-border bg-card px-3 text-sm text-muted-foreground">100%</div>
+                <label for="settings-scale" class="mb-2 block text-sm font-medium">{{ locale.t("settings.zoom") }}</label>
+                <div class="relative">
+                  <select id="settings-scale" :value="String(interfaceScale.scale)" class="h-10 w-full appearance-none rounded-lg border border-border bg-card pr-10 pl-3 text-sm text-foreground outline-none transition-colors focus:border-ring" @change="onScaleChange">
+                    <option v-for="option in interfaceScale.options" :key="option.value" :value="String(option.value)">{{ option.label }}</option>
+                  </select>
+                  <ChevronDown :size="15" class="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground" />
+                </div>
+                <p class="mt-2 text-xs text-muted-foreground">{{ locale.t("settings.zoomHint") }}</p>
               </div>
             </div>
           </div>

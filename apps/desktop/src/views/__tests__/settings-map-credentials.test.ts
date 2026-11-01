@@ -53,6 +53,17 @@ describe("SettingsView map credentials", () => {
     expect(wrapper.find("#map-credential-apiKey").exists()).toBe(true);
   });
 
+  it("offers and persists interface scale options", async () => {
+    localStorage.clear();
+    const wrapper = mount(SettingsView, { props: { initialCategory: "appearance" }, global: { plugins: [createPinia()] } });
+    const select = wrapper.get("#settings-scale");
+
+    expect(select.findAll("option")).toHaveLength(19);
+    await select.setValue("1.25");
+    await select.trigger("change");
+    expect(localStorage.getItem(StorageKey.interfaceScale)).toBe("1.25");
+  });
+
   it("persists the close behavior preference", async () => {
     localStorage.clear();
     const wrapper = mount(SettingsView, { global: { plugins: [createPinia()] } });

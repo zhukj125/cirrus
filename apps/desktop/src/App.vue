@@ -24,6 +24,7 @@ import PhotosLoginView from "@/views/PhotosLoginView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import { useAppStore } from "@/stores/app";
 import { useDownloadsStore } from "@/stores/downloads";
+import { useInterfaceScaleStore } from "@/stores/interfaceScale";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
 import { useUpdaterStore } from "@/stores/updater";
@@ -38,6 +39,7 @@ import { StorageKey, isShellView, type ShellView, type View, type WorkspaceTab }
 const store = useAppStore();
 
 const downloads = useDownloadsStore();
+useInterfaceScaleStore();
 const i18n = useLocaleStore();
 const updater = useUpdaterStore();
 

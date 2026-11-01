@@ -522,6 +522,7 @@ const MESSAGES: Record<string, { zh: string; en: string }> = {
   "settings.language": { zh: "语言 / Language", en: "Language" },
   "settings.chinese": { zh: "中文", en: "Chinese" },
   "settings.zoom": { zh: "界面缩放", en: "Interface scale" },
+  "settings.zoomHint": { zh: "调整后立即生效。", en: "Changes are applied immediately." },
   "settings.theme": { zh: "主题", en: "Theme" },
   "settings.themeSaved": { zh: "设置会自动保存，下次打开继续使用。", en: "Changes are saved automatically." },
   "settings.closeBehavior": { zh: "关闭窗口时", en: "When closing the window" },
