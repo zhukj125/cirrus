@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use cirrus_core::{load_app_state_json, save_app_state_json};
+use cirrus_mcp::{serve_http_on_listener, BridgeTarget, HttpConfig as McpHttpConfig};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Bytes};
 use hyper::header::{self, HeaderValue};
@@ -36,8 +36,6 @@ const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
 const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -222,8 +220,9 @@ struct ServerRuntime {
 }
 
 struct HttpRuntime {
-    child: Child,
     port: u16,
+    stop: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
 }
 
 #[derive(Default)]
@@ -307,21 +306,17 @@ impl McpService {
         let mut exited = None;
         let result = {
             let mut http = self.http.lock().unwrap_or_else(|error| error.into_inner());
-            match http.as_mut() {
-                Some(runtime) => match runtime.child.try_wait() {
-                    Ok(None) => (true, Some(runtime.port)),
-                    Ok(Some(status)) => {
-                        let port = runtime.port;
-                        exited = Some(format!("MCP HTTP service exited with {status}"));
-                        *http = None;
-                        (false, Some(port))
-                    }
-                    Err(error) => {
-                        exited = Some(format!("Could not inspect the MCP HTTP service: {error}"));
-                        (false, Some(runtime.port))
-                    }
-                },
-                None => (false, None),
+            if let Some(runtime) = http.as_ref() {
+                if runtime.task.inner().is_finished() {
+                    let port = runtime.port;
+                    *http = None;
+                    exited = Some("MCP HTTP service stopped unexpectedly".to_string());
+                    (false, Some(port))
+                } else {
+                    (true, Some(runtime.port))
+                }
+            } else {
+                (false, None)
             }
         };
         if let Some(error) = exited {
@@ -331,63 +326,46 @@ impl McpService {
     }
 
     async fn start_http(&self, bridge_port: u16, token: &str) -> Result<(), String> {
-        self.stop_http();
-        let binary = mcp_binary_path().filter(|path| path.is_file()).ok_or_else(|| {
-            "cirrus-mcp was not found. Build the MCP executable or use an installer that includes it.".to_string()
-        })?;
-        let mut command = Command::new(binary);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let mut child = command
-            .arg("--http")
-            .arg("--http-host")
-            .arg("127.0.0.1")
-            .arg("--http-port")
-            .arg(HTTP_PORT.to_string())
-            .arg("--http-path")
-            .arg(HTTP_PATH)
-            .env_remove("CIRRUS_MCP_HTTP_TOKEN_FILE")
-            .env("CIRRUS_MCP_HTTP_TOKEN", token)
-            .env("CIRRUS_MCP_URL", format!("http://127.0.0.1:{bridge_port}"))
-            .env("CIRRUS_MCP_TOKEN", token)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not start the MCP HTTP service: {error}"))?;
-
-        let mut ready = false;
-        for _ in 0..30 {
-            if let Ok(Some(status)) = child.try_wait() {
-                return Err(format!("MCP HTTP service exited during startup with {status}"));
+        self.stop_http().await;
+        let bind_addr = std::net::SocketAddr::from(([127, 0, 0, 1], HTTP_PORT));
+        let listener = tokio::net::TcpListener::bind(bind_addr)
+            .await
+            .map_err(|error| format!("Could not bind the MCP HTTP service at {bind_addr}: {error}"))?;
+        let config = McpHttpConfig {
+            bind_addr,
+            path: HTTP_PATH.to_string(),
+            token: token.to_string(),
+            allow_remote: false,
+            bridge: Some(BridgeTarget {
+                base_url: format!("http://127.0.0.1:{bridge_port}"),
+                token: token.to_string(),
+            }),
+        };
+        let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        let task = tauri::async_runtime::spawn(async move {
+            if let Err(error) = serve_http_on_listener(listener, config, async move {
+                let _ = stop_rx.await;
+            })
+            .await
+            {
+                log::error!("[MCP] Streamable HTTP stopped: {error}");
             }
-            if tokio::net::TcpStream::connect(("127.0.0.1", HTTP_PORT)).await.is_ok() {
-                ready = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        if !ready {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("MCP HTTP service did not become ready on port {HTTP_PORT}"));
-        }
+        });
 
-        *self.http.lock().unwrap_or_else(|error| error.into_inner()) = Some(HttpRuntime { child, port: HTTP_PORT });
+        *self.http.lock().unwrap_or_else(|error| error.into_inner()) =
+            Some(HttpRuntime { port: HTTP_PORT, stop: Some(stop_tx), task });
         *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
         log::info!("[MCP] Streamable HTTP listening on http://127.0.0.1:{HTTP_PORT}{HTTP_PATH}");
         Ok(())
     }
 
-    fn stop_http(&self) {
-        let mut http = self.http.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(mut runtime) = http.take() {
-            let _ = runtime.child.kill();
-            let _ = runtime.child.wait();
+    async fn stop_http(&self) {
+        let runtime = self.http.lock().unwrap_or_else(|error| error.into_inner()).take();
+        if let Some(mut runtime) = runtime {
+            if let Some(stop) = runtime.stop.take() {
+                let _ = stop.send(());
+            }
+            let _ = runtime.task.await;
             log::info!("[MCP] Streamable HTTP stopped");
         }
         *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
@@ -567,7 +545,7 @@ impl McpService {
         if let Some(active) = active {
             let _ = active.login_tx.send(LoginOutcome::denied("MCP was disabled before sign-in completed"));
         }
-        self.stop_http();
+        self.stop_http().await;
         self.running_port.store(0, Ordering::Release);
         self.enabled.store(false, Ordering::Relaxed);
         self.starting.store(false, Ordering::Release);
@@ -705,8 +683,10 @@ impl Drop for McpService {
     fn drop(&mut self) {
         if let Ok(http) = self.http.get_mut() {
             if let Some(mut runtime) = http.take() {
-                let _ = runtime.child.kill();
-                let _ = runtime.child.wait();
+                if let Some(stop) = runtime.stop.take() {
+                    let _ = stop.send(());
+                }
+                runtime.task.abort();
             }
         }
     }

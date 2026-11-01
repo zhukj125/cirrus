@@ -34,3 +34,4 @@ reqwest = { workspace = true }
 sysinfo = { workspace = true }
 
 cirrus-core = { path = "../crates/cirrus-core" }
+cirrus-mcp = { path = "../crates/cirrus-mcp" }

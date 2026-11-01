@@ -165,9 +165,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 仓库包含 Cargo workspace（`src-tauri`、`crates/cirrus-core`、`crates/cirrus-mcp`）和 pnpm workspace（`apps/desktop`）。
 
-### MCP 可执行文件
+### MCP 传输方式
 
-MCP 使用独立的 stdio 可执行文件，而不是主程序内置的命令。开发模式下，Cirrus 会查找与当前程序同目录的 `cirrus-mcp`（Windows 为 `cirrus-mcp.exe`），例如：
+Cirrus 支持两种 MCP 传输：
+
+- **Streamable HTTP** 在桌面主进程内运行，启用后监听 `http://127.0.0.1:5226/mcp`，不会再启动独立的控制台进程。
+- **stdio** 仍使用独立的 `cirrus-mcp` 可执行文件（Windows 为 `cirrus-mcp.exe`），供需要启动本地命令的 MCP 客户端使用。开发模式下，Cirrus 会查找与当前程序同目录的可执行文件，例如：
 
 ```text
 target/debug/cirrus-mcp.exe
@@ -183,10 +186,11 @@ pnpm build:mcp
 
 构建后重新打开 MCP 设置或重启 Cirrus。正式打包时使用 `pnpm build:mcp:sidecar`，脚本会构建 release 版本并复制到 `src-tauri/binaries/cirrus-mcp-<target>`（Windows 带 `.exe` 后缀），再由 `src-tauri/tauri.mcp.conf.json` 作为 Tauri sidecar 打入安装包。
 
-桌面应用启用 MCP 后会自动启动 `cirrus-mcp.exe --http`，默认监听 `http://127.0.0.1:5226/mcp`。也可以手动启动 HTTP 模式：
+独立可执行文件仍可手动启动两种传输：
 
 ```sh
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
+cirrus-mcp
 ```
 
 ## 限制

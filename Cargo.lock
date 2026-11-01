@@ -627,6 +627,7 @@ name = "cirrus"
 version = "1.4.8"
 dependencies = [
  "cirrus-core",
+ "cirrus-mcp",
  "http-body-util",
  "hyper",
  "hyper-util",

@@ -165,9 +165,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, and `crates/cirrus-mcp`) and a pnpm workspace (`apps/desktop`).
 
-### MCP executable
+### MCP transports
 
-MCP runs as a separate stdio executable rather than a command embedded in the main application. In development, Cirrus looks for `cirrus-mcp` (`cirrus-mcp.exe` on Windows) next to the running application, for example:
+Cirrus supports two MCP transports:
+
+- **Streamable HTTP** runs inside the desktop process and listens on `http://127.0.0.1:5226/mcp` when enabled. It does not start a separate console process.
+- **stdio** remains a separate `cirrus-mcp` executable (`cirrus-mcp.exe` on Windows) for MCP clients that launch local commands. In development, Cirrus looks for it next to the running application, for example:
 
 ```text
 target/debug/cirrus-mcp.exe
@@ -183,10 +186,11 @@ pnpm build:mcp
 
 Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds the release executable and copies it to `src-tauri/binaries/cirrus-mcp-<target>` (with an `.exe` suffix on Windows), where `src-tauri/tauri.mcp.conf.json` includes it as a Tauri sidecar in the installer.
 
-When MCP is enabled in the desktop app, Cirrus starts `cirrus-mcp.exe --http` automatically and listens on `http://127.0.0.1:5226/mcp`. The HTTP transport can also be started manually:
+The standalone executable can still be used manually for either transport:
 
 ```sh
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
+cirrus-mcp
 ```
 
 ## Limitations
