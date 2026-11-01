@@ -24,6 +24,7 @@ export interface GoogleMapInstance {
   getZoom(): number;
   setZoom(zoom: number): void;
   setCenter(center: GoogleLatLng): void;
+  panBy(x: number, y: number): void;
   fitBounds(bounds: GoogleLatLngBounds, options?: Record<string, unknown>): void;
 }
 

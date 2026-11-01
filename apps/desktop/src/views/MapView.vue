@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/lib/common/toast";
 import { reverseGeocode } from "@/lib/geocode";
 import { createMapAdapter, type AddressInfo, type MapAdapter, type MapInstance, type MapMarker, type MapOverlay, type MapPadding } from "@/lib/maps";
-import { wheelZoomDelta } from "@/lib/maps/wheel-zoom";
+import { mapWheelGesture } from "@/lib/maps/wheel-gesture";
 import { relativeTimeLabel, staleTimeLabel as formatStaleTimeLabel } from "@/lib/time";
 import { useAppStore } from "@/stores/app";
 import { useLocaleStore } from "@/stores/locale";
@@ -603,13 +603,18 @@ function onMapWheel(event: WheelEvent): void {
   if (!mapInstance) return;
 
   const pageHeight = Math.max(mapContainer.value?.clientHeight ?? window.innerHeight, 1);
-  const delta = wheelZoomDelta(event.deltaY, event.deltaMode, event.ctrlKey, pageHeight);
-  if (delta === 0) return;
+  const gesture = mapWheelGesture(event.deltaX, event.deltaY, event.deltaMode, event.ctrlKey, pageHeight);
+  if (gesture.type === "none") return;
 
   event.preventDefault();
   event.stopImmediatePropagation();
 
-  const target = Math.min(MAP_MAX_ZOOM, Math.max(minimumWorldZoom(), mapInstance.getZoom() + delta));
+  if (gesture.type === "pan") {
+    mapInstance.panBy(gesture.deltaX, gesture.deltaY);
+    return;
+  }
+
+  const target = Math.min(MAP_MAX_ZOOM, Math.max(minimumWorldZoom(), mapInstance.getZoom() + gesture.delta));
   mapInstance.setZoom(target);
 }
 

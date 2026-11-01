@@ -10,6 +10,7 @@ const mapMocks = vi.hoisted(() => ({
   createAccuracyCircle: vi.fn(),
   setTheme: vi.fn(),
   setZoom: vi.fn(),
+  panBy: vi.fn(),
 }));
 
 vi.mock("@/lib/maps", () => ({
@@ -84,6 +85,7 @@ describe("MapView location fallback", () => {
     geocodeMock.mockResolvedValue(null);
     mapMocks.setTheme.mockReset();
     mapMocks.setZoom.mockReset();
+    mapMocks.panBy.mockReset();
     mapMocks.createMap.mockReset();
     mapMocks.createMarker.mockReset();
     mapMocks.createAccuracyCircle.mockReset();
@@ -93,6 +95,7 @@ describe("MapView location fallback", () => {
       getZoom: () => 11,
       setZoom: mapMocks.setZoom,
       setZoomAndCenter: vi.fn(),
+      panBy: mapMocks.panBy,
       fitMarkers: vi.fn(),
       zoomIn: vi.fn(),
       zoomOut: vi.fn(),
@@ -165,6 +168,34 @@ describe("MapView location fallback", () => {
 
     expect(wheel.defaultPrevented).toBe(true);
     expect(mapMocks.setZoom).toHaveBeenCalledWith(12);
+    wrapper.unmount();
+  });
+
+  it("zooms with a precision-touchpad pinch gesture", async () => {
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    const container = mapMocks.createMap.mock.calls[0]?.[0] as HTMLDivElement;
+    const wheel = new WheelEvent("wheel", { deltaY: -50, bubbles: true, cancelable: true });
+    Object.defineProperty(wheel, "ctrlKey", { value: true });
+    container.dispatchEvent(wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(mapMocks.setZoom).toHaveBeenCalledWith(12);
+    wrapper.unmount();
+  });
+
+  it("pans with unmodified two-finger touchpad scrolling", async () => {
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    const container = mapMocks.createMap.mock.calls[0]?.[0] as HTMLDivElement;
+    const wheel = new WheelEvent("wheel", { deltaX: 8, deltaY: 20, bubbles: true, cancelable: true });
+    container.dispatchEvent(wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(mapMocks.panBy).toHaveBeenCalledWith(-8, -20);
+    expect(mapMocks.setZoom).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 });

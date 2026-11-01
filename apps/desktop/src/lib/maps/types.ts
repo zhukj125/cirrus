@@ -66,6 +66,7 @@ export interface MapInstance {
   getZoom(): number;
   setZoom(zoom: number): void;
   setZoomAndCenter(zoom: number, center: LngLat): void;
+  panBy(x: number, y: number): void;
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void;
   zoomIn(): void;
   zoomOut(): void;

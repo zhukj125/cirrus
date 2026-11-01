@@ -24,6 +24,7 @@ interface AmapNativeMap {
   getZoom(): number;
   setZoom(zoom: number): void;
   setZoomAndCenter(zoom: number, center: LngLat): void;
+  panBy(x: number, y: number): void;
   setFitView(targets: unknown[], immediately?: boolean, margins?: number[], maxZoom?: number): void;
   zoomIn(): void;
   zoomOut(): void;
@@ -110,6 +111,10 @@ class AmapMapInstance implements MapInstance {
 
   setZoomAndCenter(zoom: number, center: LngLat): void {
     this.map.setZoomAndCenter(zoom, center);
+  }
+
+  panBy(x: number, y: number): void {
+    this.map.panBy(x, y);
   }
 
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void {

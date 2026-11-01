@@ -185,6 +185,10 @@ class GoogleMapController implements MapInstance {
     this.map.setCenter(new this.namespace.LatLng(latitude, longitude));
   }
 
+  panBy(x: number, y: number): void {
+    this.map.panBy(x, y);
+  }
+
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void {
     const values = markers as GoogleMarkerHandle[];
     if (values.length === 0) return;
