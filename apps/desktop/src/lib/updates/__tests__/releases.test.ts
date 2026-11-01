@@ -17,7 +17,7 @@ describe("fetchAppReleases", () => {
             ok: true,
             json: async () => [
               {
-                tag_name: "1.4.7",
+                tag_name: "1.4.8",
                 name: `Cirrus ${privateReference}`,
                 body: `- Keep this change\n- Compare with ${privateReference}\n- Keep this too`,
                 html_url: "https://example.com/release",

@@ -32,7 +32,7 @@ vi.mock("@/lib/api", () => ({
     httpEndpoint: "http://127.0.0.1:5226/mcp",
     httpAccessToken: "test-http-token",
     httpError: null,
-    version: "1.4.7",
+    version: "1.4.8",
   })),
   mcpSetEnabled: vi.fn(async (enabled: boolean) => ({
     enabled,
@@ -46,7 +46,7 @@ vi.mock("@/lib/api", () => ({
     httpEndpoint: enabled ? "http://127.0.0.1:5226/mcp" : null,
     httpAccessToken: enabled ? "test-http-token" : null,
     httpError: null,
-    version: "1.4.7",
+    version: "1.4.8",
   })),
   mcpToolAccess: vi.fn(async () => ({ disabledTools: [] })),
   mcpSetToolEnabled: vi.fn(async () => ({ disabledTools: [] })),

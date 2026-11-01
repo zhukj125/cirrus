@@ -81,17 +81,17 @@ jobs:
 
             ### 更新内容
 
-            - 修复设备位置地址偶发不显示：后端优先解析，失败时由前端高德 JS 再尝试
-            - 地图初始化不再阻塞地址查询，高德 JS 回调异常时会在超时后继续降级
-            - 设备坐标变化后会自动刷新地址详情
-            - 更新日志会过滤内部实现引用
+            - 支持 11 种界面语言：英语、简体中文、繁体中文、日语、韩语、西班牙语、法语、德语、葡萄牙语、俄语和阿拉伯语
+            - 阿拉伯语界面会自动切换为从右到左布局
+            - 新增青岚、云海、琥珀、花间、潮汐、松林 6 套彩色主题
+            - 设置页支持主题预览与即时切换，选择会自动保存
 
             ### Highlights
 
-            - Fixed intermittent missing device addresses with backend-first lookup and AMap JS retry
-            - Map initialization no longer blocks address lookup; stalled AMap JS callbacks time out cleanly
-            - Device details now refresh when coordinates change
-            - Release notes now omit internal implementation references
+            - Added 11 interface languages: English, Simplified and Traditional Chinese, Japanese, Korean, Spanish, French, German, Portuguese, Russian, and Arabic
+            - Arabic automatically enables a right-to-left interface
+            - Added six color themes: Verdant, Cloudscape, Amber, Blossom, Tide, and Pine
+            - Theme previews and instant switching are now available in Settings, and selections are saved automatically
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
