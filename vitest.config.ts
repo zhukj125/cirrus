@@ -13,6 +13,7 @@ export default defineConfig({
     env: {
       VITE_AMAP_KEY: "",
       VITE_AMAP_SECURITY_CODE: "",
+      VITE_GOOGLE_MAPS_API_KEY: "",
     },
     environment: "happy-dom",
     include: ["apps/desktop/src/**/__tests__/**/*.test.ts"],

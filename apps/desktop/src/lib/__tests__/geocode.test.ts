@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const geocodeMock = vi.hoisted(() => ({ getAddress: vi.fn() }));
 vi.mock("@/lib/amap", () => ({
   getAmapConfig: vi.fn(() => ({ key: "test-key", securityCode: "" })),
+  hasEnvironmentAmapKey: vi.fn(() => false),
   loadAmap: vi.fn(async () => ({
     Geocoder: class {
       getAddress(lnglat: [number, number], callback: (status: string, result: unknown) => void) {

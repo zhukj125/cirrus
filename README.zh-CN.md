@@ -105,11 +105,12 @@ make package   # 构建当前平台安装包
 ```env
 VITE_AMAP_KEY=
 VITE_AMAP_SECURITY_CODE=
+VITE_GOOGLE_MAPS_API_KEY=
 ```
 
-`VITE_AMAP_KEY` 用于地图显示，必须是 Web 端（JS API）Key；也可以在 **设置 → 地图** 中填写并保存到本机 SQLite。
+`VITE_AMAP_KEY` 用于高德地图显示，必须是 Web 端（JS API）Key；`VITE_GOOGLE_MAPS_API_KEY` 用于 Google Maps JavaScript API。也可以在 **设置 → 地图** 中选择服务商并填写对应 Key，配置会保存到本机 SQLite。
 
-地图配置统一保存在应用数据目录的 SQLite 数据库 `cirrus.db` 中，位于 `app_state.desktop_settings` 的 `cirrus.amap*` 键。Windows 默认数据库路径为 `%APPDATA%\com.cirrus\cirrus.db`。
+使用 Google 地图时，需要在 Google Cloud 中同时启用 Maps JavaScript API 和 Geocoding API；Google 地图在中国大陆可能无法使用。地图配置统一保存在应用数据目录的 SQLite 数据库 `cirrus.db` 中，位于 `app_state.desktop_settings` 的 `cirrus.amap*` 和 `cirrus.googleMaps*` 键。Windows 默认数据库路径为 `%APPDATA%\com.cirrus\cirrus.db`。
 
 ## 使用
 
@@ -149,7 +150,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 - **后端：** Rust
 - **前端：** Vue 3、TypeScript、Tailwind CSS
 - **存储：** SQLite（WAL）
-- **地图：** AMap Web API
+- **地图：** AMap Web API 或 Google Maps JavaScript API
 
 ## 开发
 
@@ -193,7 +194,7 @@ cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
 - Release 构建未公证；macOS 可能显示 Gatekeeper 警告
 - Linux 的会话恢复需要 Secret Service 实现
 - 依赖 iCloud 私有 Web API，Apple 更新后可能需要适配
-- 设备地图需要配置 AMap Key
+- 设备地图需要配置 AMap 或 Google Maps API Key
 - 当前覆盖照片、Find My、备忘录、联系人和日历，不包含 iCloud Drive 或邮件
 - MCP 已覆盖账户、设备、照片、下载、备忘录、联系人和日历等主要操作，支持本地 stdio 和 Streamable HTTP
 

@@ -1,5 +1,6 @@
 import { StorageKey } from "@/constants";
 import { hasEnvironmentAmapKey } from "@/lib/amap";
+import { hasEnvironmentGoogleMapsKey } from "@/lib/maps/google-maps";
 
 export type MapCredentialIcon = "key" | "shield";
 
@@ -51,6 +52,25 @@ export const MAP_PROVIDERS: readonly MapProviderDefinition[] = [
     ],
     helpStepKeys: ["settings.amapHelpStep1", "settings.amapHelpStep2", "settings.amapHelpStep3"],
     environmentConfigured: hasEnvironmentAmapKey,
+  },
+  {
+    id: "google",
+    name: "Google Maps",
+    descriptionKey: "settings.googleProviderDesc",
+    primaryFieldId: "apiKey",
+    consoleUrl: "https://console.cloud.google.com/google/maps-apis/credentials",
+    fields: [
+      {
+        id: "apiKey",
+        storageKey: StorageKey.googleMapsApiKey,
+        labelKey: "settings.googleKey",
+        placeholderKey: "settings.googlePlaceholder",
+        helpKeys: ["settings.googleKeyTip", "settings.googleEnvTip"],
+        icon: "key",
+      },
+    ],
+    helpStepKeys: ["settings.googleHelpStep1", "settings.googleHelpStep2", "settings.googleHelpStep3"],
+    environmentConfigured: hasEnvironmentGoogleMapsKey,
   },
 ];
 

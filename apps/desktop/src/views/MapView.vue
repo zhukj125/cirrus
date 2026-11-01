@@ -9,10 +9,9 @@ import LockBadge, { deviceLockKey, hasLockBadge } from "@/components/LockBadge.v
 import RadarGlyph from "@/components/RadarGlyph.vue";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { loadAmap } from "@/lib/amap";
 import { toast } from "@/lib/common/toast";
-import { wgs84ToGcj02 } from "@/lib/geo";
-import { reverseGeocode, type AddressInfo } from "@/lib/geocode";
+import { reverseGeocode } from "@/lib/geocode";
+import { createMapAdapter, type AddressInfo, type MapAdapter, type MapInstance, type MapMarker, type MapOverlay, type MapPadding } from "@/lib/maps";
 import { relativeTimeLabel, staleTimeLabel as formatStaleTimeLabel } from "@/lib/time";
 import { useAppStore } from "@/stores/app";
 import { useLocaleStore } from "@/stores/locale";
@@ -35,49 +34,12 @@ const WORLD_METERS_AT_ZOOM_0 = 156_543.03392;
 
 const CLUSTER_RADIUS_M = 100;
 
-const MAP_STYLE_LIGHT = "amap://styles/normal";
-const MAP_STYLE_DARK = "amap://styles/dark";
-
 const MARKER_BASE_SIZE = 56;
 
 const MARKER_CLICK_GRACE_MS = 300;
 
-const FIT_VIEW_MARGINS = [100, 80, 360, 80];
-const FIT_VIEW_MARGINS_COLLAPSED = [80, 80, 80, 80];
-
-interface AmapMarker {
-  on(event: "click", handler: () => void): void;
-  show(): void;
-  hide(): void;
-  setPosition(position: [number, number]): void;
-  setOffset(offset: unknown): void;
-  setContent(content: HTMLElement): void;
-  setTitle(title: string): void;
-  setzIndex?(index: number): void;
-}
-
-interface AmapMapInstance {
-  on(event: "rotatechange" | "click" | "zoomchange" | "zoomend", handler: () => void): void;
-  add(target: unknown): void;
-  remove(target: unknown): void;
-  getRotation(): number;
-  setRotation(rotation: number, immediately?: boolean): void;
-  getZoom(): number;
-  setZoom(zoom: number): void;
-  setZoomAndCenter(zoom: number, center: [number, number]): void;
-  setFitView(targets: unknown[], immediately?: boolean, margins?: number[], maxZoom?: number): void;
-  zoomIn(): void;
-  zoomOut(): void;
-  destroy(): void;
-  setMapStyle?(style: string): void;
-}
-
-interface AmapNamespace {
-  Map: new (container: HTMLElement, options: Record<string, unknown>) => AmapMapInstance;
-  Pixel: new (x: number, y: number) => unknown;
-  Marker: new (options: { position: [number, number]; offset: unknown; title: string }) => AmapMarker;
-  Circle: new (options: Record<string, unknown>) => unknown;
-}
+const FIT_VIEW_MARGINS: MapPadding = [100, 80, 360, 80];
+const FIT_VIEW_MARGINS_COLLAPSED: MapPadding = [80, 80, 80, 80];
 
 function deviceKey(device: Device): string {
   return device.udid ?? device.deviceDisplayName ?? device.name ?? "device";
@@ -91,11 +53,15 @@ function hasNoLocation(device: Device): boolean {
   return !isDeviceOnline(device);
 }
 
-function devicePosition(device: Device): [number, number] | null {
+function deviceCoordinate(device: Device): [number, number] | null {
   const location = device.location;
   if (location?.longitude == null || location.latitude == null) return null;
+  return [location.longitude, location.latitude];
+}
 
-  return wgs84ToGcj02(location.longitude, location.latitude);
+function devicePosition(device: Device): [number, number] | null {
+  const position = deviceCoordinate(device);
+  return position && mapAdapter ? mapAdapter.project(position) : null;
 }
 
 function locationTimeMs(timestamp: number | null | undefined): number | null {
@@ -203,11 +169,12 @@ const failedImages = ref(new Set<string>());
 
 const mapError = ref<string | null>(null);
 
-let map: AmapMapInstance | null = null;
-let amap: AmapNamespace | null = null;
+let map: MapInstance | null = null;
+let mapAdapter: MapAdapter | null = null;
+const mapSupportsRotation = ref(true);
 
 function applyMapStyle(): void {
-  map?.setMapStyle?.(theme.isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT);
+  map?.setTheme(theme.isDark);
 }
 
 // Keep world tiles tall enough to fill the viewport.
@@ -224,9 +191,9 @@ function enforceMapMinZoom(): void {
   if (mapInstance.getZoom() < minimum - 0.01) mapInstance.setZoom(minimum);
 }
 
-let accuracyCircle: unknown = null;
+let accuracyCircle: MapOverlay | null = null;
 
-const markers = new Map<string, AmapMarker>();
+const markers = new Map<string, MapMarker>();
 const addressCache = new Map<string, AddressInfo>();
 const addressInflight = new Set<string>();
 const addressRetryAt = new Map<string, number>();
@@ -381,8 +348,8 @@ function clusterMarkerElement(members: Device[], size: number): HTMLDivElement {
 
 function syncMarkers(): void {
   const mapInstance = map;
-  const amapInstance = amap;
-  if (!mapInstance || !amapInstance) return;
+  const adapter = mapAdapter;
+  if (!mapInstance || !adapter) return;
 
   const groups = clusterDevices(liveDevices.value);
   const desired = new Map<string, { members: Device[]; position: [number, number]; selectedKey: string | null }>();
@@ -404,8 +371,7 @@ function syncMarkers(): void {
   for (const [markerKey, entry] of desired) {
     let marker = markers.get(markerKey);
     if (!marker) {
-      marker = new amapInstance.Marker({ position: entry.position, offset: new amapInstance.Pixel(0, 0), title: "" });
-      marker.on("click", () => {
+      marker = adapter.createMarker(entry.position, () => {
         markerClickAt = Date.now();
         const selectedTarget = liveDevices.value.find((device) => `device:${deviceKey(device)}` === markerKey);
         if (selectedTarget) {
@@ -421,7 +387,6 @@ function syncMarkers(): void {
         const target = liveDevices.value.find((device) => deviceKey(device) === deviceKey(members[0]!));
         if (target) focusDevice(target);
       });
-      mapInstance.add(marker);
       markers.set(markerKey, marker);
     }
 
@@ -433,28 +398,28 @@ function syncMarkers(): void {
     const offsetY = -size / 2 + (!isGroup && selected ? 10 : 0);
     marker.show();
     marker.setPosition(entry.position);
-    marker.setOffset(new amapInstance.Pixel(-width / 2, offsetY));
+    marker.setOffset([-width / 2, offsetY]);
     if (isGroup) {
       marker.setContent(clusterMarkerElement(entry.members, size));
       marker.setTitle(`${entry.members.length} ${entry.members.length === 1 ? "device" : "devices"} at this location`);
-      marker.setzIndex?.(selected ? 140 : 130);
+      marker.setZIndex(selected ? 140 : 130);
     } else {
       marker.setContent(markerElement(device, selected, size));
       marker.setTitle(device.name ?? "");
-      marker.setzIndex?.(selected ? 140 : 120);
+      marker.setZIndex(selected ? 140 : 120);
     }
   }
 
   markers.forEach((marker, key) => {
     if (desired.has(key)) return;
-    mapInstance.remove(marker);
+    marker.destroy();
     markers.delete(key);
   });
 
   const selected = liveDevices.value.find((device) => deviceKey(device) === selectedKey.value);
   const selectedPosition = selected ? devicePosition(selected) : null;
   if (accuracyCircle) {
-    mapInstance.remove(accuracyCircle);
+    accuracyCircle.destroy();
     accuracyCircle = null;
   }
   if (selected && selectedPosition) {
@@ -463,7 +428,7 @@ function syncMarkers(): void {
 
     const radius = Math.max(accuracy ?? 0, 8);
     const fillOpacity = theme.isDark ? 0.075 : 0.13;
-    accuracyCircle = new amapInstance.Circle({
+    accuracyCircle = adapter.createAccuracyCircle({
       center: selectedPosition,
       radius,
       fillColor: accent,
@@ -472,14 +437,12 @@ function syncMarkers(): void {
       strokeWeight: 1,
       strokeOpacity: theme.isDark ? 0.18 : 0.26,
       zIndex: 108,
-      bubble: true,
     });
-    mapInstance.add(accuracyCircle);
   }
 }
 
 function addressCacheKey(device: Device): string | null {
-  const position = devicePosition(device);
+  const position = deviceCoordinate(device);
   return position ? `${position[0].toFixed(5)},${position[1].toFixed(5)}` : null;
 }
 
@@ -514,7 +477,7 @@ function handleAddressFailure(cacheKey: string): void {
 function resolveAddresses(): void {
   for (const device of liveDevices.value) {
     if (!isDeviceOnline(device)) continue;
-    const position = devicePosition(device);
+    const position = deviceCoordinate(device);
     const cacheKey = addressCacheKey(device);
     if (!position || !cacheKey) continue;
     if (addresses.value[cacheKey]) continue;
@@ -611,7 +574,9 @@ function focusAll(): void {
   const instances = [...markers.values()];
   if (instances.length === 0) return;
 
-  map?.setFitView(instances, true, devicePanelCollapsed.value ? FIT_VIEW_MARGINS_COLLAPSED : FIT_VIEW_MARGINS);
+  map?.fitMarkers(instances, {
+    padding: devicePanelCollapsed.value ? FIT_VIEW_MARGINS_COLLAPSED : FIT_VIEW_MARGINS,
+  });
 }
 
 function handlePlaySound(device: Device): void {
@@ -681,7 +646,7 @@ function onCompassPointerUp(): void {
 
 function describeError(error: unknown): string {
   if (error instanceof Error && /api key is not configured/i.test(error.message)) return t("map.keyMissing");
-  if (error instanceof Error && error.message.startsWith("Could not load AMap")) return t("map.loadFailed");
+  if (error instanceof Error && /Could not load (AMap|Google Maps)/i.test(error.message)) return t("map.loadFailed");
   return error instanceof Error ? error.message : t("map.initFailed");
 }
 
@@ -708,30 +673,29 @@ watch(
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
   resolveAddresses();
+  const adapter = createMapAdapter();
+  mapAdapter = adapter;
+  mapSupportsRotation.value = adapter.capabilities.rotation;
   try {
-    const AMap: AmapNamespace = await loadAmap();
+    await adapter.load();
 
     if (disposed || !mapContainer.value) return;
-    amap = AMap;
-
-    const mapOptions: Record<string, unknown> = {
-      zoom: 11,
+    const instance = adapter.createMap(mapContainer.value, {
       center: [120.1, 30.28],
+      zoom: 11,
       minZoom: minimumWorldZoom(),
-      viewMode: "3D",
-      pitch: 0,
       maxZoom: 20,
-      rotateEnable: true,
-      mapStyle: theme.isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT,
-    };
-    const instance = new AMap.Map(mapContainer.value, mapOptions);
+      dark: theme.isDark,
+      callbacks: {
+        onRotate,
+        onZoomChange: enforceMapMinZoom,
+        onZoomEnd: enforceMapMinZoom,
+        onClick: onMapClick,
+      },
+    });
     map = instance;
     applyMapStyle();
 
-    instance.on("rotatechange", onRotate);
-    instance.on("zoomchange", enforceMapMinZoom);
-    instance.on("zoomend", enforceMapMinZoom);
-    instance.on("click", onMapClick);
     window.addEventListener("resize", enforceMapMinZoom);
     onRotate();
 
@@ -764,7 +728,7 @@ onUnmounted(() => {
 
   map?.destroy();
   map = null;
-  amap = null;
+  mapAdapter = null;
 });
 </script>
 
@@ -949,6 +913,7 @@ onUnmounted(() => {
         </div>
 
         <button
+          v-if="mapSupportsRotation"
           ref="compassRef"
           type="button"
           class="grid size-9 cursor-grab place-items-center rounded-full border border-border bg-elevated/85 text-elevated-foreground shadow-sm backdrop-blur transition-colors select-none hover:bg-accent active:cursor-grabbing"

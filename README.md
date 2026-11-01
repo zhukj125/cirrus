@@ -105,11 +105,12 @@ For map rendering, copy `.env.example` to `.env.local` and set:
 ```env
 VITE_AMAP_KEY=
 VITE_AMAP_SECURITY_CODE=
+VITE_GOOGLE_MAPS_API_KEY=
 ```
 
-`VITE_AMAP_KEY` is the Web JS API key used to render the map. You can also enter it under **Settings → Maps**, where it is stored in local SQLite.
+`VITE_AMAP_KEY` is the AMap Web JS API key, and `VITE_GOOGLE_MAPS_API_KEY` is the Google Maps JavaScript API key. You can also choose a provider and enter its key under **Settings → Maps**, where it is stored in local SQLite.
 
-Map credentials are stored together in the app data SQLite database `cirrus.db` under the `cirrus.amap*` keys inside `app_state.desktop_settings`. On Windows the default database path is `%APPDATA%\com.cirrus\cirrus.db`.
+For Google Maps, enable both Maps JavaScript API and Geocoding API in Google Cloud. Google Maps may be unavailable in mainland China. Map credentials are stored together in the app data SQLite database `cirrus.db` under the `cirrus.amap*` and `cirrus.googleMaps*` keys inside `app_state.desktop_settings`. On Windows the default database path is `%APPDATA%\com.cirrus\cirrus.db`.
 
 ## Usage
 
@@ -149,7 +150,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 - **Backend:** Rust
 - **Frontend:** Vue 3, TypeScript, Tailwind CSS
 - **Storage:** SQLite with WAL
-- **Map:** AMap Web API
+- **Map:** AMap Web API or Google Maps JavaScript API
 
 ## Development
 
@@ -193,7 +194,7 @@ cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
 - Release builds are not notarized; macOS may show a Gatekeeper warning.
 - Linux session restore requires a Secret Service implementation.
 - iCloud uses private web APIs that may change without notice.
-- The device map requires an AMap key.
+- The device map requires an AMap or Google Maps API key.
 - Cirrus currently covers Photos, Find My, Notes, Contacts, and Calendar, but not iCloud Drive or Mail.
 - MCP exposes the main Cirrus account, device, photo, download, note, contact, and calendar operations over local stdio or Streamable HTTP.
 

@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 
 import PhotoViewer from "@/components/PhotoViewer.vue";
+import { StorageKey } from "@/constants";
 import { openExternal } from "@/lib/api";
 import type { PhotoItem } from "@/types";
 
@@ -77,6 +78,7 @@ const livePhoto: PhotoItem = {
 describe("PhotoViewer · 实况", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   });
 
@@ -108,7 +110,11 @@ describe("PhotoViewer · 实况", () => {
     expect(panel.text()).toContain("2.0 MB");
     expect(panel.text()).toContain("JPEG");
     await panel.get('button[title="Open in map"]').trigger("click");
-    expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("uri.amap.com/marker?position=121.4737,31.2304"));
+    expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("uri.amap.com/marker?position="));
+
+    localStorage.setItem(StorageKey.mapProvider, "google");
+    await panel.get('button[title="Open in map"]').trigger("click");
+    expect(openExternal).toHaveBeenLastCalledWith("https://www.google.com/maps/search/?api=1&query=31.2304,121.4737");
   });
 
   it("视频信息直接使用列表数据，不请求原图", async () => {

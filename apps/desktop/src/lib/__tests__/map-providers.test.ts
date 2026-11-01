@@ -12,4 +12,10 @@ describe("map provider registry", () => {
   it("falls back safely for unknown provider ids", () => {
     expect(getMapProvider("unknown").id).toBe(MAP_PROVIDERS[0]?.id);
   });
+
+  it("registers Google Maps alongside AMap", () => {
+    const provider = getMapProvider("google");
+    expect(provider.name).toBe("Google Maps");
+    expect(provider.fields.some((field) => field.id === provider.primaryFieldId)).toBe(true);
+  });
 });
