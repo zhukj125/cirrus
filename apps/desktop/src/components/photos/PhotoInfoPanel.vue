@@ -4,6 +4,7 @@ import { Aperture, CalendarDays, Camera, ExternalLink, FileImage, HardDrive, Ima
 
 import { openExternal } from "@/lib/api";
 import { reverseGeocode, type AddressInfo } from "@/lib/geocode";
+import { createMapAdapter } from "@/lib/maps";
 import { useLocaleStore } from "@/stores/locale";
 import type { PhotoItem } from "@/types";
 
@@ -141,8 +142,7 @@ const addedAt = computed(() =>
 function openLocationMap(): void {
   const value = coordinates.value;
   if (!value) return;
-  const name = encodeURIComponent(t("viewer.photoLocation"));
-  void openExternal(`https://uri.amap.com/marker?position=${value[0]},${value[1]}&name=${name}`);
+  void openExternal(createMapAdapter().mapUrl(value, t("viewer.photoLocation")));
 }
 
 const altitude = computed(() => {

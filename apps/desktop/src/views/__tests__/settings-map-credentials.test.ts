@@ -27,6 +27,18 @@ describe("SettingsView map credentials", () => {
     expect(input.attributes("type")).toBe("password");
   });
 
+  it("switches to Google Maps and loads its own saved key", async () => {
+    localStorage.clear();
+    localStorage.setItem(StorageKey.googleMapsApiKey, "test-google-key");
+
+    const wrapper = mount(SettingsView, { props: { initialCategory: "maps" }, global: { plugins: [createPinia()] } });
+    await wrapper.get("#map-provider").setValue("google");
+
+    expect(localStorage.getItem(StorageKey.mapProvider)).toBe("google");
+    expect((wrapper.get("#map-credential-apiKey").element as HTMLInputElement).value).toBe("test-google-key");
+    expect(wrapper.find("#map-credential-securityCode").exists()).toBe(false);
+  });
+
   it("uses editable download concurrency defaults of 5 tasks and 8 photos", async () => {
     localStorage.clear();
     const wrapper = mount(SettingsView, { global: { plugins: [createPinia()] } });

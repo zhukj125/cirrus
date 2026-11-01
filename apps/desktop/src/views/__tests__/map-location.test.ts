@@ -2,45 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 
-const mapStyleMock = vi.hoisted(() => vi.fn());
+const mapMocks = vi.hoisted(() => ({
+  load: vi.fn(async () => undefined),
+  project: vi.fn((position: [number, number]) => position),
+  createMap: vi.fn(),
+  createMarker: vi.fn(),
+  createAccuracyCircle: vi.fn(),
+  setTheme: vi.fn(),
+}));
 
-vi.mock("@/lib/amap", () => ({
-  getAmapConfig: vi.fn(() => ({ key: "test-key", securityCode: "" })),
-  loadAmap: vi.fn(async () => ({
-    Map: class {
-      on() {}
-      add() {}
-      remove() {}
-      getRotation() {
-        return 0;
-      }
-      setRotation() {}
-      getZoom() {
-        return 11;
-      }
-      setZoom() {}
-      setZoomAndCenter() {}
-      setFitView() {}
-      zoomIn() {}
-      zoomOut() {}
-      destroy() {}
-      setMapStyle(style: string) {
-        mapStyleMock(style);
-      }
-    },
-    Pixel: class {},
-    Marker: class {
-      on() {}
-      show() {}
-      hide() {}
-      setPosition() {}
-      setOffset() {}
-      setContent() {}
-      setTitle() {}
-      setzIndex() {}
-    },
-    Circle: class {},
-  })),
+vi.mock("@/lib/maps", () => ({
+  createMapAdapter: () => ({
+    providerId: "amap",
+    capabilities: { rotation: true },
+    load: mapMocks.load,
+    project: mapMocks.project,
+    createMap: mapMocks.createMap,
+    createMarker: mapMocks.createMarker,
+    createAccuracyCircle: mapMocks.createAccuracyCircle,
+  }),
 }));
 
 const geocodeMock = vi.hoisted(() => vi.fn());
@@ -101,10 +81,36 @@ describe("MapView location fallback", () => {
   beforeEach(() => {
     geocodeMock.mockReset();
     geocodeMock.mockResolvedValue(null);
-    mapStyleMock.mockReset();
+    mapMocks.setTheme.mockReset();
+    mapMocks.createMap.mockReset();
+    mapMocks.createMarker.mockReset();
+    mapMocks.createAccuracyCircle.mockReset();
+    mapMocks.createMap.mockReturnValue({
+      getRotation: () => 0,
+      setRotation: vi.fn(),
+      getZoom: () => 11,
+      setZoom: vi.fn(),
+      setZoomAndCenter: vi.fn(),
+      fitMarkers: vi.fn(),
+      zoomIn: vi.fn(),
+      zoomOut: vi.fn(),
+      setTheme: mapMocks.setTheme,
+      destroy: vi.fn(),
+    });
+    mapMocks.createMarker.mockImplementation(() => ({
+      setPosition: vi.fn(),
+      setOffset: vi.fn(),
+      setContent: vi.fn(),
+      setTitle: vi.fn(),
+      setZIndex: vi.fn(),
+      show: vi.fn(),
+      hide: vi.fn(),
+      destroy: vi.fn(),
+    }));
+    mapMocks.createAccuracyCircle.mockReturnValue({ destroy: vi.fn() });
   });
 
-  it("uses AMap light and dark styles in English mode", async () => {
+  it("applies light and dark map themes in English mode", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     useLocaleStore().setLocale("en-US");
@@ -113,12 +119,12 @@ describe("MapView location fallback", () => {
     const wrapper = mount(MapView, { props: { data }, global: { plugins: [pinia] } });
     await flushPromises();
 
-    expect(mapStyleMock).toHaveBeenCalledWith("amap://styles/dark");
+    expect(mapMocks.setTheme).toHaveBeenCalledWith(true);
 
     useThemeStore().setMode("light");
     await flushPromises();
 
-    expect(mapStyleMock).toHaveBeenCalledWith("amap://styles/normal");
+    expect(mapMocks.setTheme).toHaveBeenCalledWith(false);
     wrapper.unmount();
   });
 

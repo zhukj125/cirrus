@@ -72,7 +72,7 @@ const THEME_OPTIONS: Array<{ value: ThemeMode; labelKey: string; icon: typeof Su
 
 const CATEGORIES = [
   { id: "appearance", labelKey: "settings.appearance", icon: Palette, keywords: "appearance theme light dark language interface" },
-  { id: "maps", labelKey: "settings.maps", icon: MapPin, keywords: "map amap api key security code" },
+  { id: "maps", labelKey: "settings.maps", icon: MapPin, keywords: "map amap google maps api key security code" },
   { id: "downloads", labelKey: "settings.downloads", icon: DownloadIcon, keywords: "downloads concurrency originals videos" },
   { id: "mcp", labelKey: "settings.mcp", icon: Settings2, keywords: "mcp model context protocol ai agent login automation" },
   { id: "about", labelKey: "settings.about", icon: Info, keywords: "about version session cirrus" },
