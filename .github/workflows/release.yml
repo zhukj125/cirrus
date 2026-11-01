@@ -80,17 +80,23 @@ jobs:
 
             ### 更新内容
 
-            - 支持 11 种界面语言：英语、简体中文、繁体中文、日语、韩语、西班牙语、法语、德语、葡萄牙语、俄语和阿拉伯语
-            - 阿拉伯语界面会自动切换为从右到左布局
-            - 新增青岚、云海、琥珀、花间、潮汐、松林 6 套彩色主题
-            - 设置页支持主题预览与即时切换，选择会自动保存
+            自 1.4.8 起的更新：
+
+            - 新增 Google 地图支持，可在设置中切换高德地图 / Google 地图并分别保存 API Key；Google 地图在中国大陆可能不可用
+            - MCP 引擎支持独立安装、更新、重装和卸载；Streamable HTTP 改为主进程内置，stdio 启动器不再弹出控制台窗口
+            - 修复打包版地图拖动，改进滚轮与触控板缩放，并区分触控板平移和缩放手势
+            - 照片时间线日期标题现在会显示年份
+            - 优化 MCP 传输方式标签、摘要卡片与地图文案布局
 
             ### Highlights
 
-            - Added 11 interface languages: English, Simplified and Traditional Chinese, Japanese, Korean, Spanish, French, German, Portuguese, Russian, and Arabic
-            - Arabic automatically enables a right-to-left interface
-            - Added six color themes: Verdant, Cloudscape, Amber, Blossom, Tide, and Pine
-            - Theme previews and instant switching are now available in Settings, and selections are saved automatically
+            Changes since 1.4.8:
+
+            - Added Google Maps support with provider selection and separate API credentials in Settings; Google Maps may be unavailable in mainland China
+            - The MCP engine can now be installed, updated, reinstalled, or removed independently; Streamable HTTP runs in-process, and the stdio launcher no longer opens a console window
+            - Restored map dragging in packaged builds, refined wheel and touchpad zoom, and separated trackpad pan and zoom gestures
+            - Photo timeline day headings now include the year
+            - Polished MCP transport tabs, summary cards, and map copy layout
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
