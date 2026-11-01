@@ -17,6 +17,7 @@
     "lint": "oxlint --vue-plugin apps/desktop/src",
     "fmt": "oxfmt \"apps/desktop/src/**/*.{ts,vue}\"",
     "test": "vitest run",
+    "test:release-tools": "node --test scripts/merge-updater-manifests.test.mjs",
     "test:watch": "vitest",
     "preview": "vite preview --config apps/desktop/vite.config.ts",
     "tauri": "tauri",

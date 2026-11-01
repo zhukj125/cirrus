@@ -34,7 +34,7 @@ Never commit the private key or paste it into an issue, pull request, or chat me
 1. Bump the workspace and app version.
 2. Commit the version change.
 3. Create and push the release tag.
-4. The release workflow builds signed updater artifacts and attaches `latest.json`.
-5. The publish job turns the draft release into the latest public release.
+4. The release workflow builds all platforms in parallel and preserves one updater manifest fragment per target.
+5. The publish job merges the fragments into a complete `latest.json`, verifies every required platform, and turns the draft release into the latest public release.
 
 An installed build only discovers releases that are newer than its own version. The current version can be checked in **Settings > About > Runtime information**.

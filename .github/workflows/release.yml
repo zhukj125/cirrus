@@ -14,7 +14,6 @@ jobs:
     name: Build ${{ matrix.label }}
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - label: macOS Apple Silicon
@@ -97,9 +96,16 @@ jobs:
             These builds are not notarized. macOS may show a Gatekeeper warning.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
           updaterJsonPreferNsis: true
+          retryAttempts: 5
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.mcp.conf.json
+      - name: Preserve updater manifest fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.target }}
+          path: latest.json
+          if-no-files-found: error
+          retention-days: 1
 
 
   publish:
@@ -107,38 +113,25 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Verify updater manifest
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Download updater manifest fragments
+        uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          path: ${{ runner.temp }}/updater-fragments
+      - name: Merge updater manifest
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/merge-updater-manifests.mjs "$RUNNER_TEMP/updater-fragments" "$RUNNER_TEMP/latest.json" "$TAG"
+      - name: Upload merged updater manifest
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/updater"
-          gh release download "$TAG" --pattern latest.json --dir "$RUNNER_TEMP/updater" --clobber
-          node - "$RUNNER_TEMP/updater/latest.json" "$TAG" <<'NODE'
-          const fs = require('node:fs');
-          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          const expectedVersion = process.argv[3].replace(/^v/, '');
-          const required = [
-            'windows-x86_64',
-            'darwin-aarch64',
-            'darwin-x86_64',
-            'linux-x86_64',
-            'linux-aarch64',
-          ];
-          if (manifest.version !== expectedVersion) {
-            throw new Error(`latest.json version ${manifest.version} does not match ${expectedVersion}`);
-          }
-          const missing = required.filter((platform) => {
-            const entry = manifest.platforms?.[platform];
-            return !entry?.url || !entry?.signature;
-          });
-          if (missing.length > 0) {
-            throw new Error(`latest.json is missing required platforms: ${missing.join(', ')}`);
-          }
-          console.log(`Verified ${required.length} updater platforms for ${manifest.version}`);
-          NODE
+        run: gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --clobber
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
