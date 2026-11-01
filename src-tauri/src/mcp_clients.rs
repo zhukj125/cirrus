@@ -5,6 +5,16 @@ use serde_json::{json, Map, Value};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 const SERVER_NAME: &str = "cirrus";
+const CODEX_HTTP_ONLY_FIELDS: [&str; 8] = [
+    "url",
+    "bearer_token_env_var",
+    "http_headers",
+    "env_http_headers",
+    "oauth_client_id",
+    "oauth_client_secret",
+    "oauth_client_registration",
+    "oauth_resource",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClientKind {
@@ -273,15 +283,16 @@ fn codex_has_command(content: &str, binary: &Path) -> bool {
     let Ok(document) = content.parse::<DocumentMut>() else {
         return false;
     };
-    document
+    let Some(server) = document
         .get("mcp_servers")
         .and_then(Item::as_table)
         .and_then(|servers| servers.get(SERVER_NAME))
         .and_then(Item::as_table)
-        .and_then(|server| server.get("command"))
-        .and_then(Item::as_str)
-        .map(|value| value == binary.to_string_lossy())
-        .unwrap_or(false)
+    else {
+        return false;
+    };
+    server.get("command").and_then(Item::as_str).map(|value| value == binary.to_string_lossy()).unwrap_or(false)
+        && CODEX_HTTP_ONLY_FIELDS.iter().all(|key| server.get(key).is_none())
 }
 
 fn write_codex_config(path: &Path, binary: &Path, install: bool) -> Result<(), String> {
@@ -306,6 +317,11 @@ fn write_codex_config(path: &Path, binary: &Path, install: bool) -> Result<(), S
             .or_insert(Item::Table(Table::new()))
             .as_table_mut()
             .ok_or_else(|| "mcp_servers.cirrus must be a TOML table".to_string())?;
+        // Codex rejects a server that mixes HTTP and stdio fields. Remove the
+        // previous transport so switching from the HTTP snippet to stdio works.
+        for key in CODEX_HTTP_ONLY_FIELDS {
+            server.remove(key);
+        }
         server["command"] = value(binary.to_string_lossy().to_string());
     } else if let Some(servers) = document.get_mut("mcp_servers").and_then(Item::as_table_mut) {
         servers.remove(SERVER_NAME);
@@ -425,6 +441,49 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(content.contains("[mcp_servers.other]"));
         assert!(!content.contains("[mcp_servers.cirrus]"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn codex_stdio_install_removes_http_transport_fields() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-codex-http-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            &path,
+            r#"model = "test"
+
+[mcp_servers.other]
+command = "other"
+
+[mcp_servers.cirrus]
+url = "http://127.0.0.1:5226/mcp"
+bearer_token_env_var = "CIRRUS_MCP_TOKEN"
+
+[mcp_servers.cirrus.http_headers]
+Authorization = "Bearer test"
+"#,
+        )
+        .expect("seed");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+
+        assert!(!codex_has_command(&std::fs::read_to_string(&path).expect("read"), binary));
+        write_codex_config(&path, binary, true).expect("install");
+        let content = std::fs::read_to_string(&path).expect("read");
+        let document = content.parse::<DocumentMut>().expect("toml");
+        let server = document
+            .get("mcp_servers")
+            .and_then(Item::as_table)
+            .and_then(|servers| servers.get(SERVER_NAME))
+            .and_then(Item::as_table)
+            .expect("cirrus server");
+
+        assert_eq!(server.get("command").and_then(Item::as_str), Some(binary.to_string_lossy().as_ref()));
+        for key in CODEX_HTTP_ONLY_FIELDS {
+            assert!(server.get(key).is_none(), "{key} should be removed");
+        }
+        assert!(content.contains("[mcp_servers.other]"));
+        assert!(codex_has_command(&content, binary));
         let _ = std::fs::remove_dir_all(dir);
     }
 
