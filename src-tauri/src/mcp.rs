@@ -1091,12 +1091,19 @@ fn mcp_sibling_path(file_name: &str) -> Option<PathBuf> {
     Some(exe.parent()?.join(if cfg!(windows) { format!("{file_name}.exe") } else { file_name.to_string() }))
 }
 
-pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
+pub(crate) fn bundled_mcp_binary_path() -> Option<PathBuf> {
     mcp_sibling_path("cirrus-mcp-server")
 }
 
-pub(crate) fn mcp_native_binary_path() -> Option<PathBuf> {
+pub(crate) fn bundled_mcp_native_binary_path() -> Option<PathBuf> {
     mcp_sibling_path("cirrus-mcp")
+}
+
+pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
+    crate::mcp_installation::installed_launcher_path()
+        .ok()
+        .filter(|path| path.is_file())
+        .or_else(bundled_mcp_binary_path)
 }
 
 fn load_enabled_setting(data_dir: &Path) -> bool {

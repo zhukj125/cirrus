@@ -50,6 +50,18 @@ vi.mock("@/lib/api", () => ({
   })),
   mcpToolAccess: vi.fn(async () => ({ disabledTools: [] })),
   mcpSetToolEnabled: vi.fn(async () => ({ disabledTools: [] })),
+  mcpServerStatus: vi.fn(async () => ({
+    installed: true,
+    installedVersion: "1.4.8",
+    bundledVersion: "1.4.8",
+    updateAvailable: false,
+    activeSource: "installed" as const,
+    installDir: String.raw`C:\Users\me\.cirrus\bin`,
+    launcherPath: String.raw`C:\Users\me\.cirrus\bin\cirrus-mcp-server.exe`,
+    nativePath: String.raw`C:\Users\me\.cirrus\bin\cirrus-mcp.exe`,
+  })),
+  mcpInstallServer: vi.fn(),
+  mcpUninstallServer: vi.fn(),
   mcpClients: vi.fn(async () => [client]),
   mcpInstallClient: vi.fn(async () => client),
   mcpRemoveClient: vi.fn(async () => ({ ...client, configured: false })),
@@ -98,6 +110,9 @@ describe("SettingsView MCP", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("Running · local access only");
+    expect(wrapper.text()).toContain("MCP engine");
+    expect(wrapper.text()).toContain("Independent install");
+    expect(wrapper.text()).toContain("1.4.8");
     expect(wrapper.text()).toContain("Codex");
     expect(wrapper.text()).toContain("Configured");
     expect(wrapper.text()).toContain("[mcp_servers.cirrus]");

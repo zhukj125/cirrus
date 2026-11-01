@@ -22,6 +22,7 @@ import type {
   McpAuthorizeResponse,
   McpCallHistoryEntry,
   McpClientInfo,
+  McpServerStatus,
   McpInfo,
   McpToolAccessSettings,
   Photos2faOptions,
@@ -100,6 +101,18 @@ export function mcpToolAccess(): Promise<McpToolAccessSettings> {
 
 export function mcpSetToolEnabled(tool: string, enabled: boolean): Promise<McpToolAccessSettings> {
   return call<McpToolAccessSettings>("mcp_set_tool_enabled", { tool, enabled });
+}
+
+export function mcpServerStatus(): Promise<McpServerStatus> {
+  return call<McpServerStatus>("mcp_server_status");
+}
+
+export function mcpInstallServer(): Promise<McpServerStatus> {
+  return call<McpServerStatus>("mcp_install_server");
+}
+
+export function mcpUninstallServer(): Promise<McpServerStatus> {
+  return call<McpServerStatus>("mcp_uninstall_server");
 }
 
 export function mcpClients(): Promise<McpClientInfo[]> {

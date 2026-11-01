@@ -6,6 +6,7 @@ use crate::account_store::{AccountStoreRepository, AccountStoreSnapshot};
 use crate::mcp::{McpAccountSummary, McpAuthorizationEvent, McpAuthorizeResponse, McpInfo, McpToolAccessSettings};
 use crate::mcp_clients::{self, McpClientInfo};
 use crate::mcp_history::McpCallHistoryEntry;
+use crate::mcp_installation::{self, McpServerStatus};
 use crate::state::AppState;
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
@@ -90,6 +91,25 @@ pub fn mcp_set_tool_enabled(
     payload: McpToolAccessRequest,
 ) -> Result<McpToolAccessSettings, String> {
     state.inner().mcp.set_tool_enabled(&payload.tool, payload.enabled)
+}
+
+#[tauri::command]
+pub fn mcp_server_status() -> Result<McpServerStatus, String> {
+    mcp_installation::status()
+}
+
+#[tauri::command]
+pub async fn mcp_install_server() -> Result<McpServerStatus, String> {
+    tauri::async_runtime::spawn_blocking(mcp_installation::install_or_update)
+        .await
+        .map_err(|error| format!("MCP installation task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn mcp_uninstall_server() -> Result<McpServerStatus, String> {
+    tauri::async_runtime::spawn_blocking(mcp_installation::uninstall)
+        .await
+        .map_err(|error| format!("MCP uninstall task failed: {error}"))?
 }
 
 #[tauri::command]

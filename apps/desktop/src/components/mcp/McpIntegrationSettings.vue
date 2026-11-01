@@ -1,24 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Check, Copy, Globe, PlugZap, RefreshCw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
+import { Check, Copy, Download, Globe, HardDrive, Package, PlugZap, RefreshCw, RotateCcw, ShieldCheck, Terminal, Trash2 } from "@lucide/vue";
 
 import Spinner from "@/components/ui/Spinner.vue";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { mcpAccounts, mcpClients, mcpInfo, mcpInstallClient, mcpRemoveClient, mcpSetAccountEnabled, mcpSetEnabled, mcpSetToolEnabled, mcpToolAccess } from "@/lib/api";
+import { mcpAccounts, mcpClients, mcpInfo, mcpInstallClient, mcpInstallServer, mcpRemoveClient, mcpServerStatus, mcpSetAccountEnabled, mcpSetEnabled, mcpSetToolEnabled, mcpToolAccess, mcpUninstallServer } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import { useLocaleStore } from "@/stores/locale";
-import type { McpAccountInfo, McpClientInfo, McpInfo } from "@/types";
+import type { McpAccountInfo, McpClientInfo, McpInfo, McpServerStatus } from "@/types";
 
 type ManagementTab = "access" | "permissions";
 
 const locale = useLocaleStore();
 const info = ref<McpInfo | null>(null);
+const serverStatus = ref<McpServerStatus | null>(null);
 const clients = ref<McpClientInfo[]>([]);
 const accounts = ref<McpAccountInfo[]>([]);
 const disabledTools = ref<string[]>([]);
 const loading = ref(true);
 const bridgeSaving = ref(false);
+const serverSaving = ref(false);
 const clientSaving = ref<string | null>(null);
 const accountSaving = ref<string | null>(null);
 const toolSaving = ref<string | null>(null);
@@ -74,6 +76,16 @@ const httpSnippet = computed(() => {
     2,
   );
 });
+const serverActionLabel = computed(() => {
+  if (!serverStatus.value?.installed) return locale.t("settings.mcpServerInstall");
+  if (serverStatus.value.updateAvailable) return locale.t("settings.mcpServerUpdate");
+  return locale.t("settings.mcpServerReinstall");
+});
+const serverSourceLabel = computed(() => {
+  if (serverStatus.value?.activeSource === "installed") return locale.t("settings.mcpServerInstalledSource");
+  if (serverStatus.value?.activeSource === "bundled") return locale.t("settings.mcpServerBundledSource");
+  return locale.t("settings.mcpServerMissingSource");
+});
 const bridgeStatus = computed(() => {
   if (loading.value) return locale.t("settings.mcpChecking");
   if (info.value?.running) return locale.t("settings.mcpRunning");
@@ -84,16 +96,46 @@ const bridgeStatus = computed(() => {
 async function loadAll(): Promise<void> {
   loading.value = true;
   try {
-    const [nextInfo, nextClients, nextAccounts, nextToolAccess] = await Promise.all([mcpInfo(), mcpClients(), mcpAccounts(), mcpToolAccess()]);
+    const [nextInfo, nextClients, nextAccounts, nextToolAccess, nextServerStatus] = await Promise.all([mcpInfo(), mcpClients(), mcpAccounts(), mcpToolAccess(), mcpServerStatus()]);
     info.value = nextInfo;
     clients.value = nextClients;
     accounts.value = nextAccounts;
     disabledTools.value = [...nextToolAccess.disabledTools];
+    serverStatus.value = nextServerStatus;
     if (!nextClients.some((client) => client.id === selectedClientId.value)) selectedClientId.value = nextClients[0]?.id ?? "claude";
   } catch (error) {
     toast.error(locale.t("settings.mcpLoadFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
   } finally {
     loading.value = false;
+  }
+}
+
+async function installServer(): Promise<void> {
+  if (serverSaving.value) return;
+  const wasInstalled = serverStatus.value?.installed ?? false;
+  serverSaving.value = true;
+  try {
+    serverStatus.value = await mcpInstallServer();
+    clients.value = await mcpClients();
+    toast.success(locale.t(wasInstalled ? "settings.mcpServerUpdateDone" : "settings.mcpServerInstallDone"));
+  } catch (error) {
+    toast.error(locale.t("settings.mcpServerActionFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
+  } finally {
+    serverSaving.value = false;
+  }
+}
+
+async function uninstallServer(): Promise<void> {
+  if (serverSaving.value) return;
+  serverSaving.value = true;
+  try {
+    serverStatus.value = await mcpUninstallServer();
+    clients.value = await mcpClients();
+    toast.success(locale.t("settings.mcpServerUninstallDone"));
+  } catch (error) {
+    toast.error(locale.t("settings.mcpServerActionFailed", { error: error instanceof Error ? error.message : locale.t("app.unknownError") }));
+  } finally {
+    serverSaving.value = false;
   }
 }
 
@@ -289,6 +331,50 @@ onMounted(() => void loadAll());
         </div>
 
         <div v-if="transportTab === 'stdio'" class="space-y-2.5">
+          <section class="rounded-md border border-border bg-background p-3">
+            <div class="flex items-start gap-3">
+              <span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-foreground">
+                <Package :size="15" />
+              </span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="text-sm font-medium">{{ locale.t("settings.mcpServerTitle") }}</p>
+                  <span class="rounded-full border border-border px-2 py-0.5 text-2xs text-muted-foreground">{{ serverSourceLabel }}</span>
+                  <span v-if="serverStatus?.updateAvailable" class="rounded-full bg-primary/10 px-2 py-0.5 text-2xs font-medium text-primary">{{ locale.t("settings.mcpServerUpdate") }}</span>
+                </div>
+                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ locale.t("settings.mcpServerDesc") }}</p>
+              </div>
+              <Button variant="outline" size="sm" class="h-8 shrink-0 px-2.5 text-xs" :disabled="serverSaving || loading" @click="installServer">
+                <Spinner v-if="serverSaving" :size="12" />
+                <Download v-else-if="!serverStatus?.installed" :size="12" />
+                <RotateCcw v-else :size="12" />
+                {{ serverActionLabel }}
+              </Button>
+            </div>
+
+            <div class="mt-3 grid gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs sm:grid-cols-3">
+              <div>
+                <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpServerStatus") }}</p>
+                <p class="mt-1 font-medium" :class="serverStatus?.installed ? 'text-success' : 'text-warning'">{{ locale.t(serverStatus?.installed ? "settings.mcpServerInstalled" : "settings.mcpServerNotInstalled") }}</p>
+              </div>
+              <div>
+                <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpServerVersion") }}</p>
+                <p class="mt-1 font-mono">{{ serverStatus?.installedVersion ?? "—" }}</p>
+              </div>
+              <div>
+                <p class="text-2xs text-muted-foreground">{{ locale.t("settings.mcpServerBundledVersion") }}</p>
+                <p class="mt-1 font-mono">{{ serverStatus?.bundledVersion ?? info?.version ?? "—" }}</p>
+              </div>
+            </div>
+
+            <div class="mt-2 flex items-center gap-2 rounded-md bg-muted/20 px-2.5 py-2 text-2xs text-muted-foreground">
+              <HardDrive :size="12" class="shrink-0" />
+              <span class="min-w-0 flex-1 truncate font-mono" :title="serverStatus?.installDir ?? ''">{{ serverStatus?.installDir ?? "—" }}</span>
+              <button v-if="serverStatus?.installed" type="button" class="shrink-0 text-warning transition-colors hover:text-destructive" :disabled="serverSaving" @click="uninstallServer">{{ locale.t("settings.mcpServerUninstall") }}</button>
+            </div>
+            <p class="mt-2 text-2xs leading-5 text-muted-foreground">{{ locale.t("settings.mcpServerRestartHint") }}</p>
+          </section>
+
           <div>
             <p class="text-sm font-medium">{{ locale.t("settings.mcpConfig") }}</p>
             <p class="mt-1 text-xs text-muted-foreground">{{ locale.t("settings.mcpConfigOptionsHint") }}</p>

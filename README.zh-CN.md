@@ -186,6 +186,10 @@ pnpm build:mcp
 
 构建后重新打开 MCP 设置或重启 Cirrus。正式打包时使用 `pnpm build:mcp:sidecar`，脚本会构建并复制 `cirrus-mcp-<target>` 和 `cirrus-mcp-server-<target>`（Windows 带 `.exe` 后缀），再由 `src-tauri/tauri.mcp.conf.json` 将两者一起作为 Tauri sidecar 打入安装包。
 
+### 独立 MCP 安装
+
+**设置 → MCP → 访问 → 本地 stdio** 中提供 MCP 引擎面板，可以独立安装、更新、重新安装或卸载 launcher 与原生二进制，安装目录为 `~/.cirrus/bin`。新的客户端配置会优先使用独立安装的 launcher；未安装时自动回退到桌面应用内置的副本。
+
 原生可执行文件仍可手动启动 HTTP，launcher 用于 stdio：
 
 ```sh

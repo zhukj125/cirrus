@@ -259,12 +259,17 @@ fn terminate_mcp_sidecars() -> Result<usize, String> {
     const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
     const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-    let expected = [crate::mcp::mcp_binary_path(), crate::mcp::mcp_native_binary_path()]
-        .into_iter()
-        .flatten()
-        .filter(|path| path.is_file())
-        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
-        .collect::<Vec<_>>();
+    let expected = [
+        crate::mcp::bundled_mcp_binary_path(),
+        crate::mcp::bundled_mcp_native_binary_path(),
+        crate::mcp_installation::installed_launcher_path().ok(),
+        crate::mcp_installation::installed_native_path().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|path| path.is_file())
+    .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+    .collect::<Vec<_>>();
     if expected.is_empty() {
         return Ok(0);
     }

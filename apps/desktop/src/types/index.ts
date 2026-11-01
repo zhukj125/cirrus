@@ -166,6 +166,17 @@ export interface McpAccountSummary {
   mcpEnabled: boolean;
 }
 
+export interface McpServerStatus {
+  installed: boolean;
+  installedVersion: string | null;
+  bundledVersion: string;
+  updateAvailable: boolean;
+  activeSource: "installed" | "bundled" | "missing";
+  installDir: string;
+  launcherPath: string;
+  nativePath: string;
+}
+
 export interface McpClientInfo {
   id: string;
   name: string;

@@ -186,6 +186,10 @@ pnpm build:mcp
 
 Reopen the MCP settings or restart Cirrus after building. For packaged builds, use `pnpm build:mcp:sidecar`; it builds and copies both `cirrus-mcp-<target>` and `cirrus-mcp-server-<target>` (with `.exe` suffixes on Windows), where `src-tauri/tauri.mcp.conf.json` includes both as Tauri sidecars in the installer.
 
+### Standalone MCP installation
+
+**Settings → MCP → Access → Local stdio** includes an MCP engine panel. It can independently install, update, reinstall, or uninstall the launcher and native binary under `~/.cirrus/bin`. New client configurations prefer this standalone launcher; if it is not installed, Cirrus falls back to the copies bundled with the desktop application.
+
 The native executable can still be used manually for HTTP, and the launcher for stdio:
 
 ```sh
