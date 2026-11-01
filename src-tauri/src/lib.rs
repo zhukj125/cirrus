@@ -10,6 +10,7 @@ pub mod mcp_operations;
 pub mod state;
 pub mod update;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -106,12 +107,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let state = match app.path().app_data_dir() {
-                Ok(dir) => Arc::new(AppState::new(&dir)),
-                Err(error) => {
-                    log::warn!(
-                        "[VAULT] could not resolve app data directory; persistence is disabled for this run: {error}"
-                    );
+            let data_dir = std::env::var_os("CIRRUS_DATA_DIR")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| app.path().app_data_dir().ok());
+            let state = match data_dir {
+                Some(dir) => Arc::new(AppState::new(&dir)),
+                None => {
+                    log::warn!("[VAULT] could not resolve app data directory; persistence is disabled for this run");
                     Arc::new(AppState::without_persistence())
                 }
             };

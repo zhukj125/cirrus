@@ -176,6 +176,8 @@ Cirrus 支持两种 MCP 传输：
 target/debug/cirrus-mcp-server.exe
 ```
 
+桌面端会把当前回环端口和令牌发布到数据目录下的 `mcp-bridge.json`，stdio 服务优先读取这一份统一的发现文件，再回退到旧版 `mcp-bridge-port` 和 `mcp-bridge-token`。便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录。
+
 如果 **设置 → MCP** 提示未找到 MCP launcher，先构建开发用可执行文件：
 
 ```sh

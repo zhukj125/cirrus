@@ -30,6 +30,7 @@ const MAX_DEVICE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_HTTP_PORT: u16 = 5226;
 const DEFAULT_HTTP_PATH: &str = "/mcp";
+const BRIDGE_RUNTIME_FILE: &str = "mcp-bridge.json";
 
 #[derive(Debug, Clone, Default)]
 struct ClientIdentity {
@@ -230,10 +231,18 @@ fn http_token(token: Option<String>, token_file: Option<PathBuf>) -> Result<Stri
         }
         return Ok(token);
     }
-    let path = token_file
-        .or_else(|| app_data_dir().map(|dir| dir.join("mcp-bridge-token")))
-        .ok_or_else(|| "HTTP token is not configured".to_string())?;
-    let token = std::fs::read_to_string(&path)
+    if let Some(path) = token_file {
+        return read_token_file(&path);
+    }
+    let data_dir = app_data_dir().ok_or_else(|| "HTTP token is not configured".to_string())?;
+    if let Some(target) = read_bridge_runtime_file(&data_dir.join(BRIDGE_RUNTIME_FILE)) {
+        return Ok(target.token);
+    }
+    read_token_file(&data_dir.join("mcp-bridge-token"))
+}
+
+fn read_token_file(path: &Path) -> Result<String, String> {
+    let token = std::fs::read_to_string(path)
         .map_err(|error| format!("could not read HTTP token from {}: {error}", path.display()))?;
     let token = token.trim().to_string();
     if token.is_empty() {
@@ -2126,13 +2135,27 @@ fn discover_bridge() -> Result<BridgeTarget, String> {
         app_data_dir().ok_or_else(|| "Could not resolve the Cirrus application data directory".to_string())?;
     let port_file =
         std::env::var_os("CIRRUS_MCP_PORT_FILE").map(PathBuf::from).unwrap_or_else(|| data_dir.join("mcp-bridge-port"));
+    let runtime_file = std::env::var_os("CIRRUS_MCP_RUNTIME_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| port_file.with_file_name(BRIDGE_RUNTIME_FILE));
     let token_file = std::env::var_os("CIRRUS_MCP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("mcp-bridge-token"));
-    let port = read_trimmed(&port_file)
+    discover_bridge_from_paths(&runtime_file, &port_file, &token_file)
+}
+
+fn discover_bridge_from_paths(
+    runtime_file: &Path,
+    port_file: &Path,
+    token_file: &Path,
+) -> Result<BridgeTarget, String> {
+    if let Some(target) = read_bridge_runtime_file(runtime_file) {
+        return Ok(target);
+    }
+    let port = read_trimmed(port_file)
         .ok_or_else(|| "Cirrus MCP bridge is not running. Open Cirrus and enable MCP in Settings.".to_string())?;
     let port: u16 = port.parse().map_err(|_| "Cirrus MCP bridge port file is invalid".to_string())?;
-    let token = read_trimmed(&token_file)
+    let token = read_trimmed(token_file)
         .ok_or_else(|| "Cirrus MCP bridge token is unavailable. Re-enable MCP in Cirrus Settings.".to_string())?;
     if token.len() < 24 {
         return Err("Cirrus MCP bridge token is invalid. Re-enable MCP in Cirrus Settings.".to_string());
@@ -2140,11 +2163,29 @@ fn discover_bridge() -> Result<BridgeTarget, String> {
     Ok(BridgeTarget { base_url: format!("http://127.0.0.1:{port}"), token })
 }
 
+fn read_bridge_runtime_file(path: &Path) -> Option<BridgeTarget> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&content).ok()?;
+    if value.get("version").and_then(Value::as_u64) != Some(1) {
+        return None;
+    }
+    let port = value.get("port").and_then(Value::as_u64)?;
+    let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
+    let token = value.get("token").and_then(Value::as_str)?.trim();
+    if token.len() < 24 {
+        return None;
+    }
+    Some(BridgeTarget { base_url: format!("http://127.0.0.1:{port}"), token: token.to_string() })
+}
+
 fn read_trimmed(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 }
 
 fn app_data_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("CIRRUS_DATA_DIR").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
     #[cfg(target_os = "windows")]
     {
         return std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("com.cirrus"));
@@ -2183,6 +2224,66 @@ mod tests {
     #[test]
     fn supported_protocol_versions_are_ordered_newest_first() {
         assert_eq!(SUPPORTED_PROTOCOL_VERSIONS[0], LATEST_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn bridge_runtime_file_is_a_single_discovery_document() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.join(BRIDGE_RUNTIME_FILE);
+        std::fs::write(&path, r#"{"version":1,"port":60241,"token":"c8ef2f10b25f483cae6ca03e855e2629"}"#)
+            .expect("write runtime");
+
+        let target = read_bridge_runtime_file(&path).expect("runtime target");
+        assert_eq!(target.base_url, "http://127.0.0.1:60241");
+        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bridge_runtime_file_rejects_short_tokens() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.join(BRIDGE_RUNTIME_FILE);
+        std::fs::write(&path, r#"{"version":1,"port":60241,"token":"short"}"#).expect("write runtime");
+
+        assert!(read_bridge_runtime_file(&path).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bridge_runtime_file_takes_precedence_over_legacy_files() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let runtime = dir.join(BRIDGE_RUNTIME_FILE);
+        let port = dir.join("mcp-bridge-port");
+        let token = dir.join("mcp-bridge-token");
+        std::fs::write(&runtime, r#"{"version":1,"port":60241,"token":"c8ef2f10b25f483cae6ca03e855e2629"}"#)
+            .expect("runtime");
+        std::fs::write(&port, "51997").expect("legacy port");
+        std::fs::write(&token, "f2eefde5cd7b4f14933d261236dfd9c2").expect("legacy token");
+
+        let target = discover_bridge_from_paths(&runtime, &port, &token).expect("preferred target");
+        assert_eq!(target.base_url, "http://127.0.0.1:60241");
+        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bridge_discovery_falls_back_to_legacy_files() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let runtime = dir.join(BRIDGE_RUNTIME_FILE);
+        let port = dir.join("mcp-bridge-port");
+        let token = dir.join("mcp-bridge-token");
+        std::fs::write(&runtime, "not json").expect("runtime");
+        std::fs::write(&port, "60241").expect("legacy port");
+        std::fs::write(&token, "c8ef2f10b25f483cae6ca03e855e2629").expect("legacy token");
+
+        let target = discover_bridge_from_paths(&runtime, &port, &token).expect("legacy target");
+        assert_eq!(target.base_url, "http://127.0.0.1:60241");
+        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

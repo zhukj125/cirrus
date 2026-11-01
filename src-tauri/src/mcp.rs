@@ -26,6 +26,7 @@ use crate::state::AppState;
 
 pub const LOGIN_TOOL: &str = "cirrus_login";
 pub const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
+const RUNTIME_FILE: &str = "mcp-bridge.json";
 const PORT_FILE: &str = "mcp-bridge-port";
 const TOKEN_FILE: &str = "mcp-bridge-token";
 const LEGACY_SETTINGS_FILE: &str = "mcp-settings.json";
@@ -41,6 +42,13 @@ const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_HTTP_BODY: usize = 64 * 1024;
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BridgeRuntimeFile {
+    version: u8,
+    port: u16,
+    token: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -276,10 +284,11 @@ impl McpService {
             command.as_ref().map(|path| format!("[mcp_servers.cirrus]\ncommand = \"{}\"\n", escape_toml_string(path)));
         let (http_running, http_port) = self.http_status();
         let http_access_token = if http_running {
-            self.data_dir
-                .as_ref()
-                .and_then(|dir| std::fs::read_to_string(dir.join(TOKEN_FILE)).ok())
-                .map(|value| value.trim().to_string())
+            self.data_dir.as_ref().and_then(|dir| {
+                read_bridge_runtime_file(dir).map(|runtime| runtime.token).or_else(|| {
+                    std::fs::read_to_string(dir.join(TOKEN_FILE)).ok().map(|value| value.trim().to_string())
+                })
+            })
         } else {
             None
         };
@@ -509,6 +518,12 @@ impl McpService {
                 if refresh_service.upgrade().is_none() {
                     break;
                 }
+                let owns_runtime = read_bridge_runtime_file(&refresh_data_dir)
+                    .map(|runtime| runtime.port == port && runtime.token == refresh_token)
+                    .unwrap_or(true);
+                if !owns_runtime {
+                    break;
+                }
                 if let Err(error) = ensure_bridge_files(&refresh_data_dir, port, &refresh_token) {
                     log::warn!("[MCP] could not refresh the bridge runtime files: {error}");
                 }
@@ -547,6 +562,7 @@ impl McpService {
     }
 
     pub async fn stop(&self) {
+        let running_port = self.running_port.load(Ordering::Acquire);
         let (runtime, pending, active) = {
             let mut inner = self.inner.lock().await;
             (inner.runtime.take(), inner.pending_authorization.take(), inner.active_login.take())
@@ -567,8 +583,13 @@ impl McpService {
         self.enabled.store(false, Ordering::Relaxed);
         self.starting.store(false, Ordering::Release);
         if let Some(data_dir) = &self.data_dir {
-            let _ = std::fs::remove_file(data_dir.join(PORT_FILE));
-            let _ = std::fs::remove_file(data_dir.join(TOKEN_FILE));
+            let owns_runtime =
+                read_bridge_runtime_file(data_dir).map(|runtime| runtime.port == running_port).unwrap_or(false);
+            if owns_runtime {
+                let _ = std::fs::remove_file(data_dir.join(RUNTIME_FILE));
+                let _ = std::fs::remove_file(data_dir.join(PORT_FILE));
+                let _ = std::fs::remove_file(data_dir.join(TOKEN_FILE));
+            }
         }
         save_enabled_setting(self.data_dir.as_deref(), false);
     }
@@ -1168,17 +1189,23 @@ fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {
 }
 
 fn ensure_bridge_files(data_dir: &Path, port: u16, token: &str) -> Result<(), String> {
+    let runtime_path = data_dir.join(RUNTIME_FILE);
     let port_path = data_dir.join(PORT_FILE);
     let token_path = data_dir.join(TOKEN_FILE);
     let port_value = port.to_string();
+    let runtime_matches = bridge_runtime_file_matches(&runtime_path, port, token);
     let port_matches = runtime_file_matches(&port_path, &port_value);
     let token_matches = runtime_file_matches(&token_path, token);
-    if port_matches && token_matches {
+    if runtime_matches && port_matches && token_matches {
         return Ok(());
     }
 
-    // Write the token first and the port last so the port value acts as the
-    // commit marker for clients reading the two files during a refresh.
+    let runtime = BridgeRuntimeFile { version: 1, port, token: token.to_string() };
+    let encoded =
+        serde_json::to_vec(&runtime).map_err(|error| format!("Could not encode the MCP runtime file: {error}"))?;
+    write_bridge_runtime_file(&runtime_path, &encoded)?;
+
+    // Keep the pre-JSON files in sync so older clients can still discover the bridge.
     write_private_file(&token_path, token.as_bytes())
         .map_err(|error| format!("Could not write the MCP token file: {error}"))?;
     write_private_file(&port_path, port_value.as_bytes())
@@ -1186,8 +1213,37 @@ fn ensure_bridge_files(data_dir: &Path, port: u16, token: &str) -> Result<(), St
     Ok(())
 }
 
+fn read_bridge_runtime_file(data_dir: &Path) -> Option<BridgeRuntimeFile> {
+    let content = std::fs::read_to_string(data_dir.join(RUNTIME_FILE)).ok()?;
+    let runtime = serde_json::from_str::<BridgeRuntimeFile>(&content).ok()?;
+    if runtime.version != 1 || runtime.port == 0 || runtime.token.len() < 24 {
+        return None;
+    }
+    Some(runtime)
+}
+
+fn bridge_runtime_file_matches(path: &Path, port: u16, token: &str) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(runtime) = serde_json::from_str::<BridgeRuntimeFile>(&content) else {
+        return false;
+    };
+    runtime.version == 1 && runtime.port == port && runtime.token == token
+}
+
 fn runtime_file_matches(path: &Path, expected: &str) -> bool {
     std::fs::read_to_string(path).map(|value| value.trim() == expected).unwrap_or(false)
+}
+
+fn write_bridge_runtime_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let temporary = path.with_file_name(format!(".{}.{}.tmp", RUNTIME_FILE, std::process::id()));
+    write_private_file(&temporary, contents)
+        .map_err(|error| format!("Could not write the MCP runtime file: {error}"))?;
+    std::fs::rename(&temporary, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("Could not publish the MCP runtime file: {error}")
+    })
 }
 
 #[cfg(test)]
@@ -1240,9 +1296,15 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(dir.join(PORT_FILE), "51997").expect("seed port");
         std::fs::write(dir.join(TOKEN_FILE), "stale-token").expect("seed token");
+        std::fs::write(dir.join(RUNTIME_FILE), r#"{"version":1,"port":51997,"token":"stale-token"}"#)
+            .expect("seed runtime");
 
         ensure_bridge_files(&dir, 60241, "c8ef2f10b25f483cae6ca03e855e2629").expect("refresh files");
 
+        let runtime = read_bridge_runtime_file(&dir).expect("runtime file");
+        assert_eq!(runtime.version, 1);
+        assert_eq!(runtime.port, 60241);
+        assert_eq!(runtime.token, "c8ef2f10b25f483cae6ca03e855e2629");
         assert_eq!(std::fs::read_to_string(dir.join(PORT_FILE)).expect("port"), "60241");
         assert_eq!(std::fs::read_to_string(dir.join(TOKEN_FILE)).expect("token"), "c8ef2f10b25f483cae6ca03e855e2629");
         let _ = std::fs::remove_dir_all(dir);

@@ -176,6 +176,8 @@ Cirrus supports two MCP transports:
 target/debug/cirrus-mcp-server.exe
 ```
 
+The desktop publishes its current loopback port and token in `mcp-bridge.json` under the Cirrus data directory; the stdio server reads that single discovery file before falling back to the legacy `mcp-bridge-port` and `mcp-bridge-token` files. `CIRRUS_DATA_DIR` can override the data directory for portable or development setups.
+
 If **Settings → MCP** reports that the MCP launcher was not found, build the development executables first:
 
 ```sh
