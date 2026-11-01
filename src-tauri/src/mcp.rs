@@ -36,6 +36,8 @@ const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
 const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -333,7 +335,14 @@ impl McpService {
         let binary = mcp_binary_path().filter(|path| path.is_file()).ok_or_else(|| {
             "cirrus-mcp was not found. Build the MCP executable or use an installer that includes it.".to_string()
         })?;
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = command
             .arg("--http")
             .arg("--http-host")
             .arg("127.0.0.1")
