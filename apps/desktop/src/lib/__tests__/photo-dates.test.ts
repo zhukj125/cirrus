@@ -104,6 +104,18 @@ describe("按天分组", () => {
     const photos = [photo("a", TODAY + 1000), photo("b", TODAY + 2000), photo("c", TODAY + 3000)];
     expect(groupByDay(photos, NOW)).toHaveLength(1);
   });
+
+  it("中文日期跨年时保留年份", () => {
+    const photos = [photo("old", new Date(2023, 9, 24, 10).getTime())];
+    const sections = groupByDay(photos, NOW, "zh-CN");
+    expect(sections[0]?.label).toBe("2023年10月24日周二");
+  });
+
+  it("中文日期在当年保持简洁", () => {
+    const photos = [photo("same-year", new Date(2024, 2, 10, 10).getTime())];
+    const sections = groupByDay(photos, NOW, "zh-CN");
+    expect(sections[0]?.label).toBe("3月10日周日");
+  });
 });
 
 describe("日期输入", () => {

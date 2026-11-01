@@ -57,13 +57,12 @@ export function dayLabel(dayStart: number, now: Date = new Date(), locale = "en-
   if (dayStart === today) return english ? "Today" : chinese ? "今天" : relativeDay.format(0, "day");
   if (dayStart === addDays(today, -1)) return english ? "Yesterday" : chinese ? "昨天" : relativeDay.format(-1, "day");
   const date = new Date(dayStart);
-  const prefix = date.getFullYear() === now.getFullYear() ? "" : `${date.getFullYear()} `;
+  const includeYear = date.getFullYear() !== now.getFullYear();
   if (english) {
     const weekday = date.toLocaleDateString(locale, { weekday: "short" });
-    return `${prefix}${date.toLocaleDateString(locale, { month: "short", day: "numeric" })}, ${weekday}`;
+    return `${includeYear ? `${date.getFullYear()} ` : ""}${date.toLocaleDateString(locale, { month: "short", day: "numeric" })}, ${weekday}`;
   }
-  if (chinese) return date.toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" });
-  return date.toLocaleDateString(locale, { year: date.getFullYear() === now.getFullYear() ? undefined : "numeric", month: "long", day: "numeric", weekday: "short" });
+  return date.toLocaleDateString(locale, { year: includeYear ? "numeric" : undefined, month: "long", day: "numeric", weekday: "short" });
 }
 
 export function filterByRange(photos: PhotoItem[], bounds: DateBounds): PhotoItem[] {
