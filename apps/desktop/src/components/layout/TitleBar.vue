@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, History, Minus, Monitor, Moon, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
+import { Copy, History, Minus, Monitor, Moon, Palette, Settings as SettingsIcon, Square, Sun, X } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import BrandWordmark from "@/components/layout/BrandWordmark.vue";
@@ -41,13 +41,14 @@ const emit = defineEmits<{ settings: []; "check-update": [] }>();
 const theme = useThemeStore();
 const locale = useLocaleStore();
 const themeMeta = computed(() => {
+  if (theme.isChromatic) return { label: locale.t(`theme.${theme.mode}`), icon: Palette };
   if (theme.mode === "light") return { label: locale.t("theme.light"), icon: Sun };
   if (theme.mode === "dark") return { label: locale.t("theme.dark"), icon: Moon };
   return { label: locale.t("theme.system"), icon: Monitor };
 });
 
 function cycleTheme(event: MouseEvent): void {
-  const next = theme.mode === "system" ? "light" : theme.mode === "light" ? "dark" : "system";
+  const next = theme.isChromatic || theme.mode === "dark" ? "system" : theme.mode === "system" ? "light" : "dark";
   theme.setMode(next, event);
 }
 const inTauri = isTauri();

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { CalendarDays, Check, ChevronUp, Download, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, Users, PanelLeftClose, PanelLeftOpen, Plus, Sun } from "@lucide/vue";
+import { CalendarDays, Check, ChevronUp, Download, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, Palette, PanelLeftClose, PanelLeftOpen, Plus, Sun, Users } from "@lucide/vue";
 
 import { StorageKey, type ShellView, type ThemeMode } from "@/constants";
 import { readStored, writeStored } from "@/lib/common/storage";
@@ -83,11 +83,15 @@ const appleId = computed(() => props.account?.appleId ?? null);
 const currentInitial = computed(() => displayName.value.text.trim().charAt(0).toUpperCase() || "?");
 const currentAvatar = computed(() => (props.activeAccountKey ? props.avatars[props.activeAccountKey] : null));
 
-const THEME_OPTIONS = computed<Array<{ value: ThemeMode; label: string; icon: typeof Sun }>>(() => [
-  { value: "system", label: locale.t("theme.system"), icon: Monitor },
-  { value: "light", label: locale.t("theme.light"), icon: Sun },
-  { value: "dark", label: locale.t("theme.dark"), icon: Moon },
-]);
+const THEME_OPTIONS = computed<Array<{ value: ThemeMode; label: string; icon: typeof Sun }>>(() => {
+  const options: Array<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
+    { value: "system", label: locale.t("theme.system"), icon: Monitor },
+    { value: "light", label: locale.t("theme.light"), icon: Sun },
+    { value: "dark", label: locale.t("theme.dark"), icon: Moon },
+  ];
+  if (theme.isChromatic) options.push({ value: theme.mode, label: locale.t(`theme.${theme.mode}`), icon: Palette });
+  return options;
+});
 
 const NAV_ITEMS = computed<Array<{ value: ShellView; label: string; icon: typeof MapPin }>>(() => [
   { value: "findmy", label: locale.t("nav.devices"), icon: MapPin },

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowLeft, ChevronDown, CircleCheck, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, GitBranch, HardDrive, Images, Info, KeyRound, MapPin, Monitor, Moon, NotebookPen, Palette, RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, Sun } from "@lucide/vue";
+import { ArrowLeft, Check, ChevronDown, CircleCheck, Clock3, Download as DownloadIcon, ExternalLink, Eye, EyeOff, GitBranch, HardDrive, Images, Info, KeyRound, MapPin, NotebookPen, Palette, RefreshCw, RotateCcw, Search, Settings2, ShieldCheck } from "@lucide/vue";
 
 import BrandMark from "@/components/layout/BrandMark.vue";
 import McpIntegrationSettings from "@/components/mcp/McpIntegrationSettings.vue";
@@ -9,7 +9,7 @@ import DownloadSettingsPanel from "@/components/photos/DownloadSettingsPanel.vue
 import { Button } from "@/components/ui/button";
 import Spinner from "@/components/ui/Spinner.vue";
 import { Input } from "@/components/ui/input";
-import { StorageKey, type ThemeMode } from "@/constants";
+import { StorageKey, themeUsesDarkBase, type ThemeMode } from "@/constants";
 import { openExternal } from "@/lib/api";
 import { DEFAULT_MAP_PROVIDER_ID, MAP_PROVIDERS, getMapProvider } from "@/lib/maps/providers";
 import { readStored, writeStored } from "@/lib/common/storage";
@@ -64,10 +64,53 @@ watch(
   },
 );
 
-const THEME_OPTIONS: Array<{ value: ThemeMode; labelKey: string; icon: typeof Sun }> = [
-  { value: "system", labelKey: "theme.system", icon: Monitor },
-  { value: "light", labelKey: "theme.light", icon: Sun },
-  { value: "dark", labelKey: "theme.dark", icon: Moon },
+type ThemeOption = {
+  value: ThemeMode;
+  labelKey: string;
+  preview: string;
+  accent: string;
+};
+
+const THEME_OPTIONS: ThemeOption[] = [
+  { value: "light", labelKey: "theme.light", preview: "linear-gradient(135deg, #e8e8ec 0%, #fbfbfc 100%)", accent: "#0071e3" },
+  { value: "dark", labelKey: "theme.dark", preview: "linear-gradient(135deg, #111114 0%, #2a2a2e 100%)", accent: "#0a84ff" },
+  { value: "system", labelKey: "theme.system", preview: "linear-gradient(90deg, #f2f2f4 0 50%, #252528 50% 100%)", accent: "#0071e3" },
+  {
+    value: "breeze",
+    labelKey: "theme.breeze",
+    preview: "radial-gradient(circle at 72% 24%, rgba(255,255,255,0.92) 0 7%, transparent 24%), linear-gradient(145deg, #e8f7ee 0%, #c8e7b5 48%, #8fc077 100%)",
+    accent: "#3d8b59",
+  },
+  {
+    value: "cloud",
+    labelKey: "theme.cloud",
+    preview: "radial-gradient(circle at 28% 22%, rgba(255,255,255,0.94) 0 10%, transparent 28%), linear-gradient(145deg, #cbe8ff 0%, #95c8f2 52%, #e4d9bb 100%)",
+    accent: "#347bb8",
+  },
+  {
+    value: "amber",
+    labelKey: "theme.amber",
+    preview: "radial-gradient(circle at 74% 20%, #ffe5a1 0 8%, transparent 26%), linear-gradient(150deg, #f5ce7e 0%, #dc944d 50%, #8d4d2f 100%)",
+    accent: "#b56a24",
+  },
+  {
+    value: "blossom",
+    labelKey: "theme.blossom",
+    preview: "radial-gradient(circle at 18% 24%, #ffe7f2 0 8%, transparent 24%), radial-gradient(circle at 82% 72%, #d8b7ff 0 13%, transparent 32%), linear-gradient(145deg, #fff0f6 0%, #efd5f5 52%, #c9dcff 100%)",
+    accent: "#b85881",
+  },
+  {
+    value: "tide",
+    labelKey: "theme.tide",
+    preview: "radial-gradient(circle at 68% 28%, rgba(255,255,255,0.82) 0 5%, transparent 19%), repeating-radial-gradient(circle at 22% 62%, rgba(255,255,255,0.32) 0 2px, transparent 3px 18px), linear-gradient(145deg, #dff8ff 0%, #8bd7ee 50%, #4e9fce 100%)",
+    accent: "#0c858d",
+  },
+  {
+    value: "pine",
+    labelKey: "theme.pine",
+    preview: "radial-gradient(circle at 78% 16%, #c8f5d9 0 4%, transparent 17%), linear-gradient(155deg, #10231a 0%, #1b4934 52%, #0b1713 100%)",
+    accent: "#65d292",
+  },
 ];
 
 const CATEGORIES = [
@@ -234,22 +277,75 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           </div>
 
           <div>
-            <p class="mb-2 text-sm font-medium">{{ locale.t("settings.theme") }}</p>
-            <div class="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2.5">
-              <button
-                v-for="option in THEME_OPTIONS"
-                :key="option.value"
-                type="button"
-                class="flex items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors"
-                :class="theme.mode === option.value ? 'border-primary bg-accent text-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'"
-                :aria-pressed="theme.mode === option.value"
-                @click="theme.setMode(option.value, $event)"
-              >
-                <component :is="option.icon" :size="16" />
-                {{ locale.t(option.labelKey) }}
-              </button>
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <p class="text-sm font-medium">{{ locale.t("settings.theme") }}</p>
+              <span class="text-2xs font-semibold tracking-[0.08em] text-muted-foreground uppercase">{{ locale.t("settings.themeGallery") }}</span>
             </div>
-            <p class="mt-2 text-xs text-muted-foreground">{{ locale.t("settings.themeSaved") }}</p>
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3">
+              <button v-for="option in THEME_OPTIONS" :key="option.value" type="button" class="group min-w-0 text-left" :aria-label="locale.t(option.labelKey)" :aria-pressed="theme.mode === option.value" @click="theme.setMode(option.value, $event)">
+                <div
+                  class="relative aspect-[16/10] overflow-hidden rounded-xl border transition-[border-color,box-shadow,transform] duration-200 group-hover:-translate-y-0.5 group-hover:shadow-md"
+                  :class="theme.mode === option.value ? 'border-foreground ring-2 ring-foreground/25 ring-offset-2 ring-offset-background' : 'border-border group-hover:border-foreground/25'"
+                  :style="{ backgroundImage: option.preview }"
+                >
+                  <div v-if="option.value === 'system'" class="absolute inset-0 flex">
+                    <div class="flex w-1/2 items-center justify-center bg-[#f2f2f4] p-3">
+                      <div class="h-[72%] w-[76%] rounded-md border border-black/5 bg-white p-2 shadow-sm">
+                        <span class="mb-1.5 block h-1 w-2/3 rounded-full bg-[#c8c8cf]" />
+                        <span class="mb-1 block h-1 w-5/6 rounded-full bg-[#e2e2e7]" />
+                        <span class="block h-1 w-1/2 rounded-full bg-[#e2e2e7]" />
+                      </div>
+                    </div>
+                    <div class="flex w-1/2 items-center justify-center bg-[#252528] p-3">
+                      <div class="h-[72%] w-[76%] rounded-md border border-white/10 bg-[#343439] p-2 shadow-sm">
+                        <span class="mb-1.5 block h-1 w-2/3 rounded-full bg-white/50" />
+                        <span class="mb-1 block h-1 w-5/6 rounded-full bg-white/15" />
+                        <span class="block h-1 w-1/2 rounded-full bg-white/15" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-else class="absolute inset-x-[9%] top-[16%] bottom-0 overflow-hidden rounded-t-lg border shadow-[0_8px_16px_rgba(0,0,0,0.14)]" :class="themeUsesDarkBase(option.value) ? 'border-white/10 bg-[#25252a]/95' : 'border-black/5 bg-white/80'">
+                    <div class="flex h-4 items-center gap-1 border-b px-2" :class="themeUsesDarkBase(option.value) ? 'border-white/10' : 'border-black/5'">
+                      <span class="size-1 rounded-full bg-[#ff6159]" />
+                      <span class="size-1 rounded-full bg-[#ffbd2e]" />
+                      <span class="size-1 rounded-full bg-[#28c840]" />
+                    </div>
+                    <div class="flex h-[calc(100%-1rem)]">
+                      <div class="w-[27%] border-r p-1.5" :class="themeUsesDarkBase(option.value) ? 'border-white/10 bg-white/5' : 'border-black/5 bg-black/[0.03]'">
+                        <span class="mb-1.5 block h-1 w-3/4 rounded-full" :class="themeUsesDarkBase(option.value) ? 'bg-white/25' : 'bg-black/15'" />
+                        <span class="mb-1 block h-1 w-full rounded-full" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/10'" />
+                        <span class="block h-1 w-2/3 rounded-full" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/10'" />
+                      </div>
+                      <div class="min-w-0 flex-1 p-2">
+                        <span class="mb-1.5 block h-1.5 w-1/2 rounded-full" :style="{ backgroundColor: option.accent }" />
+                        <span class="mb-1 block h-1 w-5/6 rounded-full" :class="themeUsesDarkBase(option.value) ? 'bg-white/15' : 'bg-black/10'" />
+                        <span class="block h-1 w-2/3 rounded-full" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/10'" />
+                        <div class="mt-2 grid grid-cols-3 gap-1">
+                          <span class="aspect-[4/3] rounded-sm" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/[0.06]'" />
+                          <span class="aspect-[4/3] rounded-sm" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/[0.06]'" />
+                          <span class="aspect-[4/3] rounded-sm" :class="themeUsesDarkBase(option.value) ? 'bg-white/10' : 'bg-black/[0.06]'" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <span v-if="theme.mode === option.value" class="absolute top-2 right-2 grid size-5 place-items-center rounded-full bg-foreground text-background shadow-sm">
+                    <Check :size="12" :stroke-width="3" />
+                  </span>
+                </div>
+                <div class="mt-2 flex items-center justify-between gap-2 px-0.5">
+                  <span class="truncate text-sm" :class="theme.mode === option.value ? 'font-medium text-foreground' : 'text-muted-foreground'">{{ locale.t(option.labelKey) }}</span>
+                  <span v-if="theme.mode === option.value" class="size-1.5 shrink-0 rounded-full bg-primary" />
+                </div>
+              </button>
+
+              <div aria-disabled="true">
+                <div class="grid aspect-[16/10] place-items-center rounded-xl border border-dashed border-border bg-secondary/35 text-xs text-muted-foreground">{{ locale.t("settings.themeComingSoon") }}</div>
+                <p class="mt-2 px-0.5 text-sm text-muted-foreground">{{ locale.t("settings.themeMore") }}</p>
+              </div>
+            </div>
+            <p class="mt-3 text-xs text-muted-foreground">{{ locale.t("settings.themeSaved") }}</p>
           </div>
 
           <div class="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-4">

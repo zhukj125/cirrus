@@ -43,4 +43,21 @@ export function isShellView(value: string): value is ShellView {
   return (SHELL_VIEWS as readonly string[]).includes(value);
 }
 
-export type ThemeMode = "system" | "light" | "dark";
+export const CHROMATIC_THEMES = ["breeze", "cloud", "amber", "blossom", "tide", "pine"] as const;
+
+export type ChromaticThemeMode = (typeof CHROMATIC_THEMES)[number];
+export type ThemeMode = "system" | "light" | "dark" | ChromaticThemeMode;
+
+const THEME_MODES = ["system", "light", "dark", ...CHROMATIC_THEMES] as const;
+
+export function isThemeMode(value: string | null): value is ThemeMode {
+  return value !== null && (THEME_MODES as readonly string[]).includes(value);
+}
+
+export function isChromaticTheme(value: ThemeMode): value is ChromaticThemeMode {
+  return (CHROMATIC_THEMES as readonly string[]).includes(value);
+}
+
+export function themeUsesDarkBase(value: ThemeMode): boolean {
+  return value === "dark" || value === "pine";
+}

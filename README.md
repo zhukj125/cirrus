@@ -62,7 +62,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 ### Desktop workspace
 
 - English and Simplified Chinese UI.
-- Light, dark, and system themes.
+- Light, dark, system, and six color themes.
 - Multiple Apple accounts with session reuse.
 - Local storage for accounts, avatars, encrypted sessions, and download history.
 

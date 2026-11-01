@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, onScopeDispose, ref, watch } from "vue";
 
-import { StorageKey, type ThemeMode } from "@/constants";
+import { StorageKey, isChromaticTheme, isThemeMode, themeUsesDarkBase, type ThemeMode } from "@/constants";
 import { readStored, writeStored } from "@/lib/common/storage";
 
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -9,10 +9,6 @@ const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 type ThemeOrigin = { x: number; y: number };
 type ThemeChangeSource = MouseEvent | ThemeOrigin | undefined;
-
-function isThemeMode(value: string | null): value is ThemeMode {
-  return value === "system" || value === "light" || value === "dark";
-}
 
 export const useThemeStore = defineStore("theme", () => {
   const stored = readStored(StorageKey.theme);
@@ -22,7 +18,8 @@ export const useThemeStore = defineStore("theme", () => {
 
   const systemDark = ref(media?.matches ?? false);
 
-  const isDark = computed(() => mode.value === "dark" || (mode.value === "system" && systemDark.value));
+  const isDark = computed(() => themeUsesDarkBase(mode.value) || (mode.value === "system" && systemDark.value));
+  const isChromatic = computed(() => isChromaticTheme(mode.value));
 
   let pendingOrigin: ThemeOrigin | null = null;
   let initialized = false;
@@ -40,7 +37,9 @@ export const useThemeStore = defineStore("theme", () => {
   }
 
   function applyClass(): void {
-    document.documentElement.classList.toggle("dark", isDark.value);
+    const root = document.documentElement;
+    root.classList.toggle("dark", isDark.value);
+    root.dataset.theme = mode.value;
   }
 
   function apply(animate: boolean, origin: ThemeOrigin): void {
@@ -110,5 +109,5 @@ export const useThemeStore = defineStore("theme", () => {
   apply(false, defaultOrigin());
   initialized = true;
 
-  return { mode, systemDark, isDark, setMode };
+  return { mode, systemDark, isDark, isChromatic, setMode };
 });

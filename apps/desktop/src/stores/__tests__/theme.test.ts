@@ -10,6 +10,7 @@ describe("主题切换", () => {
     vi.useFakeTimers();
     localStorage.clear();
     document.documentElement.className = "";
+    delete document.documentElement.dataset.theme;
     setActivePinia(createPinia());
   });
 
@@ -17,6 +18,7 @@ describe("主题切换", () => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     document.documentElement.className = "";
+    delete document.documentElement.dataset.theme;
   });
 
   it("切换深浅色时更新根节点并保存设置", async () => {
@@ -36,5 +38,26 @@ describe("主题切换", () => {
     expect(theme.isDark).toBe(false);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(document.documentElement.classList.contains("theme-transition")).toBe(false);
+  });
+
+  it("persists and applies chromatic themes", async () => {
+    const theme = useThemeStore();
+
+    theme.setMode("breeze", { x: 120, y: 20 });
+    await nextTick();
+
+    expect(theme.isChromatic).toBe(true);
+    expect(theme.isDark).toBe(false);
+    expect(document.documentElement.dataset.theme).toBe("breeze");
+    expect(localStorage.getItem(StorageKey.theme)).toBe("breeze");
+
+    theme.setMode("pine", { x: 120, y: 20 });
+    await nextTick();
+    vi.advanceTimersByTime(320);
+
+    expect(theme.isChromatic).toBe(true);
+    expect(theme.isDark).toBe(true);
+    expect(document.documentElement.dataset.theme).toBe("pine");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 });
