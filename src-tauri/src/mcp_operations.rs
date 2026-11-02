@@ -104,6 +104,16 @@ pub async fn call_tool(
             let note_id = required_str(arguments, "noteId")?;
             Ok(to_value(notes::detail(&state.sessions, &resolved.session_id, note_id).await)?)
         }
+        "cirrus_get_note_image" => {
+            let note_id = required_str(arguments, "noteId")?;
+            let attachment_id = required_str(arguments, "attachmentId")?;
+            let original = arguments.get("original").and_then(Value::as_bool).unwrap_or(false);
+            Ok(to_value(
+                notes::attachment_image(&state.sessions, &resolved.session_id, note_id, attachment_id, original)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )?)
+        }
         "cirrus_create_note" => {
             let title = required_str(arguments, "title")?;
             let body = optional_str(arguments, "body").unwrap_or("");

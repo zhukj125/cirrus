@@ -273,6 +273,16 @@ impl NotesListResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NoteImage {
+    pub attachment_id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub byte_length: usize,
+    pub data_url: String,
+    pub source: String,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteAttachment {
     pub id: String,
     pub name: String,

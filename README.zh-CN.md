@@ -55,7 +55,7 @@ Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的�
 ### 备忘录、联系人与日历
 
 - 浏览并下载 iCloud 云盘文件。
-- 新建、修改、删除和按文件夹浏览 iCloud 备忘录，并支持搜索。
+- 新建、修改、删除和按文件夹浏览 iCloud 备忘录，支持搜索和图片附件读取。
 - 查看联系人、电话、邮箱和地址。
 - 以日、周、月视图查看日历事件。
 - 切换工作区页签后保留各页面状态。
@@ -72,7 +72,7 @@ Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的�
 - 可选的 stdio 和 Streamable HTTP MCP 接入，供 AI 客户端和自动化工具使用。
 - 提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签。
 - iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用。
-- 24 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、iCloud 云盘、备忘录增删改、下载、联系人、日历和头像图片。
+- 25 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历和头像图片。
 - 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口。
 - MCP 调用历史保存在 SQLite，可在 **设置 → MCP → 历史** 查看；请求和响应会截断并脱敏，不保存令牌或图片 Base64。
 - Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端。
@@ -119,7 +119,7 @@ VITE_GOOGLE_MAPS_API_KEY=
 2. 完成双重认证。
 3. 从侧栏或工作区页签打开 **设备**、**照片**、**iCloud 云盘**、**备忘录**、**联系人** 或 **日历**。
 
-如需使用 MCP，打开 **设置 → MCP**，启用桥接，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 24 个账户、设备、照片、iCloud 云盘、备忘录增删改、下载、联系人、日历、头像、登录和退出工具。`Streamable HTTP` 页签会显示本次运行的 `/mcp` 地址、Bearer Token 和可直接复制的客户端配置。
+如需使用 MCP，打开 **设置 → MCP**，启用桥接，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 25 个账户、设备、照片、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历、头像、登录和退出工具。`Streamable HTTP` 页签会显示本次运行的 `/mcp` 地址、Bearer Token 和可直接复制的客户端配置。
 
 首次登录必须完成双重认证；之后只要会话仍有效，就会从本地加密记录中恢复。
 

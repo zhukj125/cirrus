@@ -55,7 +55,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 ### Notes, contacts, and calendar
 
 - Browse and download files from iCloud Drive.
-- Create, edit, delete, and browse iCloud Notes with folders and search.
+- Create, edit, delete, browse, and retrieve image attachments from iCloud Notes with folders and search.
 - View contacts, phone numbers, email addresses, and postal addresses.
 - Read calendar events in day, week, and month views.
 - Keep each view ready when switching between workspace tabs.
@@ -72,7 +72,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 - Optional stdio and Streamable HTTP MCP access for AI clients and automation.
 - Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder.
 - Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
-- 24 MCP tools covering login, account status, devices, Find My sound, photos, iCloud Drive, note CRUD, downloads, contacts, calendar, and profile images.
+- 25 MCP tools covering login, account status, devices, Find My sound, photos, iCloud Drive, note CRUD and images, downloads, contacts, calendar, and profile images.
 - Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
 - MCP call history is stored in SQLite and available under **Settings → MCP → History**; requests and responses are bounded and redacted, with no tokens or image Base64 stored.
 - Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
@@ -119,7 +119,7 @@ For Google Maps, enable both Maps JavaScript API and Geocoding API in Google Clo
 2. Complete two-factor authentication.
 3. Open **Devices**, **Photos**, **iCloud Drive**, **Notes**, **Contacts**, or **Calendar** from the sidebar or workspace tabs.
 
-To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 24 account, device, photo, iCloud Drive, note CRUD, download, contact, calendar, profile image, login, and logout tools. The `Streamable HTTP` tab shows the current `/mcp` endpoint, bearer token, and a ready-to-copy client configuration.
+To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 25 account, device, photo, iCloud Drive, note CRUD and image, download, contact, calendar, profile image, login, and logout tools. The `Streamable HTTP` tab shows the current `/mcp` endpoint, bearer token, and a ready-to-copy client configuration.
 
 The first sign-in requires 2FA. Later launches restore the encrypted session when it is still valid.
 

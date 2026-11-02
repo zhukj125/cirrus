@@ -630,6 +630,18 @@ fn tools_list() -> Value {
                 "annotations": { "title": "Read an iCloud Note", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
+                "name": "cirrus_get_note_image",
+                "title": "Read an iCloud Note image",
+                "description": "Fetch an image attachment from an iCloud Note and return it as a native MCP image content block. Use attachments[].id from cirrus_get_note. Returns a compact preview by default; set original=true to request the original image.",
+                "inputSchema": account_schema_required(json!({
+                    "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." },
+                    "attachmentId": { "type": "string", "description": "Image attachment ID returned by cirrus_get_note." },
+                    "original": { "type": "boolean", "description": "Return the original image instead of the preview. Defaults to false." }
+                }), &["noteId", "attachmentId"]),
+                "outputSchema": tool_output_schema("cirrus_get_note_image"),
+                "annotations": { "title": "Read an iCloud Note image", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
                 "name": "cirrus_create_note",
                 "title": "Create an iCloud Note",
                 "description": "Create a plain-text note in iCloud Notes. Omit folderId to use the default Notes folder.",
@@ -1078,6 +1090,17 @@ fn tool_output_schema(tool: &str) -> Value {
             }),
             &["status"],
         ),
+        "cirrus_get_note_image" => object_schema(
+            json!({
+                "imageIncluded": { "type": "boolean", "description": "Whether an image content block was returned." },
+                "mimeType": { "type": ["string", "null"], "description": "MIME type of the image content block." },
+                "byteLength": { "type": ["integer", "null"], "description": "Decoded image size in bytes." },
+                "attachmentId": { "type": "string" },
+                "name": { "type": "string" },
+                "source": { "type": "string", "description": "preview, original, or rendered." }
+            }),
+            &["imageIncluded", "attachmentId"],
+        ),
         "cirrus_create_note" | "cirrus_update_note" | "cirrus_delete_note" => object_schema(
             json!({
                 "status": { "type": "string" },
@@ -1242,7 +1265,7 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_download_photo" => download_photo_markdown(result),
         "cirrus_cancel_download" => cancel_download_markdown(result),
         "cirrus_list_download_tasks" => download_tasks_markdown(result),
-        "cirrus_get_account_avatar" | "cirrus_get_contact_photo" => image_markdown(result),
+        "cirrus_get_account_avatar" | "cirrus_get_contact_photo" | "cirrus_get_note_image" => image_markdown(result),
         "cirrus_list_notes" => notes_list_markdown(result),
         "cirrus_get_note" => note_detail_markdown(result),
         "cirrus_create_note" | "cirrus_update_note" | "cirrus_delete_note" => note_mutation_markdown(result),
@@ -2073,7 +2096,7 @@ async fn device_image_content(
 }
 
 async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode) -> Vec<Value> {
-    if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" {
+    if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" || tool == "cirrus_get_note_image" {
         let data_url = result.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
         let image = parse_image_data_url(data_url);
         if let Some(object) = result.as_object_mut() {
@@ -2436,7 +2459,7 @@ mod tests {
     fn tools_list_exposes_login_and_account_list_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 25);
         assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),
@@ -2639,6 +2662,20 @@ mod tests {
         assert_eq!(content[0]["mimeType"], "image/png");
         assert_eq!(result["imageIncluded"], true);
         assert_eq!(result["byteLength"], 3);
+
+        let mut note_image = json!({
+            "dataUrl": "data:image/png;base64,YWJj",
+            "attachmentId": "attachment-1",
+            "name": "photo.png",
+            "source": "preview"
+        });
+        let note_content = result_image_content("cirrus_get_note_image", &mut note_image, ArtworkMode::Url).await;
+        assert_eq!(note_content.len(), 1);
+        assert_eq!(note_content[0]["type"], "image");
+        assert_eq!(note_content[0]["data"], "YWJj");
+        assert_eq!(note_content[0]["mimeType"], "image/png");
+        assert_eq!(note_image["imageIncluded"], true);
+        assert_eq!(note_image["attachmentId"], "attachment-1");
     }
 
     #[test]

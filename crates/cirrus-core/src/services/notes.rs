@@ -13,9 +13,10 @@ use serde_json::{json, Value};
 use crate::apple::http::headers as hh;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    NoteAttachment, NoteDetail, NoteDetailResult, NoteFolder, NoteMutationResult, NoteSummary, NotesListResult,
+    NoteAttachment, NoteDetail, NoteDetailResult, NoteFolder, NoteImage, NoteMutationResult, NoteSummary,
+    NotesListResult,
 };
-use crate::services::{auth as auth_service, devices, note_content, note_paper};
+use crate::services::{auth as auth_service, devices, media, note_content, note_paper};
 use crate::session::SrpSession;
 use crate::SessionManager;
 
@@ -27,6 +28,7 @@ const NOTES_CKJS_BUILD: &str = "2310ProjectDev27";
 const NOTES_CKJS_VERSION: &str = "2.6.4";
 const DEFAULT_FOLDER: &str = "DefaultFolder-CloudKit";
 const TRASH_FOLDER: &str = "TrashFolder-CloudKit";
+const MAX_NOTE_IMAGE_BYTES: usize = 15 * 1024 * 1024;
 
 const DESIRED_KEYS: &[&str] = &[
     "TitleEncrypted",
@@ -142,6 +144,120 @@ pub async fn detail(manager: &SessionManager, session_id: &str, note_id: &str) -
     NoteDetailResult::ok(note)
 }
 
+pub async fn attachment_image(
+    manager: &SessionManager,
+    session_id: &str,
+    note_id: &str,
+    attachment_id: &str,
+    original: bool,
+) -> AppResult<NoteImage> {
+    if session_id.trim().is_empty() {
+        return Err(AppError::auth("Missing session ID. Please sign in again."));
+    }
+    if note_id.trim().is_empty() || attachment_id.trim().is_empty() {
+        return Err(AppError::other("Missing note or attachment ID"));
+    }
+    let handle = manager.get(session_id).await?;
+    let mut session = handle.lock().await;
+    devices::account_login(&mut session, false).await?;
+    let base = notes_base(&session).ok_or_else(|| AppError::other("Notes is not available for this account"))?;
+    let record = lookup_note_record(&mut session, &base, note_id).await?;
+    if !note_attachment_ids(&record)?.iter().any(|id| id == attachment_id) {
+        return Err(AppError::other("Attachment does not belong to this note"));
+    }
+    let attachments = query_attachments(&mut session, &base, &[attachment_id.to_string()]).await?;
+    let attachment = attachments
+        .into_iter()
+        .find(|attachment| attachment.id == attachment_id)
+        .ok_or_else(|| AppError::other("Note attachment was not found"))?;
+    let (url, source) = note_image_url(&attachment, original)
+        .ok_or_else(|| AppError::other("This attachment does not have a downloadable image"))?;
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (metadata, encoded) = rest.split_once(',').ok_or_else(|| AppError::other("Invalid image data URL"))?;
+        let mime_type = metadata
+            .split(';')
+            .next()
+            .filter(|value| value.starts_with("image/"))
+            .ok_or_else(|| AppError::other("Attachment data is not an image"))?
+            .to_string();
+        let bytes =
+            BASE64.decode(encoded).map_err(|error| AppError::other(format!("Could not decode note image: {error}")))?;
+        if bytes.len() > MAX_NOTE_IMAGE_BYTES {
+            return Err(AppError::other("Note image is too large"));
+        }
+        return Ok(note_image_result(&attachment, mime_type, bytes, source));
+    }
+
+    media::validate_media_url(&url)?;
+    let fetched = media::fetch_media(&url, Some(&attachment.name)).await?;
+    if fetched.bytes.len() > MAX_NOTE_IMAGE_BYTES {
+        return Err(AppError::other("Note image is too large"));
+    }
+    let mime_type = image_mime_type(&attachment, &fetched.content_type)
+        .ok_or_else(|| AppError::other("Attachment is not a supported image"))?;
+    Ok(note_image_result(&attachment, mime_type, fetched.bytes, source))
+}
+
+fn note_image_url(attachment: &NoteAttachment, original: bool) -> Option<(String, &'static str)> {
+    let candidates = if original {
+        [
+            (attachment.fallback_url.as_deref(), "original"),
+            (attachment.download_url.as_deref(), "original"),
+            (attachment.preview_url.as_deref(), "preview"),
+            (attachment.dark_preview_url.as_deref(), "preview"),
+            (attachment.render_url.as_deref(), "rendered"),
+        ]
+    } else {
+        [
+            (attachment.render_url.as_deref(), "rendered"),
+            (attachment.preview_url.as_deref(), "preview"),
+            (attachment.dark_preview_url.as_deref(), "preview"),
+            (attachment.fallback_url.as_deref(), "preview"),
+            (attachment.download_url.as_deref(), "original"),
+        ]
+    };
+    candidates.into_iter().find_map(|(value, source)| {
+        value.filter(|value| !value.trim().is_empty()).map(|value| (value.to_string(), source))
+    })
+}
+
+fn image_mime_type(attachment: &NoteAttachment, content_type: &str) -> Option<String> {
+    let content_type = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    if content_type.starts_with("image/") {
+        return Some(content_type);
+    }
+    let uti = attachment.uti.as_deref().unwrap_or("").to_ascii_lowercase();
+    if uti.ends_with(".png") || uti == "public.png" {
+        return Some("image/png".to_string());
+    }
+    if uti.ends_with(".jpeg") || uti.ends_with(".jpg") || uti == "public.jpeg" {
+        return Some("image/jpeg".to_string());
+    }
+    if uti.ends_with(".gif") {
+        return Some("image/gif".to_string());
+    }
+    if uti.ends_with(".webp") {
+        return Some("image/webp".to_string());
+    }
+    if uti.ends_with(".heic") {
+        return Some("image/heic".to_string());
+    }
+    if uti == "com.apple.paper" {
+        return Some("image/svg+xml".to_string());
+    }
+    None
+}
+
+fn note_image_result(attachment: &NoteAttachment, mime_type: String, bytes: Vec<u8>, source: &str) -> NoteImage {
+    NoteImage {
+        attachment_id: attachment.id.clone(),
+        name: attachment.name.clone(),
+        mime_type: mime_type.clone(),
+        byte_length: bytes.len(),
+        data_url: format!("data:{mime_type};base64,{}", BASE64.encode(bytes)),
+        source: source.to_string(),
+    }
+}
 pub async fn create(
     manager: &SessionManager,
     session_id: &str,
@@ -1295,5 +1411,29 @@ mod tests {
     fn strips_the_first_title_line_from_detail_body() {
         assert_eq!(strip_note_title("\n标题\n正文\n第二行\n", "标题"), "正文\n第二行");
         assert_eq!(strip_note_title("正文", "标题"), "正文");
+    }
+    fn image_attachment() -> NoteAttachment {
+        NoteAttachment {
+            id: "attachment-1".to_string(),
+            name: "photo.png".to_string(),
+            uti: Some("public.png".to_string()),
+            preview_url: Some("https://cvws.icloud-content.com.cn/preview.png".to_string()),
+            dark_preview_url: None,
+            fallback_url: None,
+            download_url: Some("https://cvws.icloud-content.com.cn/original.png".to_string()),
+            render_url: None,
+            table: None,
+            file_size: Some(1024),
+            width: Some(100.0),
+            height: Some(200.0),
+        }
+    }
+
+    #[test]
+    fn note_image_prefers_preview_but_can_request_original() {
+        let attachment = image_attachment();
+        assert_eq!(note_image_url(&attachment, false).expect("preview").1, "preview");
+        assert_eq!(note_image_url(&attachment, true).expect("original").1, "original");
+        assert_eq!(image_mime_type(&attachment, "application/octet-stream").as_deref(), Some("image/png"));
     }
 }

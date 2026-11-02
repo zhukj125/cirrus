@@ -43,6 +43,7 @@ const toolRows = [
   { name: "cirrus_get_contact_photo", readOnly: true },
   { name: "cirrus_list_notes", readOnly: true },
   { name: "cirrus_get_note", readOnly: true },
+  { name: "cirrus_get_note_image", readOnly: true },
   { name: "cirrus_create_note", readOnly: false },
   { name: "cirrus_update_note", readOnly: false },
   { name: "cirrus_delete_note", readOnly: false },
