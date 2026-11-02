@@ -142,7 +142,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 - Cookie 和令牌先经过 AES-256-GCM 加密，再写入 SQLite
 - 加密密钥保存在 Windows 凭据管理器、macOS Keychain 或 Linux Secret Service
 - 密码不会持久化
-- MCP 端口和每次运行令牌属于运行时文件，不写入设置表
+- MCP 端口和每次运行令牌保存在运行时发现文件中，不写入设置表
 
 ## 技术栈
 
@@ -176,7 +176,7 @@ Cirrus 支持两种 MCP 传输：
 target/debug/cirrus-mcp-server.exe
 ```
 
-桌面端会把当前回环端口和令牌发布到数据目录下的 `mcp-bridge.json`，stdio 服务优先读取这一份统一的发现文件，再回退到旧版 `mcp-bridge-port` 和 `mcp-bridge-token`。便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录。
+桌面端会把当前回环端口和令牌发布到数据目录下的 `mcp-bridge.json`，stdio 服务优先读取这一份统一的发现文件，再回退到旧版 `mcp-bridge-port` 和 `mcp-bridge-token`。便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录，Cirrus 自动写入的客户端配置会通过服务环境变量传递解析后的目录。
 
 如果 **设置 → MCP** 提示未找到 MCP launcher，先构建开发用可执行文件：
 

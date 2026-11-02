@@ -498,7 +498,10 @@ impl McpService {
             listener.local_addr().map_err(|error| format!("Could not read the MCP bridge address: {error}"))?.port();
         let token = Uuid::new_v4().simple().to_string();
 
-        ensure_bridge_files(data_dir, port, &token)?;
+        if let Err(error) = ensure_bridge_files(data_dir, port, &token) {
+            remove_bridge_files_if_owned(data_dir, port, &token);
+            return Err(error);
+        }
 
         let service = Arc::downgrade(self);
         let weak_state = Arc::downgrade(&state);
@@ -586,9 +589,7 @@ impl McpService {
             let owns_runtime =
                 read_bridge_runtime_file(data_dir).map(|runtime| runtime.port == running_port).unwrap_or(false);
             if owns_runtime {
-                let _ = std::fs::remove_file(data_dir.join(RUNTIME_FILE));
-                let _ = std::fs::remove_file(data_dir.join(PORT_FILE));
-                let _ = std::fs::remove_file(data_dir.join(TOKEN_FILE));
+                remove_bridge_files(data_dir);
             }
         }
         save_enabled_setting(self.data_dir.as_deref(), false);
@@ -1200,16 +1201,17 @@ fn ensure_bridge_files(data_dir: &Path, port: u16, token: &str) -> Result<(), St
         return Ok(());
     }
 
-    let runtime = BridgeRuntimeFile { version: 1, port, token: token.to_string() };
-    let encoded =
-        serde_json::to_vec(&runtime).map_err(|error| format!("Could not encode the MCP runtime file: {error}"))?;
-    write_bridge_runtime_file(&runtime_path, &encoded)?;
-
     // Keep the pre-JSON files in sync so older clients can still discover the bridge.
     write_private_file(&token_path, token.as_bytes())
         .map_err(|error| format!("Could not write the MCP token file: {error}"))?;
     write_private_file(&port_path, port_value.as_bytes())
         .map_err(|error| format!("Could not write the MCP port file: {error}"))?;
+
+    // Publish the JSON document last: it is the commit marker for new clients.
+    let runtime = BridgeRuntimeFile { version: 1, port, token: token.to_string() };
+    let encoded =
+        serde_json::to_vec(&runtime).map_err(|error| format!("Could not encode the MCP runtime file: {error}"))?;
+    write_bridge_runtime_file(&runtime_path, &encoded)?;
     Ok(())
 }
 
@@ -1244,6 +1246,23 @@ fn write_bridge_runtime_file(path: &Path, contents: &[u8]) -> Result<(), String>
         let _ = std::fs::remove_file(&temporary);
         format!("Could not publish the MCP runtime file: {error}")
     })
+}
+
+fn remove_bridge_files(data_dir: &Path) {
+    let _ = std::fs::remove_file(data_dir.join(RUNTIME_FILE));
+    let _ = std::fs::remove_file(data_dir.join(PORT_FILE));
+    let _ = std::fs::remove_file(data_dir.join(TOKEN_FILE));
+}
+
+fn remove_bridge_files_if_owned(data_dir: &Path, port: u16, token: &str) {
+    let runtime_owned = read_bridge_runtime_file(data_dir)
+        .map(|runtime| runtime.port == port && runtime.token == token)
+        .unwrap_or(false);
+    let legacy_owned = runtime_file_matches(&data_dir.join(PORT_FILE), &port.to_string())
+        && runtime_file_matches(&data_dir.join(TOKEN_FILE), token);
+    if runtime_owned || legacy_owned {
+        remove_bridge_files(data_dir);
+    }
 }
 
 #[cfg(test)]
@@ -1307,6 +1326,24 @@ mod tests {
         assert_eq!(runtime.token, "c8ef2f10b25f483cae6ca03e855e2629");
         assert_eq!(std::fs::read_to_string(dir.join(PORT_FILE)).expect("port"), "60241");
         assert_eq!(std::fs::read_to_string(dir.join(TOKEN_FILE)).expect("token"), "c8ef2f10b25f483cae6ca03e855e2629");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_startup_only_removes_its_own_runtime_files() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-owner-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        ensure_bridge_files(&dir, 51997, "f2eefde5cd7b4f14933d261236dfd9c2").expect("seed owner");
+
+        remove_bridge_files_if_owned(&dir, 60241, "c8ef2f10b25f483cae6ca03e855e2629");
+        assert!(dir.join(RUNTIME_FILE).is_file());
+        assert!(dir.join(PORT_FILE).is_file());
+        assert!(dir.join(TOKEN_FILE).is_file());
+
+        remove_bridge_files_if_owned(&dir, 51997, "f2eefde5cd7b4f14933d261236dfd9c2");
+        assert!(!dir.join(RUNTIME_FILE).exists());
+        assert!(!dir.join(PORT_FILE).exists());
+        assert!(!dir.join(TOKEN_FILE).exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 

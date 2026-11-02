@@ -142,7 +142,7 @@ Linux:   ~/.local/share/com.cirrus/cirrus.db
 - Session cookies and tokens are encrypted with AES-256-GCM before being written to SQLite.
 - The encryption key is stored in Windows Credential Manager, macOS Keychain, or Linux Secret Service.
 - Your password is never persisted.
-- MCP ports and per-run tokens remain runtime files rather than settings rows.
+- MCP ports and per-run tokens remain in a runtime discovery file rather than settings rows.
 
 ## Tech stack
 
@@ -176,7 +176,7 @@ Cirrus supports two MCP transports:
 target/debug/cirrus-mcp-server.exe
 ```
 
-The desktop publishes its current loopback port and token in `mcp-bridge.json` under the Cirrus data directory; the stdio server reads that single discovery file before falling back to the legacy `mcp-bridge-port` and `mcp-bridge-token` files. `CIRRUS_DATA_DIR` can override the data directory for portable or development setups.
+The desktop publishes its current loopback port and token in `mcp-bridge.json` under the Cirrus data directory; the stdio server reads that single discovery file before falling back to the legacy `mcp-bridge-port` and `mcp-bridge-token` files. `CIRRUS_DATA_DIR` can override the data directory for portable or development setups, and client configurations written by Cirrus pass the resolved directory through the server environment.
 
 If **Settings → MCP** reports that the MCP launcher was not found, build the development executables first:
 

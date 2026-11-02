@@ -114,19 +114,19 @@ pub async fn mcp_uninstall_server() -> Result<McpServerStatus, String> {
 
 #[tauri::command]
 pub fn mcp_clients(state: SharedState<'_>) -> Vec<McpClientInfo> {
-    mcp_clients::list_clients(state.inner().mcp.binary_path().as_deref())
+    mcp_clients::list_clients(state.inner().mcp.binary_path().as_deref(), state.inner().data_dir())
 }
 
 #[tauri::command]
 pub fn mcp_install_client(state: SharedState<'_>, payload: McpClientRequest) -> Result<McpClientInfo, String> {
     let binary =
         state.inner().mcp.binary_path().ok_or_else(|| "The Cirrus MCP executable is not available".to_string())?;
-    mcp_clients::install_client(&payload.client_id, &binary)
+    mcp_clients::install_client(&payload.client_id, &binary, state.inner().data_dir())
 }
 
 #[tauri::command]
 pub fn mcp_remove_client(state: SharedState<'_>, payload: McpClientRequest) -> Result<McpClientInfo, String> {
-    mcp_clients::remove_client(&payload.client_id, state.inner().mcp.binary_path().as_deref())
+    mcp_clients::remove_client(&payload.client_id, state.inner().mcp.binary_path().as_deref(), state.inner().data_dir())
 }
 
 #[tauri::command]

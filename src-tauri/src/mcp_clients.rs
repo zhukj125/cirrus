@@ -69,16 +69,16 @@ const CLIENTS: [ClientDefinition; 13] = [
     ClientDefinition { kind: ClientKind::Qoder, id: "qoder", name: "Qoder" },
 ];
 
-pub fn list_clients(binary: Option<&Path>) -> Vec<McpClientInfo> {
-    CLIENTS.iter().map(|definition| client_info(definition, binary)).collect()
+pub fn list_clients(binary: Option<&Path>, data_dir: Option<&Path>) -> Vec<McpClientInfo> {
+    CLIENTS.iter().map(|definition| client_info(definition, binary, data_dir)).collect()
 }
 
-pub fn install_client(client_id: &str, binary: &Path) -> Result<McpClientInfo, String> {
+pub fn install_client(client_id: &str, binary: &Path, data_dir: Option<&Path>) -> Result<McpClientInfo, String> {
     if !binary.is_file() {
         return Err("The Cirrus MCP executable is not available. Build or reinstall Cirrus MCP first.".to_string());
     }
     let definition = definition(client_id).ok_or_else(|| format!("Unknown MCP client: {client_id}"))?;
-    let info = client_info(definition, Some(binary));
+    let info = client_info(definition, Some(binary), data_dir);
     if !info.installed {
         return Err(format!("{} was not detected on this computer", definition.name));
     }
@@ -88,14 +88,14 @@ pub fn install_client(client_id: &str, binary: &Path) -> Result<McpClientInfo, S
         return Err(format!("{} uses copy-and-paste configuration", definition.name));
     }
     match definition.kind {
-        ClientKind::Codex => write_codex_config(&path, binary, true)?,
-        _ => write_json_config(&path, definition.kind, binary, true)?,
+        ClientKind::Codex => write_codex_config(&path, binary, data_dir, true)?,
+        _ => write_json_config(&path, definition.kind, binary, data_dir, true)?,
     }
     log::info!("[MCP] configured {} at {}", definition.name, path.display());
-    Ok(client_info(definition, Some(binary)))
+    Ok(client_info(definition, Some(binary), data_dir))
 }
 
-pub fn remove_client(client_id: &str, binary: Option<&Path>) -> Result<McpClientInfo, String> {
+pub fn remove_client(client_id: &str, binary: Option<&Path>, data_dir: Option<&Path>) -> Result<McpClientInfo, String> {
     let definition = definition(client_id).ok_or_else(|| format!("Unknown MCP client: {client_id}"))?;
     let path = client_config_path(definition.kind)
         .ok_or_else(|| "Could not resolve the client configuration path".to_string())?;
@@ -103,18 +103,18 @@ pub fn remove_client(client_id: &str, binary: Option<&Path>) -> Result<McpClient
         return Err(format!("{} uses copy-and-paste configuration", definition.name));
     }
     match definition.kind {
-        ClientKind::Codex => write_codex_config(&path, binary.unwrap_or(Path::new("")), false)?,
-        _ => write_json_config(&path, definition.kind, binary.unwrap_or(Path::new("")), false)?,
+        ClientKind::Codex => write_codex_config(&path, binary.unwrap_or(Path::new("")), data_dir, false)?,
+        _ => write_json_config(&path, definition.kind, binary.unwrap_or(Path::new("")), data_dir, false)?,
     }
     log::info!("[MCP] removed {} configuration from {}", definition.name, path.display());
-    Ok(client_info(definition, binary))
+    Ok(client_info(definition, binary, data_dir))
 }
 
 fn definition(id: &str) -> Option<&'static ClientDefinition> {
     CLIENTS.iter().find(|definition| definition.id == id)
 }
 
-fn client_info(definition: &ClientDefinition, binary: Option<&Path>) -> McpClientInfo {
+fn client_info(definition: &ClientDefinition, binary: Option<&Path>, data_dir: Option<&Path>) -> McpClientInfo {
     let config_path = client_config_path(definition.kind);
     let installed = config_path.as_ref().map(|path| client_installed(definition.kind, path)).unwrap_or(false);
     let binary_ready = binary.map(Path::is_file).unwrap_or(false);
@@ -123,7 +123,7 @@ fn client_info(definition: &ClientDefinition, binary: Option<&Path>) -> McpClien
         .as_ref()
         .zip(binary)
         .filter(|_| supports_write)
-        .map(|(path, binary)| is_configured(definition.kind, path, binary))
+        .map(|(path, binary)| is_configured(definition.kind, path, binary, data_dir))
         .unwrap_or(false);
     let blocked_reason = if !binary_ready {
         Some("binary-missing".to_string())
@@ -140,7 +140,7 @@ fn client_info(definition: &ClientDefinition, binary: Option<&Path>) -> McpClien
         can_install: installed && binary_ready && supports_write,
         supports_write,
         config_path: config_path.map(|path| path.display().to_string()),
-        config_snippet: binary.map(|binary| config_snippet(definition.kind, binary)),
+        config_snippet: binary.map(|binary| config_snippet(definition.kind, binary, data_dir)),
         blocked_reason,
     }
 }
@@ -155,13 +155,13 @@ fn client_installed(kind: ClientKind, config_path: &Path) -> bool {
     }
 }
 
-fn is_configured(kind: ClientKind, path: &Path, binary: &Path) -> bool {
+fn is_configured(kind: ClientKind, path: &Path, binary: &Path, data_dir: Option<&Path>) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
     match kind {
-        ClientKind::Codex => codex_has_command(&content, binary),
-        _ => json_has_command(&content, kind, binary),
+        ClientKind::Codex => codex_has_command(&content, binary, data_dir),
+        _ => json_has_command(&content, kind, binary, data_dir),
     }
 }
 
@@ -229,26 +229,61 @@ fn supports_write(kind: ClientKind) -> bool {
     )
 }
 
-fn json_server_entry(kind: ClientKind, binary: &Path) -> Value {
-    match kind {
+fn json_server_entry(kind: ClientKind, binary: &Path, data_dir: Option<&Path>) -> Value {
+    let mut entry = match kind {
         ClientKind::VsCode => json!({ "type": "stdio", "command": binary, "args": [] }),
         _ => json!({ "command": binary, "args": [] }),
+    };
+    if let Some(data_dir) = data_dir {
+        if let Some(entry) = entry.as_object_mut() {
+            entry.insert("env".to_string(), json!({ "CIRRUS_DATA_DIR": data_dir.to_string_lossy() }));
+        }
     }
+    entry
 }
 
-fn json_has_command(content: &str, kind: ClientKind, binary: &Path) -> bool {
+fn json_has_command(content: &str, kind: ClientKind, binary: &Path, data_dir: Option<&Path>) -> bool {
     let Ok(root) = serde_json::from_str::<Value>(content) else {
         return false;
     };
-    root.get(json_root_key(kind))
-        .and_then(|servers| servers.get(SERVER_NAME))
-        .and_then(|server| server.get("command"))
+    let Some(server) = root.get(json_root_key(kind)).and_then(|servers| servers.get(SERVER_NAME)) else {
+        return false;
+    };
+    let command_matches =
+        server.get("command").and_then(Value::as_str).map(|value| value == binary.to_string_lossy()).unwrap_or(false);
+    command_matches && json_env_matches(server, data_dir)
+}
+
+fn json_env_matches(server: &Value, data_dir: Option<&Path>) -> bool {
+    let Some(data_dir) = data_dir else {
+        return true;
+    };
+    server
+        .get("env")
+        .and_then(|env| env.get("CIRRUS_DATA_DIR"))
         .and_then(Value::as_str)
-        .map(|value| value == binary.to_string_lossy())
+        .map(|value| paths_equal(Path::new(value), data_dir))
         .unwrap_or(false)
 }
 
-fn write_json_config(path: &Path, kind: ClientKind, binary: &Path, install: bool) -> Result<(), String> {
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn write_json_config(
+    path: &Path,
+    kind: ClientKind,
+    binary: &Path,
+    data_dir: Option<&Path>,
+    install: bool,
+) -> Result<(), String> {
     if !install && !path.exists() {
         return Ok(());
     }
@@ -267,7 +302,7 @@ fn write_json_config(path: &Path, kind: ClientKind, binary: &Path, install: bool
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .ok_or_else(|| format!("{} must be a JSON object", json_root_key(kind)))?;
-        servers.insert(SERVER_NAME.to_string(), json_server_entry(kind, binary));
+        servers.insert(SERVER_NAME.to_string(), json_server_entry(kind, binary, data_dir));
     } else if let Some(servers) = root.get_mut(json_root_key(kind)).and_then(Value::as_object_mut) {
         servers.remove(SERVER_NAME);
         if servers.is_empty() {
@@ -279,7 +314,7 @@ fn write_json_config(path: &Path, kind: ClientKind, binary: &Path, install: bool
     atomic_write(path, format!("{serialized}\n").as_bytes())
 }
 
-fn codex_has_command(content: &str, binary: &Path) -> bool {
+fn codex_has_command(content: &str, binary: &Path, data_dir: Option<&Path>) -> bool {
     let Ok(document) = content.parse::<DocumentMut>() else {
         return false;
     };
@@ -293,9 +328,57 @@ fn codex_has_command(content: &str, binary: &Path) -> bool {
     };
     server.get("command").and_then(Item::as_str).map(|value| value == binary.to_string_lossy()).unwrap_or(false)
         && CODEX_HTTP_ONLY_FIELDS.iter().all(|key| server.get(key).is_none())
+        && codex_env_matches(server, data_dir)
 }
 
-fn write_codex_config(path: &Path, binary: &Path, install: bool) -> Result<(), String> {
+fn codex_env_matches(server: &Table, data_dir: Option<&Path>) -> bool {
+    let Some(data_dir) = data_dir else {
+        return true;
+    };
+    codex_env_value(server, "CIRRUS_DATA_DIR").map(|value| paths_equal(Path::new(value), data_dir)).unwrap_or(false)
+}
+
+fn codex_env_value<'a>(server: &'a Table, key: &str) -> Option<&'a str> {
+    match server.get("env")? {
+        Item::Table(env) => env.get(key).and_then(Item::as_str),
+        Item::Value(toml_edit::Value::InlineTable(env)) => env.get(key).and_then(toml_edit::Value::as_str),
+        _ => None,
+    }
+}
+
+fn set_codex_data_dir(server: &mut Table, data_dir: Option<&Path>) -> Result<(), String> {
+    if let Some(data_dir) = data_dir {
+        match server.entry("env").or_insert(Item::Table(Table::new())) {
+            Item::Table(env) => env["CIRRUS_DATA_DIR"] = value(data_dir.to_string_lossy().to_string()),
+            Item::Value(toml_edit::Value::InlineTable(env)) => {
+                env.insert("CIRRUS_DATA_DIR", toml_edit::Value::from(data_dir.to_string_lossy().to_string()));
+            }
+            _ => return Err("mcp_servers.cirrus.env must be a TOML table".to_string()),
+        }
+        return Ok(());
+    }
+
+    let mut remove_env = false;
+    if let Some(env) = server.get_mut("env") {
+        match env {
+            Item::Table(env) => {
+                env.remove("CIRRUS_DATA_DIR");
+                remove_env = env.is_empty();
+            }
+            Item::Value(toml_edit::Value::InlineTable(env)) => {
+                env.remove("CIRRUS_DATA_DIR");
+                remove_env = env.is_empty();
+            }
+            _ => {}
+        }
+    }
+    if remove_env {
+        server.remove("env");
+    }
+    Ok(())
+}
+
+fn write_codex_config(path: &Path, binary: &Path, data_dir: Option<&Path>, install: bool) -> Result<(), String> {
     if !install && !path.exists() {
         return Ok(());
     }
@@ -323,6 +406,7 @@ fn write_codex_config(path: &Path, binary: &Path, install: bool) -> Result<(), S
             server.remove(key);
         }
         server["command"] = value(binary.to_string_lossy().to_string());
+        set_codex_data_dir(server, data_dir)?;
     } else if let Some(servers) = document.get_mut("mcp_servers").and_then(Item::as_table_mut) {
         servers.remove(SERVER_NAME);
         if servers.is_empty() {
@@ -360,40 +444,59 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, path).map_err(|error| format!("Could not save {}: {error}", path.display()))
 }
 
-fn config_snippet(kind: ClientKind, binary: &Path) -> String {
+fn config_snippet(kind: ClientKind, binary: &Path, data_dir: Option<&Path>) -> String {
     let command = binary.to_string_lossy().to_string();
+    let command_json = serde_json::to_string(&command).unwrap_or_else(|_| "\"cirrus-mcp\"".to_string());
+    let data_dir_json = data_dir.map(|path| serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
     match kind {
-        ClientKind::Codex => format!(
-            "[mcp_servers.cirrus]\ncommand = {}\n",
-            serde_json::to_string(&command).unwrap_or_else(|_| "\"cirrus-mcp\"".to_string())
-        ),
+        ClientKind::Codex => {
+            let env = data_dir_json
+                .as_ref()
+                .map(|data_dir| format!("\nenv = {{ CIRRUS_DATA_DIR = {data_dir} }}"))
+                .unwrap_or_default();
+            format!("[mcp_servers.cirrus]\ncommand = {command_json}{env}\n")
+        }
         ClientKind::VsCode => serde_json::to_string_pretty(&json!({
-            "servers": { SERVER_NAME: json_server_entry(kind, binary) }
+            "servers": { SERVER_NAME: json_server_entry(kind, binary, data_dir) }
         }))
         .unwrap_or_default(),
-        ClientKind::DeepSeekHarness => format!(
-            "- insert:\n    - id: mcp-cirrus\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: cirrus\n        transport: stdio\n        command: {}\n",
-            serde_json::to_string(&command).unwrap_or_else(|_| "\"cirrus-mcp\"".to_string())
-        ),
-        ClientKind::OpenCode => serde_json::to_string_pretty(&json!({
-            "mcp": { SERVER_NAME: { "type": "local", "command": [command] } }
-        }))
-        .unwrap_or_default(),
-        ClientKind::CherryStudio => serde_json::to_string_pretty(&json!({
-            "mcpServers": { SERVER_NAME: {
+        ClientKind::DeepSeekHarness => {
+            let env = data_dir_json
+                .as_ref()
+                .map(|data_dir| format!("        env:\n          CIRRUS_DATA_DIR: {data_dir}\n"))
+                .unwrap_or_default();
+            format!(
+                "- insert:\n    - id: mcp-cirrus\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: cirrus\n        transport: stdio\n        command: {command_json}\n{env}"
+            )
+        }
+        ClientKind::OpenCode => {
+            let mut entry = json!({ "type": "local", "command": [command] });
+            if let (Some(entry), Some(data_dir)) = (entry.as_object_mut(), data_dir) {
+                entry.insert("environment".to_string(), json!({ "CIRRUS_DATA_DIR": data_dir.to_string_lossy() }));
+            }
+            serde_json::to_string_pretty(&json!({ "mcp": { SERVER_NAME: entry } })).unwrap_or_default()
+        }
+        ClientKind::CherryStudio => {
+            let mut env = Map::new();
+            if let Some(data_dir) = data_dir {
+                env.insert("CIRRUS_DATA_DIR".to_string(), json!(data_dir.to_string_lossy()));
+            }
+            serde_json::to_string_pretty(&json!({
+                "mcpServers": { SERVER_NAME: {
                 "name": SERVER_NAME,
                 "description": "Cirrus iCloud",
                 "baseUrl": "",
                 "command": command,
                 "args": [],
-                "env": {},
+                "env": env,
                 "isActive": true,
                 "type": "stdio"
             } }
-        }))
-        .unwrap_or_default(),
+            }))
+            .unwrap_or_default()
+        }
         _ => serde_json::to_string_pretty(&json!({
-            "mcpServers": { SERVER_NAME: json_server_entry(kind, binary) }
+            "mcpServers": { SERVER_NAME: json_server_entry(kind, binary, data_dir) }
         }))
         .unwrap_or_default(),
     }
@@ -410,13 +513,15 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, r#"{"mcpServers":{"other":{"command":"other.exe"}}}"#).expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
-        write_json_config(&path, ClientKind::Claude, binary, true).expect("install");
+        write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), true).expect("install");
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
         assert!(value["mcpServers"]["other"].is_object());
         assert_eq!(value["mcpServers"]["cirrus"]["command"], binary.to_string_lossy().as_ref());
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["CIRRUS_DATA_DIR"], data_dir.to_string_lossy().as_ref());
 
-        write_json_config(&path, ClientKind::Claude, binary, false).expect("remove");
+        write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), false).expect("remove");
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
         assert!(value["mcpServers"]["other"].is_object());
         assert!(value["mcpServers"]["cirrus"].is_null());
@@ -430,14 +535,16 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, "model = \"test\"\n\n[mcp_servers.other]\ncommand = \"other\"\n").expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
-        write_codex_config(&path, binary, true).expect("install");
+        write_codex_config(&path, binary, Some(data_dir), true).expect("install");
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(content.contains("model = \"test\""));
         assert!(content.contains("[mcp_servers.other]"));
-        assert!(codex_has_command(&content, binary));
+        assert!(codex_has_command(&content, binary, Some(data_dir)));
+        assert!(!codex_has_command(&content, binary, Some(Path::new(r"C:\Other"))));
 
-        write_codex_config(&path, binary, false).expect("remove");
+        write_codex_config(&path, binary, Some(data_dir), false).expect("remove");
         let content = std::fs::read_to_string(&path).expect("read");
         assert!(content.contains("[mcp_servers.other]"));
         assert!(!content.contains("[mcp_servers.cirrus]"));
@@ -466,9 +573,10 @@ Authorization = "Bearer test"
         )
         .expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
-        assert!(!codex_has_command(&std::fs::read_to_string(&path).expect("read"), binary));
-        write_codex_config(&path, binary, true).expect("install");
+        assert!(!codex_has_command(&std::fs::read_to_string(&path).expect("read"), binary, Some(data_dir)));
+        write_codex_config(&path, binary, Some(data_dir), true).expect("install");
         let content = std::fs::read_to_string(&path).expect("read");
         let document = content.parse::<DocumentMut>().expect("toml");
         let server = document
@@ -483,7 +591,46 @@ Authorization = "Bearer test"
             assert!(server.get(key).is_none(), "{key} should be removed");
         }
         assert!(content.contains("[mcp_servers.other]"));
-        assert!(codex_has_command(&content, binary));
+        assert!(codex_has_command(&content, binary, Some(data_dir)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn codex_snippet_includes_the_shared_data_directory() {
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let snippet = config_snippet(ClientKind::Codex, binary, Some(data_dir));
+
+        assert!(snippet.parse::<DocumentMut>().is_ok(), "{snippet}");
+        assert!(codex_has_command(&snippet, binary, Some(data_dir)));
+    }
+
+    #[test]
+    fn codex_install_updates_inline_env_without_dropping_other_values() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-codex-env-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            &path,
+            "[mcp_servers.cirrus]\ncommand = \"old\"\nenv = { CIRRUS_DATA_DIR = \"old\", KEEP = \"1\" }\n",
+        )
+        .expect("seed");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+
+        write_codex_config(&path, binary, Some(data_dir), true).expect("install");
+        let content = std::fs::read_to_string(&path).expect("read");
+        let document = content.parse::<DocumentMut>().expect("toml");
+        let server = document
+            .get("mcp_servers")
+            .and_then(Item::as_table)
+            .and_then(|servers| servers.get(SERVER_NAME))
+            .and_then(Item::as_table)
+            .expect("cirrus server");
+
+        assert_eq!(codex_env_value(server, "CIRRUS_DATA_DIR"), Some(data_dir.to_string_lossy().as_ref()));
+        assert_eq!(codex_env_value(server, "KEEP"), Some("1"));
+        assert!(codex_has_command(&content, binary, Some(data_dir)));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -493,7 +640,7 @@ Authorization = "Bearer test"
         let path = dir.join("mcp.json");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, "not json").expect("seed");
-        let result = write_json_config(&path, ClientKind::Cursor, Path::new("cirrus-mcp"), true);
+        let result = write_json_config(&path, ClientKind::Cursor, Path::new("cirrus-mcp"), None, true);
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "not json");
         let _ = std::fs::remove_dir_all(dir);
