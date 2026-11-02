@@ -192,6 +192,8 @@ export class AmapMapAdapter implements MapAdapter {
       pitch: 0,
       maxZoom: options.maxZoom,
       rotateEnable: true,
+      dragEnable: false,
+      scrollWheel: false,
       mapStyle: options.dark ? "amap://styles/dark" : "amap://styles/normal",
     });
     this.activeMap = map;

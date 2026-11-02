@@ -244,4 +244,26 @@ describe("MapView location fallback", () => {
     expect(wrapper.text()).not.toContain("Map failed to initialize");
     wrapper.unmount();
   });
+
+  it("only pans the map while the primary pointer is held down", async () => {
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+    const container = mapMocks.createMap.mock.calls[0]?.[0] as HTMLDivElement;
+    const pointer = (type: string, clientX: number, clientY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY });
+      Object.defineProperty(event, "pointerId", { value: 7 });
+      return event;
+    };
+
+    container.dispatchEvent(pointer("pointermove", 130, 120));
+    expect(mapMocks.panBy).not.toHaveBeenCalled();
+
+    container.dispatchEvent(pointer("pointerdown", 100, 100));
+    container.dispatchEvent(pointer("pointermove", 120, 110));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(mapMocks.panBy).toHaveBeenCalledWith(-20, -10);
+    container.dispatchEvent(pointer("pointerup", 120, 110));
+    wrapper.unmount();
+  });
 });

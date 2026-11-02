@@ -215,6 +215,16 @@ const addressRetryAt = new Map<string, number>();
 const addressRetryTimers = new Map<string, number>();
 let markerClickAt = 0;
 let compassDrag: { startX: number; startY: number; startRot: number; moved: boolean } | null = null;
+let mapPointerId: number | null = null;
+let mapPointerLastX = 0;
+let mapPointerLastY = 0;
+let mapPointerStartX = 0;
+let mapPointerStartY = 0;
+let mapPointerMoved = false;
+let mapPointerRaf: number | null = null;
+let mapPointerPendingX = 0;
+let mapPointerPendingY = 0;
+let suppressMapClickUntil = 0;
 let pollTimer: number | null = null;
 let scrollRaf: number | null = null;
 let mapWheelTarget: HTMLDivElement | null = null;
@@ -302,6 +312,7 @@ function markerGlyph(device: Device, size: number): HTMLElement {
 
 function markerElement(device: Device, selected: boolean, size: number): HTMLDivElement {
   const wrap = document.createElement("div");
+  wrap.dataset.mapMarker = "true";
   wrap.style.cssText = `position:relative;width:${size}px;height:${size}px;cursor:pointer`;
 
   if (selected) {
@@ -346,6 +357,7 @@ function clusterMarkerElement(members: Device[], size: number): HTMLDivElement {
   const padding = 6;
   const top = Math.round((size - tile) / 2);
   const wrap = document.createElement("div");
+  wrap.dataset.mapMarker = "true";
   wrap.style.cssText = `position:relative;width:${width}px;height:${size}px;cursor:pointer`;
 
   const box = document.createElement("div");
@@ -663,9 +675,71 @@ function onRotate(): void {
 }
 
 function onMapClick(): void {
-  if (Date.now() - markerClickAt < MARKER_CLICK_GRACE_MS) return;
+  const now = Date.now();
+  if (now - markerClickAt < MARKER_CLICK_GRACE_MS || now < suppressMapClickUntil) return;
   clusterPopup.value = null;
   clearSelection();
+}
+
+function flushMapPointerPan(): void {
+  mapPointerRaf = null;
+  if (!mapPointerMoved) return;
+  const deltaX = mapPointerPendingX;
+  const deltaY = mapPointerPendingY;
+  mapPointerPendingX = 0;
+  mapPointerPendingY = 0;
+  if (deltaX === 0 && deltaY === 0) return;
+  map?.panBy(-deltaX, -deltaY);
+}
+
+function onMapPointerDown(event: PointerEvent): void {
+  if (!map || event.button !== 0) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest("[data-map-marker]")) return;
+  mapPointerId = event.pointerId;
+  mapPointerLastX = event.clientX;
+  mapPointerLastY = event.clientY;
+  mapPointerStartX = event.clientX;
+  mapPointerStartY = event.clientY;
+  mapPointerMoved = false;
+  try {
+    mapContainer.value?.setPointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture is optional; pointermove still works inside the map.
+  }
+}
+
+function onMapPointerMove(event: PointerEvent): void {
+  if (mapPointerId !== event.pointerId) return;
+  const deltaX = event.clientX - mapPointerLastX;
+  const deltaY = event.clientY - mapPointerLastY;
+  mapPointerLastX = event.clientX;
+  mapPointerLastY = event.clientY;
+  if (!mapPointerMoved && Math.abs(event.clientX - mapPointerStartX) + Math.abs(event.clientY - mapPointerStartY) < 4) return;
+  mapPointerMoved = true;
+  event.preventDefault();
+  mapPointerPendingX += deltaX;
+  mapPointerPendingY += deltaY;
+  if (mapPointerRaf == null) mapPointerRaf = requestAnimationFrame(flushMapPointerPan);
+}
+
+function endMapPointer(event: PointerEvent): void {
+  if (mapPointerId !== event.pointerId) return;
+  if (mapPointerRaf != null) {
+    cancelAnimationFrame(mapPointerRaf);
+    mapPointerRaf = null;
+  }
+  flushMapPointerPan();
+  if (mapPointerMoved) suppressMapClickUntil = Date.now() + MARKER_CLICK_GRACE_MS;
+  try {
+    mapContainer.value?.releasePointerCapture(event.pointerId);
+  } catch {
+    // Ignore browsers that drop pointer capture before pointerup.
+  }
+  mapPointerId = null;
+  mapPointerMoved = false;
+  mapPointerPendingX = 0;
+  mapPointerPendingY = 0;
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -966,7 +1040,7 @@ onUnmounted(() => {
 
     <section class="absolute inset-0 z-0 min-w-0 overflow-hidden">
       <div class="absolute inset-0 bg-muted" :class="blurMap ? 'opacity-60 blur-[3px]' : ''">
-        <div ref="mapContainer" class="h-full w-full" />
+        <div ref="mapContainer" class="h-full w-full cursor-grab active:cursor-grabbing" style="touch-action: none" @pointerdown="onMapPointerDown" @pointermove="onMapPointerMove" @pointerup="endMapPointer" @pointercancel="endMapPointer" @lostpointercapture="endMapPointer" />
       </div>
 
       <div v-if="clusterPopup" class="absolute top-3 right-3 z-30 w-64 overflow-hidden rounded-xl border border-border bg-card/95 text-card-foreground shadow-xl backdrop-blur">

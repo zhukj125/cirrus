@@ -244,6 +244,8 @@ export class GoogleMapsAdapter implements MapAdapter {
       maxZoom: options.maxZoom,
       disableDefaultUI: true,
       clickableIcons: false,
+      draggable: false,
+      scrollwheel: false,
       gestureHandling: "greedy",
       keyboardShortcuts: false,
       styles: options.dark ? GOOGLE_DARK_STYLES : [],
