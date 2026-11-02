@@ -19,5 +19,6 @@ describe("map adapter factory", () => {
     expect(projected).not.toEqual([121.4737, 31.2304]);
     expect(adapter.mapUrl([121.4737, 31.2304], "Photo")).toContain("uri.amap.com/marker?position=");
     expect(adapter.mapUrl([121.4737, 31.2304], "Photo")).not.toContain("position=121.4737,31.2304");
+    expect(() => adapter.project([Number.NaN, 31.2304])).toThrow(/coordinates are invalid/);
   });
 });

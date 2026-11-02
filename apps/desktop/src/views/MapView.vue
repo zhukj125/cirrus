@@ -42,6 +42,7 @@ const MARKER_CLICK_GRACE_MS = 300;
 const MAP_MAX_ZOOM = 20;
 
 const MAP_WHEEL_GESTURE_TIMEOUT_MS = 250;
+const MAP_CONTAINER_READY_TIMEOUT_MS = 2_000;
 
 const FIT_VIEW_MARGINS: MapPadding = [100, 80, 360, 80];
 const FIT_VIEW_MARGINS_COLLAPSED: MapPadding = [80, 80, 80, 80];
@@ -50,23 +51,30 @@ function deviceKey(device: Device): string {
   return device.udid ?? device.deviceDisplayName ?? device.name ?? "device";
 }
 
+function validLngLat([longitude, latitude]: [number, number]): boolean {
+  return Number.isFinite(longitude) && Number.isFinite(latitude) && longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90;
+}
+
+function deviceCoordinate(device: Device): [number, number] | null {
+  const location = device.location;
+  if (location?.longitude == null || location.latitude == null) return null;
+  const position: [number, number] = [location.longitude, location.latitude];
+  return validLngLat(position) ? position : null;
+}
+
 function isDeviceOnline(device: Device): boolean {
-  return device.location?.latitude != null && device.location.longitude != null;
+  return deviceCoordinate(device) !== null;
 }
 
 function hasNoLocation(device: Device): boolean {
   return !isDeviceOnline(device);
 }
 
-function deviceCoordinate(device: Device): [number, number] | null {
-  const location = device.location;
-  if (location?.longitude == null || location.latitude == null) return null;
-  return [location.longitude, location.latitude];
-}
-
 function devicePosition(device: Device): [number, number] | null {
   const position = deviceCoordinate(device);
-  return position && mapAdapter ? mapAdapter.project(position) : null;
+  if (!position || !mapAdapter) return null;
+  const projected = mapAdapter.project(position);
+  return validLngLat(projected) ? projected : null;
 }
 
 function locationTimeMs(timestamp: number | null | undefined): number | null {
@@ -173,6 +181,8 @@ const addresses = ref<Record<string, AddressInfo>>({});
 const failedImages = ref(new Set<string>());
 
 const mapError = ref<string | null>(null);
+const mapErrorNeedsSettings = ref(false);
+const mapInitializing = ref(false);
 
 let map: MapInstance | null = null;
 let mapAdapter: MapAdapter | null = null;
@@ -210,6 +220,7 @@ let scrollRaf: number | null = null;
 let mapWheelTarget: HTMLDivElement | null = null;
 let mapWheelGestureType: "pan" | "zoom" | null = null;
 let mapWheelGestureTimestamp = 0;
+let resizeListenerAttached = false;
 
 let disposed = false;
 
@@ -241,8 +252,8 @@ const detailAddress = computed(() => {
     const coordinateKey = addressCacheKey(device);
     const address = coordinateKey ? addresses.value[coordinateKey]?.full : undefined;
     if (address) return address;
-    const location = device.location;
-    return location?.latitude != null && location.longitude != null ? `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}` : t("map.locationFound");
+    const position = deviceCoordinate(device);
+    return position ? `${position[1].toFixed(6)}, ${position[0].toFixed(6)}` : t("map.locationFound");
   }
   return t(device.locationEnabled === false ? "map.locationServicesOff" : "map.locationUnavailable");
 });
@@ -455,9 +466,9 @@ function addressCacheKey(device: Device): string | null {
 }
 
 function coordinateFallback(device: Device): string | null {
-  const location = device.location;
-  if (location?.latitude == null || location.longitude == null) return null;
-  return t("map.locationCoordinates", { coordinates: `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` });
+  const position = deviceCoordinate(device);
+  if (!position) return null;
+  return t("map.locationCoordinates", { coordinates: `${position[1].toFixed(4)}, ${position[0].toFixed(4)}` });
 }
 
 // Addresses are keyed by coordinates so a moved device always resolves its new location.
@@ -694,10 +705,96 @@ function onCompassPointerUp(): void {
   if (drag && !drag.moved) map?.setRotation(0, true);
 }
 
-function describeError(error: unknown): string {
-  if (error instanceof Error && /api key is not configured/i.test(error.message)) return t("map.keyMissing");
-  if (error instanceof Error && /Could not load (AMap|Google Maps)/i.test(error.message)) return t("map.loadFailed");
-  return error instanceof Error ? error.message : t("map.initFailed");
+function describeError(error: unknown): { message: string; needsSettings: boolean } {
+  const detail = error instanceof Error ? error.message : "";
+  if (/api key is not configured|invalid_user_key|invalid_user_scode|userkey_plat_nomatch|invalid_user_domain/i.test(detail)) {
+    return { message: t("map.keyMissing"), needsSettings: true };
+  }
+  if (/Could not load (AMap|Google Maps)/i.test(detail)) {
+    return { message: t("map.loadFailed"), needsSettings: true };
+  }
+  console.error("[MAP] initialization failed", error);
+  return { message: t("map.initFailed"), needsSettings: false };
+}
+
+async function waitForMapContainerSize(container: HTMLElement): Promise<void> {
+  const deadline = performance.now() + MAP_CONTAINER_READY_TIMEOUT_MS;
+  while (container.clientWidth <= 0 || container.clientHeight <= 0) {
+    if (disposed) return;
+    if (performance.now() >= deadline) throw new Error("Map container did not become visible");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+function teardownMap(): void {
+  detachMapWheelZoom();
+  if (resizeListenerAttached) {
+    window.removeEventListener("resize", enforceMapMinZoom);
+    resizeListenerAttached = false;
+  }
+  for (const marker of markers.values()) marker.destroy();
+  markers.clear();
+  accuracyCircle?.destroy();
+  accuracyCircle = null;
+  map?.destroy();
+  map = null;
+  mapAdapter = null;
+}
+
+async function initializeMap(): Promise<void> {
+  if (disposed || mapInitializing.value) return;
+  mapInitializing.value = true;
+  mapError.value = null;
+  mapErrorNeedsSettings.value = false;
+  teardownMap();
+
+  try {
+    const adapter = createMapAdapter();
+    mapAdapter = adapter;
+    mapSupportsRotation.value = adapter.capabilities.rotation;
+    await adapter.load();
+
+    const container = mapContainer.value;
+    if (disposed || !container) return;
+    await waitForMapContainerSize(container);
+    if (disposed) return;
+
+    const instance = adapter.createMap(container, {
+      center: [120.1, 30.28],
+      zoom: 11,
+      minZoom: minimumWorldZoom(),
+      maxZoom: MAP_MAX_ZOOM,
+      dark: theme.isDark,
+      callbacks: {
+        onRotate,
+        onZoomChange: enforceMapMinZoom,
+        onZoomEnd: enforceMapMinZoom,
+        onClick: onMapClick,
+      },
+    });
+    map = instance;
+    applyMapStyle();
+    attachMapWheelZoom();
+
+    window.addEventListener("resize", enforceMapMinZoom);
+    resizeListenerAttached = true;
+    onRotate();
+
+    syncMarkers();
+    focusAll();
+  } catch (error) {
+    teardownMap();
+    const described = describeError(error);
+    mapError.value = described.message;
+    mapErrorNeedsSettings.value = described.needsSettings;
+    toast.error(described.message);
+  } finally {
+    mapInitializing.value = false;
+  }
+}
+
+async function retryMap(): Promise<void> {
+  await initializeMap();
 }
 
 watch(
@@ -723,41 +820,8 @@ watch(
 onMounted(async () => {
   window.addEventListener("keydown", onKeyDown);
   resolveAddresses();
-  const adapter = createMapAdapter();
-  mapAdapter = adapter;
-  mapSupportsRotation.value = adapter.capabilities.rotation;
-  try {
-    await adapter.load();
-
-    if (disposed || !mapContainer.value) return;
-    const instance = adapter.createMap(mapContainer.value, {
-      center: [120.1, 30.28],
-      zoom: 11,
-      minZoom: minimumWorldZoom(),
-      maxZoom: MAP_MAX_ZOOM,
-      dark: theme.isDark,
-      callbacks: {
-        onRotate,
-        onZoomChange: enforceMapMinZoom,
-        onZoomEnd: enforceMapMinZoom,
-        onClick: onMapClick,
-      },
-    });
-    map = instance;
-    applyMapStyle();
-    attachMapWheelZoom();
-
-    window.addEventListener("resize", enforceMapMinZoom);
-    onRotate();
-
-    syncMarkers();
-    focusAll();
-  } catch (error) {
-    mapError.value = describeError(error);
-    toast.error(mapError.value);
-  }
-
-  pollTimer = window.setInterval(requestRefresh, REFRESH_INTERVAL);
+  await initializeMap();
+  if (!disposed) pollTimer = window.setInterval(requestRefresh, REFRESH_INTERVAL);
 });
 
 onUnmounted(() => {
@@ -771,16 +835,9 @@ onUnmounted(() => {
     scrollRaf = null;
   }
   window.removeEventListener("keydown", onKeyDown);
-  window.removeEventListener("resize", enforceMapMinZoom);
-  detachMapWheelZoom();
+  teardownMap();
   for (const timer of addressRetryTimers.values()) clearTimeout(timer);
   addressRetryTimers.clear();
-  markers.clear();
-  accuracyCircle = null;
-
-  map?.destroy();
-  map = null;
-  mapAdapter = null;
 });
 </script>
 
@@ -945,8 +1002,11 @@ onUnmounted(() => {
       <div v-if="mapError" class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2.5 bg-background/85 px-6 text-center backdrop-blur-sm">
         <CircleAlert class="size-5 text-destructive" />
         <p class="max-w-[280px] text-base">{{ mapError }}</p>
-        <p class="max-w-[280px] text-xs text-muted-foreground">{{ t("map.keyHint") }}</p>
-        <Button variant="outline" size="sm" class="mt-1" @click="emit('open-settings')">{{ t("map.settings") }}</Button>
+        <p v-if="mapErrorNeedsSettings" class="max-w-[280px] text-xs text-muted-foreground">{{ t("map.keyHint") }}</p>
+        <div class="mt-1 flex items-center gap-2">
+          <Button v-if="mapErrorNeedsSettings" variant="outline" size="sm" @click="emit('open-settings')">{{ t("map.settings") }}</Button>
+          <Button variant="outline" size="sm" :disabled="mapInitializing" @click="retryMap">{{ t("common.retry") }}</Button>
+        </div>
       </div>
 
       <div class="absolute right-3 bottom-3 z-20 flex flex-col items-center gap-2">

@@ -81,6 +81,8 @@ function movedData(latitude: number, longitude: number): DevicesResponse {
 
 describe("MapView location fallback", () => {
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1024 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 768 });
     geocodeMock.mockReset();
     geocodeMock.mockResolvedValue(null);
     mapMocks.setTheme.mockReset();
@@ -200,6 +202,46 @@ describe("MapView location fallback", () => {
     expect(mapMocks.panBy).toHaveBeenCalledWith(-8, -20);
     expect(mapMocks.panBy).toHaveBeenCalledWith(-20, -140);
     expect(mapMocks.setZoom).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("skips devices whose coordinates are not finite", async () => {
+    const invalid = structuredClone(data);
+    invalid.result.devices[0]!.location = {
+      ...invalid.result.devices[0]!.location!,
+      latitude: Number.NaN,
+      longitude: Number.NaN,
+    };
+
+    const wrapper = mount(MapView, { props: { data: invalid }, global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(mapMocks.createMap).toHaveBeenCalledTimes(1);
+    expect(mapMocks.createMarker).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain("Map failed to initialize");
+    wrapper.unmount();
+  });
+
+  it("retries map initialization after an SDK projection error", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useLocaleStore().setLocale("en-US");
+    mapMocks.createMap.mockImplementationOnce(() => {
+      throw new Error("Invalid Object: Pixel(NaN, NaN)");
+    });
+
+    const wrapper = mount(MapView, { props: { data }, global: { plugins: [pinia] } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Map failed to initialize");
+    expect(wrapper.text()).not.toContain("Map Settings");
+    const retry = wrapper.findAll("button").find((button) => button.text() === "Retry");
+    expect(retry).toBeDefined();
+    await retry!.trigger("click");
+    await flushPromises();
+
+    expect(mapMocks.createMap).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).not.toContain("Map failed to initialize");
     wrapper.unmount();
   });
 });

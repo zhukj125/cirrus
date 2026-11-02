@@ -39,6 +39,14 @@ interface AmapNamespace {
   Circle: new (options: Record<string, unknown>) => unknown;
 }
 
+function validLngLat([longitude, latitude]: LngLat): boolean {
+  return Number.isFinite(longitude) && Number.isFinite(latitude) && longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90;
+}
+
+function assertLngLat(position: LngLat, label: string): void {
+  if (!validLngLat(position)) throw new Error(`${label} coordinates are invalid`);
+}
+
 class AmapMarkerHandle implements MapMarker {
   constructor(
     private readonly map: AmapNativeMap,
@@ -47,10 +55,12 @@ class AmapMarkerHandle implements MapMarker {
   ) {}
 
   setPosition(position: LngLat): void {
+    if (!validLngLat(position)) return;
     this.native.setPosition(position);
   }
 
   setOffset([x, y]: [number, number]): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     this.native.setOffset(new this.namespace.Pixel(x, y));
   }
 
@@ -98,6 +108,7 @@ class AmapMapInstance implements MapInstance {
   }
 
   setRotation(rotation: number, immediately = false): void {
+    if (!Number.isFinite(rotation)) return;
     this.map.setRotation(rotation, immediately);
   }
 
@@ -106,18 +117,23 @@ class AmapMapInstance implements MapInstance {
   }
 
   setZoom(zoom: number): void {
+    if (!Number.isFinite(zoom)) return;
     this.map.setZoom(zoom);
   }
 
   setZoomAndCenter(zoom: number, center: LngLat): void {
+    if (!Number.isFinite(zoom)) return;
+    assertLngLat(center, "AMap center");
     this.map.setZoomAndCenter(zoom, center);
   }
 
   panBy(x: number, y: number): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     this.map.panBy(x, y);
   }
 
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void {
+    if (markers.length === 0 || !options.padding.every(Number.isFinite) || !Number.isFinite(options.maxZoom ?? 18)) return;
     const nativeMarkers = markers.map((marker) => (marker as AmapMarkerHandle).native);
     this.map.setFitView(nativeMarkers, true, [...options.padding], options.maxZoom);
   }
@@ -151,12 +167,22 @@ export class AmapMapAdapter implements MapAdapter {
   }
 
   project([longitude, latitude]: LngLat): LngLat {
-    return wgs84ToGcj02(longitude, latitude);
+    assertLngLat([longitude, latitude], "AMap source");
+    const projected = wgs84ToGcj02(longitude, latitude);
+    assertLngLat(projected, "AMap projected");
+    return projected;
   }
 
   createMap(container: HTMLElement, options: MapCreateOptions): MapInstance {
     const namespace = this.namespace;
     if (!namespace) throw new Error("AMap is not loaded");
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+      throw new Error("AMap container has no visible size");
+    }
+    assertLngLat(options.center, "AMap center");
+    if (!Number.isFinite(options.zoom) || !Number.isFinite(options.minZoom) || !Number.isFinite(options.maxZoom)) {
+      throw new Error("AMap zoom is invalid");
+    }
 
     const map = new namespace.Map(container, {
       zoom: options.zoom,
@@ -181,6 +207,7 @@ export class AmapMapAdapter implements MapAdapter {
     const map = this.activeMap;
     const namespace = this.namespace;
     if (!map || !namespace) throw new Error("AMap map is not initialized");
+    assertLngLat(position, "AMap marker");
 
     const native = new namespace.Marker({
       position,
@@ -196,6 +223,8 @@ export class AmapMapAdapter implements MapAdapter {
     const map = this.activeMap;
     const namespace = this.namespace;
     if (!map || !namespace) throw new Error("AMap map is not initialized");
+    assertLngLat(options.center, "AMap accuracy circle");
+    if (!Number.isFinite(options.radius) || options.radius < 0) throw new Error("AMap accuracy radius is invalid");
 
     const native = new namespace.Circle({
       center: options.center,
