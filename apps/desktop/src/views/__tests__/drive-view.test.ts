@@ -75,6 +75,31 @@ describe("iCloud Drive page", () => {
       });
   });
 
+  it("virtualizes large folders instead of rendering every row", async () => {
+    api.driveList.mockReset();
+    const manyFiles = Array.from({ length: 500 }, (_, index) => ({
+      ...file,
+      id: `file-${index}`,
+      name: `file-${index}`,
+      drivewsid: `FILE::com.apple.CloudDocs::${index}`,
+    }));
+    api.driveList.mockResolvedValue({
+      status: "OK",
+      message: null,
+      folderId: "root",
+      items: manyFiles,
+      nextCursor: null,
+    });
+
+    const wrapper = mountDrive();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("500 items");
+    const renderedRows = wrapper.findAll('[data-testid="drive-item"]');
+    expect(renderedRows.length).toBeGreaterThan(0);
+    expect(renderedRows.length).toBeLessThan(50);
+  });
+
   it("navigates with the item id and downloads a file", async () => {
     const wrapper = mountDrive();
     await flushPromises();

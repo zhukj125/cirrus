@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ArrowLeft, ChevronRight, Download, File, Folder, HardDrive, RefreshCw } from "@lucide/vue";
 
@@ -12,15 +12,30 @@ import type { DriveItem } from "@/types";
 
 const props = defineProps<{ sessionId: string }>();
 
+const ITEM_ROW_HEIGHT = 56;
+const VIRTUAL_OVERSCAN = 6;
+
 const locale = useLocaleStore();
 const items = ref<DriveItem[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const downloadingId = ref<string | null>(null);
 const path = ref<Array<{ id: string; name: string }>>([{ id: "root", name: locale.t("drive.root") }]);
+const scrollContainer = ref<HTMLElement | null>(null);
+const scrollTop = ref(0);
+const viewportHeight = ref(0);
 
 const currentFolder = computed(() => path.value[path.value.length - 1]!);
 const canGoBack = computed(() => path.value.length > 1);
+const virtualWindow = computed(() => {
+  const total = items.value.length;
+  const viewport = viewportHeight.value || ITEM_ROW_HEIGHT * 10;
+  const firstVisible = Math.floor(scrollTop.value / ITEM_ROW_HEIGHT);
+  const start = Math.max(0, firstVisible - VIRTUAL_OVERSCAN);
+  const end = Math.min(total, firstVisible + Math.ceil(viewport / ITEM_ROW_HEIGHT) + VIRTUAL_OVERSCAN * 2);
+  return { start, end, totalHeight: total * ITEM_ROW_HEIGHT };
+});
+const visibleRows = computed(() => items.value.slice(virtualWindow.value.start, virtualWindow.value.end).map((item, offset) => ({ item, index: virtualWindow.value.start + offset })));
 
 function isFolder(item: DriveItem): boolean {
   return item.kind === "folder" || item.kind === "app-library";
@@ -49,6 +64,22 @@ function formatModified(value: string | null): string {
   return new Intl.DateTimeFormat(locale.formatLocale, { dateStyle: "medium" }).format(date);
 }
 
+function measureViewport(): void {
+  const container = scrollContainer.value;
+  if (!container) return;
+  viewportHeight.value = container.clientHeight;
+  scrollTop.value = container.scrollTop;
+}
+
+function handleScroll(event: Event): void {
+  scrollTop.value = (event.currentTarget as HTMLElement).scrollTop;
+}
+
+function resetScroll(): void {
+  scrollTop.value = 0;
+  if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
+}
+
 async function load(folderId = currentFolder.value.id): Promise<void> {
   if (loading.value) return;
   loading.value = true;
@@ -67,6 +98,7 @@ async function load(folderId = currentFolder.value.id): Promise<void> {
 
 async function openItem(item: DriveItem): Promise<void> {
   if (isFolder(item)) {
+    resetScroll();
     path.value.push({ id: item.id, name: item.name });
     await load(item.id);
     return;
@@ -96,17 +128,30 @@ async function downloadItem(item: DriveItem): Promise<void> {
 
 async function goBack(): Promise<void> {
   if (!canGoBack.value) return;
+  resetScroll();
   path.value.pop();
   await load();
 }
 
 async function goTo(index: number): Promise<void> {
   if (index < 0 || index >= path.value.length - 1) return;
+  resetScroll();
   path.value = path.value.slice(0, index + 1);
   await load();
 }
 
-onMounted(() => void load());
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  measureViewport();
+  if (typeof ResizeObserver !== "undefined" && scrollContainer.value) {
+    resizeObserver = new ResizeObserver(measureViewport);
+    resizeObserver.observe(scrollContainer.value);
+  }
+  void load();
+});
+
+onBeforeUnmount(() => resizeObserver?.disconnect());
 </script>
 
 <template>
@@ -130,7 +175,7 @@ onMounted(() => void load());
       </Button>
     </header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto p-3">
+    <div ref="scrollContainer" class="min-h-0 flex-1 overflow-y-auto p-3" @scroll.passive="handleScroll">
       <div v-if="loading && items.length === 0" class="grid h-full place-items-center">
         <Spinner :size="22" />
       </div>
@@ -146,12 +191,15 @@ onMounted(() => void load());
         <p class="text-sm">{{ locale.t("drive.empty") }}</p>
       </div>
 
-      <div v-else class="mx-auto max-w-5xl overflow-hidden rounded-lg border border-border bg-card">
+      <div v-else class="relative mx-auto max-w-5xl overflow-hidden rounded-lg border border-border bg-card" :style="{ height: `${virtualWindow.totalHeight}px` }">
         <button
-          v-for="item in items"
+          v-for="{ item, index } in visibleRows"
           :key="item.id"
           type="button"
-          class="flex min-h-14 w-full items-center gap-3 border-b border-border px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-accent/60 disabled:opacity-60"
+          data-testid="drive-item"
+          class="absolute inset-x-0 top-0 flex h-14 items-center gap-3 px-4 text-left transition-colors hover:bg-accent/60 disabled:opacity-60"
+          :class="index === items.length - 1 ? 'border-b-0' : 'border-b border-border'"
+          :style="{ transform: `translateY(${index * ITEM_ROW_HEIGHT}px)` }"
           :disabled="!isFolder(item) && (!item.downloadUrl || downloadingId !== null)"
           @click="openItem(item)"
         >

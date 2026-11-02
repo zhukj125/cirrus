@@ -10,7 +10,7 @@ use crate::session::SrpSession;
 use crate::SessionManager;
 
 const DRIVE_ROOT: &str = "root";
-const DRIVE_PAGE_LIMIT: &str = "100";
+const DRIVE_PAGE_LIMIT: &str = "1000";
 const DOCWS_CLIENT_BUILD: &str = "2640Build24";
 const DOCWS_CLIENT_MASTERING: &str = "2640Build24";
 
