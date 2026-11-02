@@ -1242,10 +1242,21 @@ fn write_bridge_runtime_file(path: &Path, contents: &[u8]) -> Result<(), String>
     let temporary = path.with_file_name(format!(".{}.{}.tmp", RUNTIME_FILE, std::process::id()));
     write_private_file(&temporary, contents)
         .map_err(|error| format!("Could not write the MCP runtime file: {error}"))?;
-    std::fs::rename(&temporary, path).map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("Could not publish the MCP runtime file: {error}")
-    })
+    match std::fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.raw_os_error() == Some(17) => {
+            // Some encrypted/profile directories reject rename with
+            // ERROR_NOT_SAME_DEVICE even when both paths share a directory.
+            let result = std::fs::write(path, contents);
+            let _ = std::fs::remove_file(&temporary);
+            result.map_err(|error| format!("Could not publish the MCP runtime file: {error}"))
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            Err(format!("Could not publish the MCP runtime file: {error}"))
+        }
+    }
 }
 
 fn remove_bridge_files(data_dir: &Path) {
