@@ -80,23 +80,23 @@ jobs:
 
             ### 更新内容
 
-            自 1.4.9 起的更新：
+            自 1.5.0 起的更新：
 
-            - 修复并优化触控板地图手势：标准双指缩放、平移和缩放识别更平滑
-            - MCP 设备列表新增激活锁状态、最后定位时间和数据获取时间
-            - 设备图片默认返回稳定 URL，并在首段文本摘要中提供 Markdown 图片兜底
-            - 可选用 `includeArtwork: dataUri` 返回原生内联图片，避免客户端折叠图片块后完全不可见
-            - 修复客户端继承本机代理或沙箱设置时 MCP 桥接连接失败的问题
+            - 修复 Codex stdio 配置残留 HTTP 字段导致 MCP 无法启动的问题
+            - MCP 桥接改用单一 `mcp-bridge.json` 发现文件，并兼容旧版端口/令牌文件
+            - 自动写入的客户端配置会传递 `CIRRUS_DATA_DIR`，支持便携和自定义数据目录
+            - 修复地图初始化时无效坐标导致 `Invalid Object: Pixel(NaN, NaN)` 的问题
+            - 地图初始化会等待容器尺寸就绪，并新增坐标校验、错误分类和重试按钮
 
             ### Highlights
 
-            Changes since 1.4.9:
+            Changes since 1.5.0:
 
-            - Restored standard trackpad pinch zoom and smoothed map pan and zoom gestures
-            - Added Activation Lock status, last location update, and fetch time to MCP device results
-            - Device artwork now defaults to stable URLs with a Markdown image fallback in the first text block
-            - Optional `includeArtwork: dataUri` returns native inline images for clients that collapse image content blocks
-            - Fixed MCP bridge connection failures when clients inherit local proxy or sandbox settings
+            - Fixed Codex stdio startup failures caused by stale HTTP fields in the MCP configuration
+            - Moved MCP bridge discovery to a single `mcp-bridge.json` while retaining legacy port/token compatibility
+            - Client configurations written by Cirrus now pass `CIRRUS_DATA_DIR` for portable and custom data directories
+            - Fixed map initialization failures reported as `Invalid Object: Pixel(NaN, NaN)`
+            - Map startup now waits for a visible container and adds coordinate validation, clearer errors, and retry controls
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.
