@@ -55,7 +55,7 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 ### Notes, contacts, and calendar
 
 - Browse and download files from iCloud Drive.
-- Create, edit, delete, browse, and retrieve image attachments from iCloud Notes with folders and search.
+- Create, edit, delete, browse, and retrieve image attachments from iCloud Notes with folders and search. MCP note reads can return text and images interleaved in document order.
 - View contacts, phone numbers, email addresses, and postal addresses.
 - Read calendar events in day, week, and month views.
 - Keep each view ready when switching between workspace tabs.

@@ -622,9 +622,11 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_get_note",
                 "title": "Read an iCloud Note",
-                "description": "Return the full title, body, HTML, and attachments for a note.",
+                "description": "Return a note with inline image attachments in document order as native MCP text and image content blocks. Set includeImages=false for text and attachment metadata only.",
                 "inputSchema": account_schema_required(json!({
-                    "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." }
+                    "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." },
+                    "includeImages": { "type": "boolean", "default": true, "description": "Return inline image content blocks in body order. Defaults to true." },
+                    "original": { "type": "boolean", "default": false, "description": "Use original images instead of previews when includeImages is true." }
                 }), &["noteId"]),
                 "outputSchema": tool_output_schema("cirrus_get_note"),
                 "annotations": { "title": "Read an iCloud Note", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
@@ -791,8 +793,14 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
             if name == "cirrus_list_devices" {
                 annotate_device_list_timestamps(&mut result, now_millis());
             }
+            let inline_note = name == "cirrus_get_note" && result.get("contentSegments").is_some();
             let mut content = result_image_content(name, &mut result, artwork_mode).await;
-            let text_result = result_without_inline_artwork(&result);
+            let mut text_result = result_without_inline_artwork(&result);
+            if inline_note {
+                if let Some(object) = text_result.as_object_mut() {
+                    object.remove("contentSegments");
+                }
+            }
             if name == "cirrus_list_devices" {
                 content.insert(
                     0,
@@ -803,10 +811,12 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
                 );
             }
             let structured_result = result_for_structured_content(name, &result, &text_result, artwork_mode);
-            content.push(json!({
-                "type": "text",
-                "text": tool_result_text(name, &text_result)
-            }));
+            if !inline_note {
+                content.push(json!({
+                    "type": "text",
+                    "text": tool_result_text(name, &text_result)
+                }));
+            }
             let result = json!({
                 "content": content,
                 "structuredContent": structured_result,
@@ -1074,6 +1084,7 @@ fn tool_output_schema(tool: &str) -> Value {
             json!({
                 "status": { "type": "string" },
                 "message": { "type": ["string", "null"] },
+                "inlineImageCount": { "type": "integer", "description": "Number of native image content blocks returned inline." },
                 "note": {
                     "type": ["object", "null"],
                     "properties": {
@@ -1459,6 +1470,19 @@ fn download_tasks_markdown(result: &Value) -> String {
     output
 }
 
+fn note_inline_header(note: &Value) -> String {
+    let title = string_field(note, "title");
+    let folder = string_field(note, "folderId");
+    let modified = number_field(note, "modifiedAt");
+    let mut header = format!("# {title}\n\n");
+    if !folder.is_empty() {
+        header.push_str(&format!("Folder: `{folder}`\n\n"));
+    }
+    if !modified.is_empty() {
+        header.push_str(&format!("Modified at: {modified}\n"));
+    }
+    header
+}
 fn image_markdown(result: &Value) -> String {
     if result.get("imageIncluded").and_then(Value::as_bool) == Some(true) {
         let mime = string_field(result, "mimeType");
@@ -2096,6 +2120,41 @@ async fn device_image_content(
 }
 
 async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode) -> Vec<Value> {
+    if tool == "cirrus_get_note" {
+        if let Some(segments) = result.get("contentSegments").and_then(Value::as_array) {
+            let note = result.get("note").unwrap_or(&Value::Null);
+            let mut content = vec![json!({ "type": "text", "text": note_inline_header(note) })];
+            let mut image_count = 0_u64;
+            for segment in segments {
+                match segment.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(text) =
+                            segment.get("text").and_then(Value::as_str).filter(|text| !text.trim().is_empty())
+                        {
+                            content.push(json!({ "type": "text", "text": text }));
+                        }
+                    }
+                    Some("image") => {
+                        let data_url = segment.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
+                        if let Some((mime_type, encoded, _)) = parse_image_data_url(data_url) {
+                            image_count += 1;
+                            content.push(json!({ "type": "image", "data": encoded, "mimeType": mime_type }));
+                        } else {
+                            let name = string_field(segment, "name");
+                            content.push(
+                                json!({ "type": "text", "text": format!("[Image could not be decoded: {name}]") }),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(object) = result.as_object_mut() {
+                object.insert("inlineImageCount".to_string(), json!(image_count));
+            }
+            return content;
+        }
+    }
     if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" || tool == "cirrus_get_note_image" {
         let data_url = result.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
         let image = parse_image_data_url(data_url);
@@ -2676,6 +2735,36 @@ mod tests {
         assert_eq!(note_content[0]["mimeType"], "image/png");
         assert_eq!(note_image["imageIncluded"], true);
         assert_eq!(note_image["attachmentId"], "attachment-1");
+    }
+
+    #[tokio::test]
+    async fn note_content_interleaves_text_and_images_in_document_order() {
+        let mut result = json!({
+            "note": {
+                "title": "Photo note",
+                "folderId": "DefaultFolder-CloudKit",
+                "modifiedAt": 1700000000000_i64
+            },
+            "contentSegments": [
+                { "type": "text", "text": "before" },
+                {
+                    "type": "image",
+                    "attachmentId": "image-1",
+                    "name": "photo.png",
+                    "dataUrl": "data:image/png;base64,YWJj"
+                },
+                { "type": "text", "text": "after" }
+            ]
+        });
+        let content = result_image_content("cirrus_get_note", &mut result, ArtworkMode::Url).await;
+        assert_eq!(content.len(), 4);
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[0]["text"].as_str().expect("header").contains("Photo note"));
+        assert_eq!(content[1]["text"], "before");
+        assert_eq!(content[2]["type"], "image");
+        assert_eq!(content[2]["data"], "YWJj");
+        assert_eq!(content[3]["text"], "after");
+        assert_eq!(result["inlineImageCount"], 1);
     }
 
     #[test]

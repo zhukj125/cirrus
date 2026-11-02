@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
-use cirrus_core::models::{MonthExactDto, PhotosListRequest};
+use cirrus_core::models::{MonthExactDto, NoteImage, PhotosListRequest};
 use cirrus_core::services::{avatar, calendar, contacts, devices, drive, media, notes, photos};
 use cirrus_core::SessionHandle;
 
@@ -102,7 +104,41 @@ pub async fn call_tool(
         }
         "cirrus_get_note" => {
             let note_id = required_str(arguments, "noteId")?;
-            Ok(to_value(notes::detail(&state.sessions, &resolved.session_id, note_id).await)?)
+            let include_images = arguments.get("includeImages").and_then(Value::as_bool).unwrap_or(true);
+            let original = arguments.get("original").and_then(Value::as_bool).unwrap_or(false);
+            let detail = notes::detail(&state.sessions, &resolved.session_id, note_id).await;
+            let mut result = to_value(detail)?;
+            if include_images && result.get("status").and_then(Value::as_str) == Some("OK") {
+                if let Some(note) = result.get("note").cloned() {
+                    let attachments = note.get("attachments").and_then(Value::as_array).cloned().unwrap_or_default();
+                    let mut images = HashMap::new();
+                    for attachment in &attachments {
+                        let uti = attachment.get("uti").and_then(Value::as_str).unwrap_or_default();
+                        if !note_attachment_is_image(uti) {
+                            continue;
+                        }
+                        let Some(attachment_id) = attachment.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        if let Ok(image) = notes::attachment_image(
+                            &state.sessions,
+                            &resolved.session_id,
+                            note_id,
+                            attachment_id,
+                            original,
+                        )
+                        .await
+                        {
+                            images.insert(attachment_id.to_string(), image);
+                        }
+                    }
+                    let segments = note_content_segments(&note, &images);
+                    if let Some(object) = result.as_object_mut() {
+                        object.insert("contentSegments".to_string(), Value::Array(segments));
+                    }
+                }
+            }
+            Ok(result)
         }
         "cirrus_get_note_image" => {
             let note_id = required_str(arguments, "noteId")?;
@@ -168,6 +204,97 @@ pub async fn call_tool(
     }
 }
 
+fn note_attachment_is_image(uti: &str) -> bool {
+    let uti = uti.to_ascii_lowercase();
+    uti == "com.apple.paper"
+        || uti.starts_with("public.image")
+        || uti.ends_with(".png")
+        || uti.ends_with(".jpeg")
+        || uti.ends_with(".jpg")
+        || uti.ends_with(".heic")
+        || uti.ends_with(".gif")
+        || uti.ends_with(".webp")
+        || uti.ends_with(".tiff")
+}
+
+fn attachment_ids_in_html(body_html: &str) -> Vec<String> {
+    const NEEDLE: &str = "data-note-attachment-id=\"";
+    let mut ids = Vec::new();
+    let mut rest = body_html;
+    while let Some(start) = rest.find(NEEDLE) {
+        rest = &rest[start + NEEDLE.len()..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let id = rest[..end].trim();
+        if !id.is_empty() {
+            ids.push(id.to_string());
+        }
+        rest = &rest[end + 1..];
+    }
+    ids
+}
+
+fn note_content_segments(note: &Value, images: &HashMap<String, NoteImage>) -> Vec<Value> {
+    let body = note.get("body").and_then(Value::as_str).unwrap_or_default();
+    let body_html = note.get("bodyHtml").and_then(Value::as_str).unwrap_or_default();
+    let attachments = note.get("attachments").and_then(Value::as_array).cloned().unwrap_or_default();
+    let ordered_ids = attachment_ids_in_html(body_html);
+    let fallback_ids = attachments
+        .iter()
+        .filter(|attachment| {
+            note_attachment_is_image(attachment.get("uti").and_then(Value::as_str).unwrap_or_default())
+        })
+        .filter_map(|attachment| attachment.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect::<Vec<_>>();
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    let mut marker_index = 0;
+    for (offset, character) in body.char_indices() {
+        if character != '\u{fffc}' {
+            continue;
+        }
+        push_note_text_segment(&mut segments, &body[cursor..offset]);
+        let attachment_id =
+            ordered_ids.get(marker_index).or_else(|| fallback_ids.get(marker_index)).map(String::as_str);
+        if let Some(attachment_id) = attachment_id {
+            let attachment = attachments
+                .iter()
+                .find(|attachment| attachment.get("id").and_then(Value::as_str) == Some(attachment_id));
+            if let Some(attachment) = attachment {
+                let name = attachment.get("name").and_then(Value::as_str).unwrap_or("Attachment");
+                if note_attachment_is_image(attachment.get("uti").and_then(Value::as_str).unwrap_or_default()) {
+                    if let Some(image) = images.get(attachment_id) {
+                        segments.push(json!({
+                            "type": "image",
+                            "attachmentId": image.attachment_id,
+                            "name": image.name,
+                            "mimeType": image.mime_type,
+                            "byteLength": image.byte_length,
+                            "source": image.source,
+                            "dataUrl": image.data_url
+                        }));
+                    } else {
+                        push_note_text_segment(&mut segments, &format!("[Image unavailable: {name}]"));
+                    }
+                } else {
+                    push_note_text_segment(&mut segments, &format!("[Attachment: {name}]"));
+                }
+            }
+        }
+        cursor = offset + character.len_utf8();
+        marker_index += 1;
+    }
+    push_note_text_segment(&mut segments, &body[cursor..]);
+    segments
+}
+
+fn push_note_text_segment(segments: &mut Vec<Value>, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    segments.push(json!({ "type": "text", "text": text.trim_end() }));
+}
 async fn resolve_account(account_key: &str, state: &AppState, mcp: &McpService) -> Result<ResolvedAccount, String> {
     mcp.ensure_account_enabled(account_key)?;
     let snapshot = AccountStoreRepository::new(state.data_dir()).load().map_err(|error| error.to_string())?;
@@ -343,4 +470,41 @@ fn required_i64(arguments: &Value, key: &str) -> Result<i64, String> {
 
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn note_content_segments_preserve_image_positions() {
+        let note = json!({
+            "body": "before\u{fffc}middle\u{fffc}after",
+            "bodyHtml": "<figure data-note-attachment-id=\"image-1\"></figure><figure data-note-attachment-id=\"image-2\"></figure>",
+            "attachments": [
+                { "id": "image-1", "name": "one.png", "uti": "public.png" },
+                { "id": "image-2", "name": "two.png", "uti": "public.png" }
+            ]
+        });
+        let mut images = HashMap::new();
+        for id in ["image-1", "image-2"] {
+            images.insert(
+                id.to_string(),
+                NoteImage {
+                    attachment_id: id.to_string(),
+                    name: format!("{id}.png"),
+                    mime_type: "image/png".to_string(),
+                    byte_length: 3,
+                    data_url: "data:image/png;base64,YWJj".to_string(),
+                    source: "preview".to_string(),
+                },
+            );
+        }
+        let segments = note_content_segments(&note, &images);
+        let kinds =
+            segments.iter().filter_map(|segment| segment.get("type").and_then(Value::as_str)).collect::<Vec<_>>();
+        assert_eq!(kinds, vec!["text", "image", "text", "image", "text"]);
+        assert_eq!(segments[1]["attachmentId"], "image-1");
+        assert_eq!(segments[3]["attachmentId"], "image-2");
+    }
 }
