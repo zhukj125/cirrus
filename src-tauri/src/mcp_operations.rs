@@ -104,6 +104,22 @@ pub async fn call_tool(
             let note_id = required_str(arguments, "noteId")?;
             Ok(to_value(notes::detail(&state.sessions, &resolved.session_id, note_id).await)?)
         }
+        "cirrus_create_note" => {
+            let title = required_str(arguments, "title")?;
+            let body = optional_str(arguments, "body").unwrap_or("");
+            let folder_id = optional_str(arguments, "folderId").map(ToOwned::to_owned);
+            Ok(to_value(notes::create(&state.sessions, &resolved.session_id, folder_id, title, body).await)?)
+        }
+        "cirrus_update_note" => {
+            let note_id = required_str(arguments, "noteId")?;
+            let title = required_str(arguments, "title")?;
+            let body = required_str(arguments, "body")?;
+            Ok(to_value(notes::update(&state.sessions, &resolved.session_id, note_id, title, body).await)?)
+        }
+        "cirrus_delete_note" => {
+            let note_id = required_str(arguments, "noteId")?;
+            Ok(to_value(notes::delete(&state.sessions, &resolved.session_id, note_id).await)?)
+        }
         "cirrus_list_drive_items" => {
             let folder_id = optional_str(arguments, "folderId").map(ToOwned::to_owned);
             Ok(to_value(drive::list(&state.sessions, &resolved.session_id, folder_id).await)?)

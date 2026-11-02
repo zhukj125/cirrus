@@ -1,15 +1,20 @@
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use reqwest::Method;
 use serde_json::{json, Value};
 
 use crate::apple::http::headers as hh;
 use crate::error::{AppError, AppResult};
-use crate::models::{NoteAttachment, NoteDetail, NoteDetailResult, NoteFolder, NoteSummary, NotesListResult};
+use crate::models::{
+    NoteAttachment, NoteDetail, NoteDetailResult, NoteFolder, NoteMutationResult, NoteSummary, NotesListResult,
+};
 use crate::services::{auth as auth_service, devices, note_content, note_paper};
 use crate::session::SrpSession;
 use crate::SessionManager;
@@ -20,6 +25,8 @@ const NOTES_CLIENT_BUILD: &str = "2640Build18";
 const NOTES_CLIENT_MASTERING: &str = "M2640Build18";
 const NOTES_CKJS_BUILD: &str = "2310ProjectDev27";
 const NOTES_CKJS_VERSION: &str = "2.6.4";
+const DEFAULT_FOLDER: &str = "DefaultFolder-CloudKit";
+const TRASH_FOLDER: &str = "TrashFolder-CloudKit";
 
 const DESIRED_KEYS: &[&str] = &[
     "TitleEncrypted",
@@ -127,7 +134,7 @@ pub async fn detail(manager: &SessionManager, session_id: &str, note_id: &str) -
         }
     }
     if let Some(encoded) = record.pointer("/fields/TextDataEncrypted/value").and_then(Value::as_str) {
-        match note_content::render_body_html(encoded, &note.attachments) {
+        match note_content::render_body_html(encoded, &note.title, &note.attachments) {
             Ok(html) => note.body_html = html,
             Err(error) => log::warn!("[NOTES] rich body render failed: {error}"),
         }
@@ -135,6 +142,413 @@ pub async fn detail(manager: &SessionManager, session_id: &str, note_id: &str) -
     NoteDetailResult::ok(note)
 }
 
+pub async fn create(
+    manager: &SessionManager,
+    session_id: &str,
+    folder_id: Option<String>,
+    title: &str,
+    body: &str,
+) -> NoteMutationResult {
+    if session_id.trim().is_empty() {
+        return NoteMutationResult::error("Missing session ID. Please sign in again.");
+    }
+    let handle = match manager.get(session_id).await {
+        Ok(handle) => handle,
+        Err(error) => return NoteMutationResult::error(error.to_string()),
+    };
+    let mut session = handle.lock().await;
+    if let Err(error) = devices::account_login(&mut session, false).await {
+        return NoteMutationResult::error(error.to_string());
+    }
+    let Some(base) = notes_base(&session) else {
+        return NoteMutationResult::error("Notes is not available for this account");
+    };
+    let folder_id = folder_id.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| DEFAULT_FOLDER.to_string());
+    match create_with_session(&mut session, &base, &folder_id, title, body).await {
+        Ok(note_id) => NoteMutationResult::ok(note_id),
+        Err(error) => NoteMutationResult::error(error.to_string()),
+    }
+}
+
+pub async fn update(
+    manager: &SessionManager,
+    session_id: &str,
+    note_id: &str,
+    title: &str,
+    body: &str,
+) -> NoteMutationResult {
+    if session_id.trim().is_empty() {
+        return NoteMutationResult::error("Missing session ID. Please sign in again.");
+    }
+    if note_id.trim().is_empty() {
+        return NoteMutationResult::error("Missing note ID");
+    }
+    let handle = match manager.get(session_id).await {
+        Ok(handle) => handle,
+        Err(error) => return NoteMutationResult::error(error.to_string()),
+    };
+    let mut session = handle.lock().await;
+    if let Err(error) = devices::account_login(&mut session, false).await {
+        return NoteMutationResult::error(error.to_string());
+    }
+    let Some(base) = notes_base(&session) else {
+        return NoteMutationResult::error("Notes is not available for this account");
+    };
+    match update_with_session(&mut session, &base, note_id, title, body).await {
+        Ok(note_id) => NoteMutationResult::ok(note_id),
+        Err(error) => NoteMutationResult::error(error.to_string()),
+    }
+}
+
+pub async fn delete(manager: &SessionManager, session_id: &str, note_id: &str) -> NoteMutationResult {
+    if session_id.trim().is_empty() {
+        return NoteMutationResult::error("Missing session ID. Please sign in again.");
+    }
+    if note_id.trim().is_empty() {
+        return NoteMutationResult::error("Missing note ID");
+    }
+    let handle = match manager.get(session_id).await {
+        Ok(handle) => handle,
+        Err(error) => return NoteMutationResult::error(error.to_string()),
+    };
+    let mut session = handle.lock().await;
+    if let Err(error) = devices::account_login(&mut session, false).await {
+        return NoteMutationResult::error(error.to_string());
+    }
+    let Some(base) = notes_base(&session) else {
+        return NoteMutationResult::error("Notes is not available for this account");
+    };
+    match delete_with_session(&mut session, &base, note_id).await {
+        Ok(note_id) => NoteMutationResult::ok(note_id),
+        Err(error) => NoteMutationResult::error(error.to_string()),
+    }
+}
+
+async fn create_with_session(
+    session: &mut SrpSession,
+    base: &str,
+    folder_id: &str,
+    title: &str,
+    body: &str,
+) -> AppResult<String> {
+    let note_id = uuid::Uuid::new_v4().to_string();
+    let operation = create_operation(&note_id, folder_id, title, body, now_millis())?;
+    let response = post_json(session, &notes_url(session, base, "records/modify"), &modify_body(operation)).await?;
+    let record = response_record(&response)?;
+    Ok(record.get("recordName").and_then(Value::as_str).unwrap_or(&note_id).to_string())
+}
+
+async fn update_with_session(
+    session: &mut SrpSession,
+    base: &str,
+    note_id: &str,
+    title: &str,
+    body: &str,
+) -> AppResult<String> {
+    let record = lookup_note_record(session, base, note_id).await?;
+    let operation = update_operation(&record, title, body, now_millis())?;
+    let response = post_json(session, &notes_url(session, base, "records/modify"), &modify_body(operation)).await?;
+    let record = response_record(&response)?;
+    Ok(record.get("recordName").and_then(Value::as_str).unwrap_or(note_id).to_string())
+}
+
+async fn delete_with_session(session: &mut SrpSession, base: &str, note_id: &str) -> AppResult<String> {
+    let record = lookup_note_record(session, base, note_id).await?;
+    if folder_id(&record).as_deref() == Some(TRASH_FOLDER) {
+        return Ok(note_id.to_string());
+    }
+    let owner = zone_owner(&record).ok_or_else(|| AppError::other("Note owner is missing"))?.to_string();
+    let operation = trash_operation(&record, now_millis())?;
+    let response = post_json(session, &notes_url(session, base, "records/modify"), &modify_body(operation)).await?;
+    let updated = response_record(&response)?;
+    let owner = zone_owner(updated).unwrap_or(&owner).to_string();
+    ensure_note_user_specific(session, base, &owner, note_id).await?;
+    Ok(note_id.to_string())
+}
+
+fn create_operation(note_id: &str, folder_id: &str, title: &str, body: &str, now: i64) -> AppResult<Value> {
+    let title = normalized_title(title);
+    let text = note_text(&title, body);
+    let snippet = note_snippet(body);
+    let folder = folder_reference(folder_id, "VALIDATE");
+    Ok(json!({
+        "operationType": "create",
+        "record": {
+            "recordName": note_id,
+            "fields": {
+                "CreationDate": { "value": now },
+                "Folders": { "value": [folder.clone()] },
+                "Folder": { "value": folder },
+                "ModificationDate": { "value": now },
+                "TitleEncrypted": { "value": BASE64.encode(title.as_bytes()) },
+                "SnippetEncrypted": { "value": BASE64.encode(snippet.as_bytes()) },
+                "FirstAttachmentThumbnail": {},
+                "FirstAttachmentUTIEncrypted": {},
+                "TextDataAsset": {},
+                "TextDataEncrypted": { "value": encode_note_document(&text)? }
+            },
+            "parent": { "recordName": folder_id },
+            "createShortGUID": true,
+            "recordType": "Note"
+        }
+    }))
+}
+
+fn update_operation(record: &Value, title: &str, body: &str, now: i64) -> AppResult<Value> {
+    if !note_attachment_ids(record)?.is_empty() {
+        return Err(AppError::other("Editing notes with attachments is not supported yet"));
+    }
+    let note_id = record
+        .get("recordName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::other("Note record is missing recordName"))?;
+    let change_tag = record
+        .get("recordChangeTag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::other("Note record is missing recordChangeTag"))?;
+    let folder_id = folder_id(record).unwrap_or_else(|| DEFAULT_FOLDER.to_string());
+    let title = normalized_title(title);
+    let text = note_text(&title, body);
+    let snippet = note_snippet(body);
+    let mut updated = json!({
+        "recordName": note_id,
+        "recordChangeTag": change_tag,
+        "fields": {
+            "ModificationDate": { "value": now },
+            "TitleEncrypted": { "value": BASE64.encode(title.as_bytes()) },
+            "SnippetEncrypted": { "value": BASE64.encode(snippet.as_bytes()) },
+            "TextDataEncrypted": { "value": encode_note_document(&text)? }
+        },
+        "parent": { "recordName": folder_id },
+        "recordType": "Note"
+    });
+    if let Some(short_guid) = record.get("shortGUID").and_then(Value::as_str) {
+        updated["shortGUID"] = Value::String(short_guid.to_string());
+    }
+    Ok(json!({ "operationType": "update", "record": updated }))
+}
+
+fn trash_operation(record: &Value, now: i64) -> AppResult<Value> {
+    let note_id = record
+        .get("recordName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::other("Note record is missing recordName"))?;
+    let change_tag = record
+        .get("recordChangeTag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::other("Note record is missing recordChangeTag"))?;
+    let mut fields = record.get("fields").and_then(Value::as_object).cloned().unwrap_or_default();
+    for field in fields.values_mut() {
+        if let Some(field) = field.as_object_mut() {
+            field.remove("type");
+        }
+    }
+    let trash = folder_reference(TRASH_FOLDER, "VALIDATE");
+    fields.insert("Folder".to_string(), json!({ "value": trash.clone() }));
+    fields.insert("Folders".to_string(), json!({ "value": [trash] }));
+    fields.insert("FoldersModificationDate".to_string(), json!({ "value": now }));
+    let mut updated = json!({
+        "recordName": note_id,
+        "recordChangeTag": change_tag,
+        "fields": fields,
+        "parent": { "recordName": TRASH_FOLDER },
+        "recordType": "Note"
+    });
+    if let Some(short_guid) = record.get("shortGUID").and_then(Value::as_str) {
+        updated["shortGUID"] = Value::String(short_guid.to_string());
+    }
+    Ok(json!({ "operationType": "update", "record": updated }))
+}
+
+async fn ensure_note_user_specific(session: &mut SrpSession, base: &str, owner: &str, note_id: &str) -> AppResult<()> {
+    let record_name = format!("Note_UserSpecific::{owner}/Private::{NOTES_ZONE}::{owner}::{note_id}");
+    let lookup = json!({
+        "records": [{ "recordName": record_name }],
+        "zoneID": { "zoneName": NOTES_ZONE }
+    });
+    let response = post_json(session, &notes_url(session, base, "records/lookup"), &lookup).await?;
+    let existing = response
+        .get("records")
+        .and_then(Value::as_array)
+        .and_then(|records| records.first())
+        .filter(|record| record.get("serverErrorCode").is_none());
+    let fields = json!({
+        "Note": { "value": note_reference(note_id, "NONE") },
+        "Folder": { "value": folder_reference(TRASH_FOLDER, "NONE") },
+        "LastViewedModificationDate": { "value": 0 }
+    });
+    let operation = if let Some(existing) = existing {
+        let change_tag = existing
+            .get("recordChangeTag")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::other("Note user state is missing recordChangeTag"))?;
+        json!({
+            "operationType": "update",
+            "record": {
+                "recordName": record_name,
+                "recordChangeTag": change_tag,
+                "fields": fields,
+                "recordType": "Note_UserSpecific"
+            }
+        })
+    } else {
+        json!({
+            "operationType": "create",
+            "record": {
+                "recordName": record_name,
+                "fields": fields,
+                "recordType": "Note_UserSpecific"
+            }
+        })
+    };
+    let response = post_json(session, &notes_url(session, base, "records/modify"), &modify_body(operation)).await?;
+    response_record(&response)?;
+    Ok(())
+}
+
+async fn lookup_note_record(session: &mut SrpSession, base: &str, note_id: &str) -> AppResult<Value> {
+    let body = json!({
+        "records": [{ "recordName": note_id }],
+        "zoneID": { "zoneName": NOTES_ZONE }
+    });
+    let response = post_json(session, &notes_url(session, base, "records/lookup"), &body).await?;
+    response_record(&response).cloned()
+}
+
+fn response_record(response: &Value) -> AppResult<&Value> {
+    if let Some(code) = response.get("serverErrorCode").and_then(Value::as_str) {
+        return Err(AppError::other(format!(
+            "CloudKit {}: {}",
+            code,
+            response.get("reason").and_then(Value::as_str).unwrap_or("Notes request failed")
+        )));
+    }
+    let record = response
+        .get("records")
+        .and_then(Value::as_array)
+        .and_then(|records| records.first())
+        .ok_or_else(|| AppError::other("CloudKit did not return a note record"))?;
+    if let Some(code) = record.get("serverErrorCode").and_then(Value::as_str) {
+        return Err(AppError::other(format!(
+            "CloudKit {}: {}",
+            code,
+            record.get("reason").and_then(Value::as_str).unwrap_or("Notes request failed")
+        )));
+    }
+    Ok(record)
+}
+
+fn modify_body(operation: Value) -> Value {
+    json!({ "operations": [operation], "zoneID": { "zoneName": NOTES_ZONE } })
+}
+
+fn folder_reference(folder_id: &str, action: &str) -> Value {
+    json!({
+        "recordName": folder_id,
+        "action": action,
+        "zoneID": { "zoneName": NOTES_ZONE }
+    })
+}
+
+fn note_reference(note_id: &str, action: &str) -> Value {
+    json!({
+        "recordName": note_id,
+        "action": action,
+        "zoneID": { "zoneName": NOTES_ZONE }
+    })
+}
+
+fn zone_owner(record: &Value) -> Option<&str> {
+    record
+        .pointer("/fields/Folder/value/zoneID/ownerRecordName")
+        .and_then(Value::as_str)
+        .or_else(|| record.pointer("/fields/Folders/value/0/zoneID/ownerRecordName").and_then(Value::as_str))
+}
+
+fn note_attachment_ids(record: &Value) -> AppResult<Vec<String>> {
+    let mut ids = attachment_references(record);
+    if let Some(encoded) = record.pointer("/fields/TextDataEncrypted/value").and_then(Value::as_str) {
+        ids.extend(decode_note_document(encoded)?.1);
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+fn normalized_title(title: &str) -> String {
+    let title = title.lines().next().unwrap_or("").trim();
+    if title.is_empty() {
+        "New Note".to_string()
+    } else {
+        title.to_string()
+    }
+}
+
+fn strip_note_title(text: &str, title: &str) -> String {
+    let mut lines = text.split('\n').peekable();
+    while lines.peek().is_some_and(|line| line.trim().is_empty()) {
+        lines.next();
+    }
+    if lines.peek().is_some_and(|line| line.trim() == title.trim()) {
+        lines.next();
+    }
+    lines.collect::<Vec<_>>().join("\n").trim_end_matches('\n').to_string()
+}
+fn note_text(title: &str, body: &str) -> String {
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
+    format!("\n{title}\n{}", body.trim_end_matches('\n'))
+}
+
+fn note_snippet(body: &str) -> String {
+    body.replace('\u{fffc}', "")
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(160)
+        .collect()
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64
+}
+
+fn encode_note_document(text: &str) -> AppResult<String> {
+    let mut topotext = protobuf_bytes(2, text.as_bytes());
+    topotext.extend(protobuf_varint(5, 1));
+    let mut version = protobuf_varint(1, 0);
+    version.extend(protobuf_bytes(3, &topotext));
+    let mut document = protobuf_varint(1, 0);
+    document.extend(protobuf_bytes(2, &version));
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&document)?;
+    let compressed = encoder.finish()?;
+    Ok(BASE64.encode(compressed))
+}
+
+fn protobuf_bytes(field: u64, bytes: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    put_protobuf_varint((field << 3) | 2, &mut output);
+    put_protobuf_varint(bytes.len() as u64, &mut output);
+    output.extend_from_slice(bytes);
+    output
+}
+
+fn protobuf_varint(field: u64, value: u64) -> Vec<u8> {
+    let mut output = Vec::new();
+    put_protobuf_varint(field << 3, &mut output);
+    put_protobuf_varint(value, &mut output);
+    output
+}
+
+fn put_protobuf_varint(mut value: u64, output: &mut Vec<u8>) {
+    while value >= 0x80 {
+        output.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    output.push(value as u8);
+}
 async fn query_folders(session: &mut SrpSession, base: &str) -> AppResult<Vec<NoteFolder>> {
     let url = notes_url(session, base, "records/query");
     let body = json!({
@@ -196,7 +610,7 @@ async fn query_notes(
         .into_iter()
         .flatten()
         .filter_map(note_summary_from_record)
-        .filter(|note| !note.deleted)
+        .filter(|note| !note.deleted && note.folder_id.as_deref() != Some(TRASH_FOLDER))
         .collect();
     let next_cursor = response
         .get("continuationMarker")
@@ -221,7 +635,7 @@ fn note_summary_from_record(record: &Value) -> Option<NoteSummary> {
         modified_at: timestamp_field(record, "ModificationDate")
             .or_else(|| timestamp_field(record, "LastViewedModificationDate")),
         pinned: bool_field(record, "IsPinned"),
-        deleted: bool_field(record, "Deleted"),
+        deleted: bool_field(record, "Deleted") || folder_id(record).as_deref() == Some(TRASH_FOLDER),
         first_attachment_uti: encrypted_string(record, "FirstAttachmentUTIEncrypted"),
     })
 }
@@ -241,6 +655,7 @@ fn note_detail_from_record(record: &Value) -> AppResult<(NoteDetail, Vec<String>
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::other("Note body is not available"))?;
     let (body, embedded_attachment_ids) = decode_note_document(encoded_body)?;
+    let body = strip_note_title(&body, &title);
     Ok((
         NoteDetail {
             id,
@@ -818,5 +1233,67 @@ mod tests {
         assert_eq!(note.snippet, "牛奶、鸡蛋");
         assert_eq!(note.folder_id.as_deref(), Some("folder-1"));
         assert!(note.pinned);
+    }
+    #[test]
+    fn encodes_plain_text_notes() {
+        let encoded = encode_note_document("\n标题\n正文\n第二行").expect("encode note");
+        let (text, attachments) = decode_note_document(&encoded).expect("decode note");
+        assert_eq!(text, "\n标题\n正文\n第二行");
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn builds_create_operation_for_a_folder() {
+        let operation = create_operation("note-1", "folder-1", "标题", "正文", 123).expect("create operation");
+        assert_eq!(operation["operationType"], "create");
+        assert_eq!(operation["record"]["fields"]["Folder"]["value"]["recordName"], "folder-1");
+        assert_eq!(operation["record"]["parent"]["recordName"], "folder-1");
+        assert_eq!(encrypted_string(&operation["record"], "TitleEncrypted").as_deref(), Some("标题"));
+        let encoded = operation["record"]["fields"]["TextDataEncrypted"]["value"].as_str().expect("encoded body");
+        assert_eq!(decode_note_document(encoded).expect("decode body").0, "\n标题\n正文");
+    }
+
+    #[test]
+    fn update_operation_keeps_cloudkit_change_tag() {
+        let encoded = encode_note_document("\n旧标题\n旧正文").expect("encode note");
+        let record = json!({
+            "recordName": "note-1",
+            "recordChangeTag": "tag-1",
+            "shortGUID": "short-1",
+            "recordType": "Note",
+            "fields": {
+                "Folder": { "value": { "recordName": "DefaultFolder-CloudKit" } },
+                "TextDataEncrypted": { "value": encoded }
+            }
+        });
+        let operation = update_operation(&record, "新标题", "新正文", 456).expect("update operation");
+        assert_eq!(operation["record"]["recordChangeTag"], "tag-1");
+        assert_eq!(operation["record"]["shortGUID"], "short-1");
+        assert_eq!(operation["record"]["fields"]["ModificationDate"]["value"], 456);
+    }
+
+    #[test]
+    fn trash_operation_moves_the_note_to_trash() {
+        let record = json!({
+            "recordName": "note-1",
+            "recordChangeTag": "tag-1",
+            "recordType": "Note",
+            "fields": {
+                "Folder": { "value": { "recordName": "DefaultFolder-CloudKit" } },
+                "Folders": { "value": [{ "recordName": "DefaultFolder-CloudKit" }] },
+                "TitleEncrypted": { "value": "dGl0bGU=", "type": "ENCRYPTED_BYTES" }
+            }
+        });
+        let operation = trash_operation(&record, 789).expect("trash operation");
+        assert_eq!(operation["record"]["fields"]["Folder"]["value"]["recordName"], TRASH_FOLDER);
+        assert_eq!(operation["record"]["fields"]["Folders"]["value"][0]["recordName"], TRASH_FOLDER);
+        assert_eq!(operation["record"]["parent"]["recordName"], TRASH_FOLDER);
+        assert_eq!(operation["record"]["fields"]["TitleEncrypted"]["value"], "dGl0bGU=");
+    }
+
+    #[test]
+    fn strips_the_first_title_line_from_detail_body() {
+        assert_eq!(strip_note_title("\n标题\n正文\n第二行\n", "标题"), "正文\n第二行");
+        assert_eq!(strip_note_title("正文", "标题"), "正文");
     }
 }

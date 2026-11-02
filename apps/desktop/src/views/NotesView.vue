@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Clock3, FileText, Folder, NotebookPen, RefreshCw, Search, StickyNote, X } from "@lucide/vue";
+import { Clock3, FileText, Folder, NotebookPen, Pencil, Plus, RefreshCw, Save, Search, StickyNote, Trash2, X } from "@lucide/vue";
 
 import { Status } from "@/constants";
-import { noteDetail, notesList, openExternal } from "@/lib/api";
+import { noteCreate, noteDelete, noteDetail, noteUpdate, notesList, openExternal } from "@/lib/api";
+import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useLocaleStore } from "@/stores/locale";
 import Spinner from "@/components/ui/Spinner.vue";
@@ -27,6 +28,12 @@ const detailLoading = ref(false);
 const error = ref<string | null>(null);
 const detailError = ref<string | null>(null);
 const activeAttachment = ref<NoteAttachment | null>(null);
+const editing = ref(false);
+const creating = ref(false);
+const saving = ref(false);
+const deleting = ref(false);
+const draftTitle = ref("");
+const draftBody = ref("");
 let loadEpoch = 0;
 
 const visibleNotes = computed(() => {
@@ -91,6 +98,98 @@ function noteTitle(note: NoteSummary | NoteDetail): string {
   return note.title.trim() || t("notes.untitled");
 }
 
+function editableBody(note: NoteDetail): string {
+  const lines = note.body.replaceAll("\uFFFC", "").replaceAll("\r\n", "\n").split("\n");
+  while (lines.length > 0 && !lines[0]?.trim()) lines.shift();
+  if (lines[0]?.trim() === note.title.trim()) lines.shift();
+  return lines.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+function startCreate(): void {
+  editing.value = true;
+  creating.value = true;
+  draftTitle.value = "";
+  draftBody.value = "";
+  selectedNoteId.value = null;
+  detail.value = null;
+  detailError.value = null;
+  activeAttachment.value = null;
+}
+
+function startEdit(): void {
+  if (!detail.value) return;
+  if (detail.value.attachments.length > 0) {
+    toast.error(t("notes.attachmentsReadOnly"));
+    return;
+  }
+  editing.value = true;
+  creating.value = false;
+  draftTitle.value = detail.value.title.trim();
+  draftBody.value = editableBody(detail.value);
+}
+
+function cancelEdit(): void {
+  editing.value = false;
+  creating.value = false;
+  draftTitle.value = "";
+  draftBody.value = "";
+}
+
+async function saveDraft(): Promise<void> {
+  if (saving.value) return;
+  if (!draftTitle.value.trim() && !draftBody.value.trim()) {
+    toast.error(t("notes.emptyDraft"));
+    return;
+  }
+  saving.value = true;
+  try {
+    const title = draftTitle.value.trim() || t("notes.untitled");
+    const result = creating.value ? await noteCreate({ sessionId: props.sessionId, folderId: selectedFolderId.value, title, body: draftBody.value }) : await noteUpdate({ sessionId: props.sessionId, noteId: selectedNoteId.value!, title, body: draftBody.value });
+    if (result.status === Status.error) {
+      if (isSessionGoneMessage(result.message)) {
+        emit("logout");
+        return;
+      }
+      throw new Error(result.message ?? (creating.value ? t("notes.createFailed") : t("notes.updateFailed")));
+    }
+    const noteId = result.noteId;
+    editing.value = false;
+    creating.value = false;
+    await loadNotes();
+    if (noteId) await loadNoteDetail(noteId);
+    toast.success(t("notes.saved"));
+  } catch (caught) {
+    toast.error(caught instanceof Error ? caught.message : t("notes.updateFailed"));
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function deleteSelected(): Promise<void> {
+  if (!detail.value || deleting.value) return;
+  if (!window.confirm(t("notes.deleteConfirm", { title: noteTitle(detail.value) }))) return;
+  deleting.value = true;
+  try {
+    const result = await noteDelete({ sessionId: props.sessionId, noteId: detail.value.id });
+    if (result.status === Status.error) {
+      if (isSessionGoneMessage(result.message)) {
+        emit("logout");
+        return;
+      }
+      throw new Error(result.message ?? t("notes.deleteFailed"));
+    }
+    cancelEdit();
+    detail.value = null;
+    selectedNoteId.value = null;
+    await loadNotes();
+    toast.success(t("notes.deleted"));
+  } catch (caught) {
+    toast.error(caught instanceof Error ? caught.message : t("notes.deleteFailed"));
+  } finally {
+    deleting.value = false;
+  }
+}
+
 async function loadNotes(reset = true): Promise<void> {
   if (loading.value || loadingMore.value) return;
   if (reset) {
@@ -134,14 +233,19 @@ async function loadNotes(reset = true): Promise<void> {
 }
 
 async function selectNote(note: NoteSummary): Promise<void> {
-  selectedNoteId.value = note.id;
+  cancelEdit();
+  await loadNoteDetail(note.id);
+}
+
+async function loadNoteDetail(noteId: string): Promise<void> {
+  selectedNoteId.value = noteId;
   activeAttachment.value = null;
   detail.value = null;
   detailError.value = null;
   detailLoading.value = true;
   try {
-    const result = await noteDetail({ sessionId: props.sessionId, noteId: note.id });
-    if (selectedNoteId.value !== note.id) return;
+    const result = await noteDetail({ sessionId: props.sessionId, noteId });
+    if (selectedNoteId.value !== noteId) return;
     if (result.status === Status.error || !result.note) {
       if (isSessionGoneMessage(result.message)) {
         emit("logout");
@@ -152,12 +256,11 @@ async function selectNote(note: NoteSummary): Promise<void> {
     }
     detail.value = result.note;
   } catch (caught) {
-    if (selectedNoteId.value === note.id) detailError.value = caught instanceof Error ? caught.message : t("notes.detailFailed");
+    if (selectedNoteId.value === noteId) detailError.value = caught instanceof Error ? caught.message : t("notes.detailFailed");
   } finally {
-    if (selectedNoteId.value === note.id) detailLoading.value = false;
+    if (selectedNoteId.value === noteId) detailLoading.value = false;
   }
 }
-
 function selectFolder(id: string | null): void {
   selectedFolderId.value = id;
 }
@@ -166,7 +269,10 @@ onMounted(() => void loadNotes());
 
 watch(
   () => props.sessionId,
-  () => void loadNotes(),
+  () => {
+    cancelEdit();
+    void loadNotes();
+  },
 );
 </script>
 
@@ -176,7 +282,10 @@ watch(
       <div class="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
         <NotebookPen :size="15" class="text-primary" />
         <span class="text-sm font-semibold">{{ t("nav.notes") }}</span>
-        <button type="button" class="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="loading" :title="t('notes.refresh')" :aria-label="t('notes.refresh')" @click="loadNotes()">
+        <button type="button" class="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="loading || saving" :title="t('notes.new')" :aria-label="t('notes.new')" @click="startCreate">
+          <Plus :size="14" />
+        </button>
+        <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="loading || saving" :title="t('notes.refresh')" :aria-label="t('notes.refresh')" @click="loadNotes()">
           <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
         </button>
       </div>
@@ -251,12 +360,48 @@ watch(
     </section>
 
     <section class="min-w-0 flex-1 overflow-y-auto">
-      <div v-if="detailLoading" class="grid h-full place-items-center text-muted-foreground"><Spinner :size="22" /></div>
+      <form v-if="editing" class="mx-auto flex h-full max-w-4xl flex-col px-10 py-8" @submit.prevent="saveDraft">
+        <div class="flex items-center justify-between gap-3 border-b border-border pb-3">
+          <p class="text-xs text-muted-foreground">{{ creating ? t("notes.new") : selectedFolderName }}</p>
+          <span class="text-xs text-muted-foreground">{{ t("notes.plainTextOnly") }}</span>
+        </div>
+        <input v-model="draftTitle" data-testid="note-title-input" class="mt-5 w-full border-0 bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55" :placeholder="t('notes.titlePlaceholder')" autofocus />
+        <textarea
+          v-model="draftBody"
+          data-testid="note-body-input"
+          class="mt-4 min-h-[50vh] w-full flex-1 resize-none rounded-lg border border-border bg-card/35 p-4 text-[15px] leading-7 outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-primary"
+          :placeholder="t('notes.bodyPlaceholder')"
+        ></textarea>
+        <div class="mt-4 flex items-center gap-2">
+          <button type="submit" class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50" :disabled="saving">
+            <Spinner v-if="saving" :size="12" />
+            <Save v-else :size="13" />
+            {{ saving ? t("notes.saving") : t("notes.save") }}
+          </button>
+          <button type="button" class="h-8 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="saving" @click="cancelEdit">
+            {{ t("notes.cancel") }}
+          </button>
+        </div>
+      </form>
+      <div v-else-if="detailLoading" class="grid h-full place-items-center text-muted-foreground"><Spinner :size="22" /></div>
       <div v-else-if="detailError" class="grid h-full place-items-center px-6 text-center text-sm text-destructive">{{ detailError }}</div>
       <article v-else-if="detail" class="mx-auto max-w-4xl px-10 py-8">
         <header class="border-b border-border pb-5">
-          <p class="text-xs text-muted-foreground">{{ selectedFolderName }}</p>
-          <h1 class="mt-1.5 text-2xl font-semibold tracking-tight">{{ noteTitle(detail) }}</h1>
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <p class="text-xs text-muted-foreground">{{ selectedFolderName }}</p>
+              <h1 class="mt-1.5 text-2xl font-semibold tracking-tight">{{ noteTitle(detail) }}</h1>
+            </div>
+            <div class="flex shrink-0 items-center gap-1">
+              <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50" :disabled="deleting" :title="t('notes.edit')" :aria-label="t('notes.edit')" @click="startEdit">
+                <Pencil :size="15" />
+              </button>
+              <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50" :disabled="deleting" :title="t('notes.delete')" :aria-label="t('notes.delete')" @click="deleteSelected">
+                <Spinner v-if="deleting" :size="14" />
+                <Trash2 v-else :size="15" />
+              </button>
+            </div>
+          </div>
           <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span class="flex items-center gap-1.5"><Clock3 :size="12" />{{ t("notes.modifiedAt") }} {{ noteDate(detail.modifiedAt) }}</span>
           </div>

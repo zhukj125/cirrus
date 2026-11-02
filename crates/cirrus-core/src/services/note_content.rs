@@ -19,7 +19,13 @@ enum Wire<'a> {
     Fixed32,
 }
 
-#[derive(Clone, Default)]
+impl Default for ParagraphStyle {
+    fn default() -> Self {
+        Self { style: 3, indent: 0, done: false, block_quote_level: 0 }
+    }
+}
+
+#[derive(Clone)]
 struct ParagraphStyle {
     style: u32,
     indent: i32,
@@ -27,7 +33,7 @@ struct ParagraphStyle {
     block_quote_level: u32,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct AttributeRun {
     start: u32,
     end: u32,
@@ -45,7 +51,7 @@ enum ObjectValue {
     Uint(u64),
 }
 
-pub fn render_body_html(encoded: &str, attachments: &[NoteAttachment]) -> AppResult<String> {
+pub fn render_body_html(encoded: &str, title: &str, attachments: &[NoteAttachment]) -> AppResult<String> {
     let raw = decode_encoded(encoded)?;
     let document = versioned_data(&raw)?;
     let text = field_bytes(document, 2)
@@ -53,7 +59,7 @@ pub fn render_body_html(encoded: &str, attachments: &[NoteAttachment]) -> AppRes
         .ok_or_else(|| AppError::other("Note body text is missing"))?
         .to_string();
     let runs = parse_attribute_runs(document, text.encode_utf16().count())?;
-    render_paragraphs(&text, &runs, attachments)
+    render_paragraphs(&text, title, &runs, attachments)
 }
 
 pub fn parse_table(encoded: &str) -> AppResult<Vec<Vec<String>>> {
@@ -126,7 +132,12 @@ fn parse_paragraph_style(data: &[u8]) -> ParagraphStyle {
     }
 }
 
-fn render_paragraphs(text: &str, runs: &[AttributeRun], attachments: &[NoteAttachment]) -> AppResult<String> {
+fn render_paragraphs(
+    text: &str,
+    title: &str,
+    runs: &[AttributeRun],
+    attachments: &[NoteAttachment],
+) -> AppResult<String> {
     let mut byte_to_utf16 = vec![0_usize; text.len() + 1];
     let mut utf16_offset = 0_usize;
     for (byte_offset, character) in text.char_indices() {
@@ -140,12 +151,21 @@ fn render_paragraphs(text: &str, runs: &[AttributeRun], attachments: &[NoteAttac
     let lines = text.split('\n').collect::<Vec<_>>();
     let line_count = lines.len();
     let mut numbered_counts: HashMap<i32, u32> = HashMap::new();
+    let mut seen_nonempty = false;
     for (line_index, line) in lines.into_iter().enumerate() {
         let line_end = line_start + line.len();
         let line_start_utf16 = byte_to_utf16[line_start] as u32;
         let line_end_utf16 = byte_to_utf16[line_end] as u32;
         let run = run_at(runs, line_start_utf16);
         let style = run.map(|candidate| candidate.paragraph.clone()).unwrap_or_default();
+        let nonempty = !line.trim().is_empty();
+        if nonempty && !seen_nonempty {
+            seen_nonempty = true;
+            if line.trim() == title.trim() {
+                line_start = line_end + usize::from(line_index + 1 < line_count);
+                continue;
+            }
+        }
 
         if line.trim() == "\u{FFFC}" {
             if let Some(attachment_id) = run.and_then(|candidate| candidate.attachment_id.as_deref()) {
@@ -606,5 +626,14 @@ mod tests {
         assert_eq!(escape_html("<script>"), "&lt;script&gt;");
         assert_eq!(safe_link("javascript:alert(1)"), None);
         assert_eq!(safe_link("https://example.com"), Some("https://example.com".to_string()));
+    }
+    #[test]
+    fn plain_runs_render_as_paragraphs_and_skip_the_title() {
+        let html = render_paragraphs("\n标题\n正文\n第二行", "标题", &[], &[]).expect("render plain note");
+        assert!(!html.contains("note-title"));
+        assert!(html.contains("note-paragraph"));
+        assert!(html.contains("正文"));
+        assert!(html.contains("第二行"));
+        assert!(!html.contains(">标题<"));
     }
 }

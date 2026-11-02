@@ -630,6 +630,40 @@ fn tools_list() -> Value {
                 "annotations": { "title": "Read an iCloud Note", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
+                "name": "cirrus_create_note",
+                "title": "Create an iCloud Note",
+                "description": "Create a plain-text note in iCloud Notes. Omit folderId to use the default Notes folder.",
+                "inputSchema": account_schema_required(json!({
+                    "title": { "type": "string", "description": "Note title." },
+                    "body": { "type": "string", "description": "Plain-text note body. Omit for an empty note." },
+                    "folderId": { "type": "string", "description": "Optional folder ID returned by cirrus_list_notes." }
+                }), &["title"]),
+                "outputSchema": tool_output_schema("cirrus_create_note"),
+                "annotations": { "title": "Create an iCloud Note", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true }
+            },
+            {
+                "name": "cirrus_update_note",
+                "title": "Update an iCloud Note",
+                "description": "Replace the title and plain-text body of an existing iCloud Note. Notes with attachments cannot be edited by this tool yet.",
+                "inputSchema": account_schema_required(json!({
+                    "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." },
+                    "title": { "type": "string", "description": "New note title." },
+                    "body": { "type": "string", "description": "New plain-text note body." }
+                }), &["noteId", "title", "body"]),
+                "outputSchema": tool_output_schema("cirrus_update_note"),
+                "annotations": { "title": "Update an iCloud Note", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
+                "name": "cirrus_delete_note",
+                "title": "Delete an iCloud Note",
+                "description": "Move an iCloud Note to the Trash folder.",
+                "inputSchema": account_schema_required(json!({
+                    "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." }
+                }), &["noteId"]),
+                "outputSchema": tool_output_schema("cirrus_delete_note"),
+                "annotations": { "title": "Delete an iCloud Note", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
                 "name": "cirrus_list_drive_items",
                 "title": "List iCloud Drive items",
                 "description": "List files, folders, and app containers in an iCloud Drive folder. Use folderId from a previous result to browse deeper; omit it to list the iCloud Drive root.",
@@ -1044,6 +1078,14 @@ fn tool_output_schema(tool: &str) -> Value {
             }),
             &["status"],
         ),
+        "cirrus_create_note" | "cirrus_update_note" | "cirrus_delete_note" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "noteId": { "type": ["string", "null"] }
+            }),
+            &["status"],
+        ),
         "cirrus_list_drive_items" => object_schema(
             json!({
                 "status": { "type": "string" },
@@ -1203,6 +1245,7 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_get_account_avatar" | "cirrus_get_contact_photo" => image_markdown(result),
         "cirrus_list_notes" => notes_list_markdown(result),
         "cirrus_get_note" => note_detail_markdown(result),
+        "cirrus_create_note" | "cirrus_update_note" | "cirrus_delete_note" => note_mutation_markdown(result),
         "cirrus_list_drive_items" => drive_items_markdown(result),
         "cirrus_download_drive_file" => drive_download_markdown(result),
         "cirrus_list_contacts" => contacts_markdown(result),
@@ -1457,6 +1500,13 @@ fn note_detail_markdown(result: &Value) -> String {
     output
 }
 
+fn note_mutation_markdown(result: &Value) -> String {
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        return format!("# iCloud Note\n\n{message}");
+    }
+    let rows = vec![("Status", string_field(result, "status")), ("Note ID", code_field(result, "noteId"))];
+    key_value_markdown("iCloud Note", &rows)
+}
 fn drive_items_markdown(result: &Value) -> String {
     if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
         return format!("# iCloud Drive\n\n{message}");
@@ -2386,7 +2436,7 @@ mod tests {
     fn tools_list_exposes_login_and_account_list_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 24);
         assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),

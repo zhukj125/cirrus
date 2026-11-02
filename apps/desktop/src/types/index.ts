@@ -485,6 +485,12 @@ export interface NoteDetailResult {
   message: string | null;
   note: NoteDetail | null;
 }
+
+export interface NoteMutationResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  noteId: string | null;
+}
 export interface ContactField {
   label: string;
   value: string;

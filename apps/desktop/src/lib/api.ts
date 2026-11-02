@@ -7,6 +7,7 @@ import type {
   CalendarLoadResult,
   ContactsListResult,
   NoteDetailResult,
+  NoteMutationResult,
   NotesListResult,
   AccountAvatar,
   AccountStoreSnapshot,
@@ -198,6 +199,18 @@ export function notesList(payload: { sessionId: string; cursor?: string | null }
 
 export function noteDetail(payload: { sessionId: string; noteId: string }): Promise<NoteDetailResult> {
   return call<NoteDetailResult>("notes_get", payload);
+}
+
+export function noteCreate(payload: { sessionId: string; folderId?: string | null; title: string; body: string }): Promise<NoteMutationResult> {
+  return call<NoteMutationResult>("notes_create", payload);
+}
+
+export function noteUpdate(payload: { sessionId: string; noteId: string; title: string; body: string }): Promise<NoteMutationResult> {
+  return call<NoteMutationResult>("notes_update", payload);
+}
+
+export function noteDelete(payload: { sessionId: string; noteId: string }): Promise<NoteMutationResult> {
+  return call<NoteMutationResult>("notes_delete", payload);
 }
 export function contactsList(payload: { sessionId: string; locale: string }): Promise<ContactsListResult> {
   return call<ContactsListResult>("contacts_list", payload);

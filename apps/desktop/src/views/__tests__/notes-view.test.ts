@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 
@@ -7,11 +7,17 @@ import NotesView from "@/views/NotesView.vue";
 const api = vi.hoisted(() => ({
   notesList: vi.fn(),
   noteDetail: vi.fn(),
+  noteCreate: vi.fn(),
+  noteUpdate: vi.fn(),
+  noteDelete: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
   notesList: api.notesList,
   noteDetail: api.noteDetail,
+  noteCreate: api.noteCreate,
+  noteUpdate: api.noteUpdate,
+  noteDelete: api.noteDelete,
 }));
 
 function mountNotes() {
@@ -23,6 +29,9 @@ function mountNotes() {
 describe("备忘录页", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.noteCreate.mockResolvedValue({ status: "OK", message: null, noteId: "note-2" });
+    api.noteUpdate.mockResolvedValue({ status: "OK", message: null, noteId: "note-1" });
+    api.noteDelete.mockResolvedValue({ status: "OK", message: null, noteId: "note-1" });
     api.notesList.mockResolvedValue({
       status: "OK",
       message: null,
@@ -131,5 +140,81 @@ describe("备忘录页", () => {
     await wrapper.get('figure[data-note-attachment-id="attachment-1"]').trigger("click");
     expect(wrapper.get('[role="dialog"]').exists()).toBe(true);
     expect(wrapper.get('[role="dialog"] img[alt="画板"]').attributes("src")).toBe("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=");
+  });
+
+  it("creates a note with the selected folder", async () => {
+    api.noteDetail.mockResolvedValue({
+      status: "OK",
+      message: null,
+      note: {
+        id: "note-2",
+        title: "新备忘录",
+        body: "正文",
+        bodyHtml: "",
+        folderId: "DefaultFolder-CloudKit",
+        createdAt: 1,
+        modifiedAt: 2,
+        attachments: [],
+      },
+    });
+
+    const wrapper = mountNotes();
+    await flushPromises();
+    await wrapper.get('button[aria-label="New note"]').trigger("click");
+    await wrapper.get('[data-testid="note-title-input"]').setValue("新备忘录");
+    await wrapper.get('[data-testid="note-body-input"]').setValue("正文");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(api.noteCreate).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      folderId: null,
+      title: "新备忘录",
+      body: "正文",
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("updates and deletes the selected note", async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    api.noteDetail.mockResolvedValue({
+      status: "OK",
+      message: null,
+      note: {
+        id: "note-1",
+        title: "项目计划",
+        body: "第一行\n第二行",
+        bodyHtml: "",
+        folderId: "folder-1",
+        createdAt: 1,
+        modifiedAt: 1_700_000_000_000,
+        attachments: [],
+      },
+    });
+    const wrapper = mountNotes();
+    await flushPromises();
+
+    const noteButton = wrapper.findAll("button").find((button) => button.text().includes("项目计划"));
+    await noteButton?.trigger("click");
+    await flushPromises();
+    await wrapper.get('button[aria-label="Edit note"]').trigger("click");
+    await wrapper.get('[data-testid="note-title-input"]').setValue("更新后的标题");
+    await wrapper.get('[data-testid="note-body-input"]').setValue("更新后的正文");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(api.noteUpdate).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      noteId: "note-1",
+      title: "更新后的标题",
+      body: "更新后的正文",
+    });
+
+    await wrapper.get('button[aria-label="Delete note"]').trigger("click");
+    await flushPromises();
+    expect(confirm).toHaveBeenCalled();
+    expect(api.noteDelete).toHaveBeenCalledWith({ sessionId: "session-1", noteId: "note-1" });
   });
 });

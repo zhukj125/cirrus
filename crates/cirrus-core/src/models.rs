@@ -318,6 +318,23 @@ impl NoteDetailResult {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteMutationResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub note_id: Option<String>,
+}
+
+impl NoteMutationResult {
+    pub fn ok(note_id: String) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, note_id: Some(note_id) }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self { status: statuses::ERROR.to_string(), message: Some(message.into()), note_id: None }
+    }
+}
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SrpAuthRequest {
