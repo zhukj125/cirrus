@@ -204,6 +204,7 @@ pub fn run() {
             commands::photos::save_photo,
             commands::drive::drive_list,
             commands::drive::drive_download,
+            commands::storage::storage_usage,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");

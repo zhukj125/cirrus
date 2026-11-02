@@ -10,3 +10,4 @@ pub(crate) mod note_paper;
 pub mod notes;
 pub mod photo_metadata;
 pub mod photos;
+pub mod storage;

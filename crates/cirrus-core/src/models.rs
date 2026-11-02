@@ -167,6 +167,53 @@ impl DriveListing {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StorageUsageCategory {
+    pub media_key: String,
+    pub display_label: String,
+    pub display_color: String,
+    pub usage_in_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageQuotaStatus {
+    pub over_quota: bool,
+    pub have_max_quota_tier: bool,
+    pub almost_full: bool,
+    pub paid_quota: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageUsageResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub storage_usage_by_media: Vec<StorageUsageCategory>,
+    pub used_storage_in_bytes: u64,
+    pub total_storage_in_bytes: u64,
+    pub commerce_storage_in_bytes: u64,
+    pub comp_storage_in_bytes: u64,
+    pub quota_status: StorageQuotaStatus,
+    pub manage_url: Option<String>,
+}
+
+impl StorageUsageResult {
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: statuses::ERROR.to_string(),
+            message: Some(message.into()),
+            storage_usage_by_media: Vec::new(),
+            used_storage_in_bytes: 0,
+            total_storage_in_bytes: 0,
+            commerce_storage_in_bytes: 0,
+            comp_storage_in_bytes: 0,
+            quota_status: StorageQuotaStatus::default(),
+            manage_url: None,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactField {
     pub label: String,
     pub value: String,

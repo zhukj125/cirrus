@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { CalendarDays, ChevronDown, HardDrive, Images, MapPin, NotebookPen, Plus, Settings2, Users, X } from "@lucide/vue";
+import { CalendarDays, ChevronDown, Cloud, HardDrive, Images, MapPin, NotebookPen, Plus, Settings2, Users, X } from "@lucide/vue";
 
 import { SHELL_VIEWS, type ShellView, type WorkspaceTab } from "@/constants";
 import { useLocaleStore } from "@/stores/locale";
@@ -29,6 +29,7 @@ function tabLabel(tab: WorkspaceTab): string {
   if (tab === "findmy") return locale.t("nav.devices");
   if (tab === "photos-gallery") return locale.t("nav.photos");
   if (tab === "drive") return locale.t("nav.drive");
+  if (tab === "storage") return locale.t("nav.storage");
   if (tab === "notes") return locale.t("nav.notes");
   if (tab === "contacts") return locale.t("nav.contacts");
   return locale.t("nav.calendar");
@@ -38,6 +39,7 @@ function tabIcon(tab: WorkspaceTab) {
   if (tab === "settings") return Settings2;
   if (tab === "photos-gallery") return Images;
   if (tab === "drive") return HardDrive;
+  if (tab === "storage") return Cloud;
   if (tab === "notes") return NotebookPen;
   if (tab === "contacts") return Users;
   if (tab === "calendar") return CalendarDays;
