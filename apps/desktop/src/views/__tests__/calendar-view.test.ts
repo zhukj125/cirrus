@@ -4,8 +4,16 @@ import { createPinia, setActivePinia } from "pinia";
 
 import CalendarView from "@/views/CalendarView.vue";
 
-const api = vi.hoisted(() => ({ calendarLoad: vi.fn() }));
-vi.mock("@/lib/api", () => ({ calendarLoad: api.calendarLoad }));
+const api = vi.hoisted(() => ({
+  calendarLoad: vi.fn(),
+  calendarSaveEvent: vi.fn(),
+  calendarDeleteEvent: vi.fn(),
+}));
+vi.mock("@/lib/api", () => ({
+  calendarLoad: api.calendarLoad,
+  calendarSaveEvent: api.calendarSaveEvent,
+  calendarDeleteEvent: api.calendarDeleteEvent,
+}));
 
 function mountCalendar() {
   const pinia = createPinia();
@@ -18,6 +26,12 @@ describe("日历页", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 28, 12, 0, 0));
     vi.clearAllMocks();
+    api.calendarSaveEvent.mockResolvedValue({
+      status: "OK",
+      message: null,
+      event: { id: "event-2", title: "测试新日程", calendarId: "cal-1", start: "2026-10-28T09:00:00", end: "2026-10-28T10:00:00", allDay: false, recurring: false, readOnly: false, location: "", notes: "", url: "" },
+    });
+    api.calendarDeleteEvent.mockResolvedValue({ status: "OK", message: null, eventId: "event-1" });
     api.calendarLoad.mockResolvedValue({
       status: "OK",
       message: null,
@@ -26,7 +40,10 @@ describe("日历页", () => {
     });
   });
 
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it("加载月视图、日历列表和日程详情", async () => {
     const wrapper = mountCalendar();
@@ -65,5 +82,65 @@ describe("日历页", () => {
     expect(wrapper.get('[data-testid="mini-month"] [data-date="2026-10-21"]').classes()).toContain("bg-destructive");
     expect(wrapper.get('[data-testid="mini-month"] [data-date="2026-10-28"]').classes()).not.toContain("bg-destructive");
     expect(wrapper.text()).toContain("October 21, 2026");
+  });
+
+  it("creates a calendar event", async () => {
+    const wrapper = mountCalendar();
+    await flushPromises();
+
+    const newButton = wrapper.findAll("button").find((button) => button.text().includes("New event"));
+    await newButton?.trigger("click");
+    await wrapper.get('[data-testid="calendar-event-title"]').setValue("测试新日程");
+    const form = wrapper.get("form");
+    await form.trigger("submit");
+    await flushPromises();
+
+    expect(api.calendarSaveEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        event: expect.objectContaining({
+          eventId: null,
+          calendarId: "cal-1",
+          title: "测试新日程",
+          allDay: false,
+        }),
+      }),
+    );
+  });
+
+  it("edits and deletes the selected event", async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const wrapper = mountCalendar();
+    await flushPromises();
+
+    const eventButton = wrapper.findAll("button").find((button) => button.text().includes("新建日程"));
+    await eventButton?.trigger("click");
+    const editButton = wrapper.findAll("button").find((button) => button.text() === "Edit");
+    await editButton?.trigger("click");
+    await wrapper.get('[data-testid="calendar-event-title"]').setValue("修改后的日程");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(api.calendarSaveEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ eventId: "event-1", title: "修改后的日程" }),
+      }),
+    );
+
+    const eventButtonAfterSave = wrapper.findAll("button").find((button) => button.text().includes("新建日程"));
+    await eventButtonAfterSave?.trigger("click");
+    const deleteButton = wrapper.findAll("button").find((button) => button.text() === "Delete");
+    await deleteButton?.trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalled();
+    expect(api.calendarDeleteEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        eventId: "event-1",
+        calendarId: "cal-1",
+      }),
+    );
   });
 });

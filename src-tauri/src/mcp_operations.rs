@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
-use cirrus_core::models::{MonthExactDto, NoteImage, PhotosListRequest};
+use cirrus_core::models::{CalendarEventInput, MonthExactDto, NoteImage, PhotosListRequest};
 use cirrus_core::services::{avatar, calendar, contacts, devices, drive, media, notes, photos};
 use cirrus_core::SessionHandle;
 
@@ -202,6 +202,42 @@ pub async fn call_tool(
             let locale = optional_str(arguments, "locale").unwrap_or("zh-CN");
             Ok(to_value(
                 calendar::load(&state.sessions, &resolved.session_id, start_date, end_date, timezone, locale).await,
+            )?)
+        }
+        "cirrus_save_calendar_event" => {
+            let input = CalendarEventInput {
+                event_id: optional_str(arguments, "eventId").map(ToOwned::to_owned),
+                calendar_id: required_str(arguments, "calendarId")?.to_string(),
+                title: required_str(arguments, "title")?.to_string(),
+                start: required_str(arguments, "start")?.to_string(),
+                end: required_str(arguments, "end")?.to_string(),
+                all_day: arguments.get("allDay").and_then(Value::as_bool).unwrap_or(false),
+                location: optional_str(arguments, "location").unwrap_or("").to_string(),
+                notes: optional_str(arguments, "notes").unwrap_or("").to_string(),
+                url: optional_str(arguments, "url").unwrap_or("").to_string(),
+                timezone: optional_str(arguments, "timezone").map(ToOwned::to_owned),
+                timezone_offset: optional_str(arguments, "timezoneOffset").map(ToOwned::to_owned),
+                locale: optional_str(arguments, "locale").map(ToOwned::to_owned),
+            };
+            Ok(to_value(calendar::save_event(&state.sessions, &resolved.session_id, input).await)?)
+        }
+        "cirrus_delete_calendar_event" => {
+            let event_id = required_str(arguments, "eventId")?;
+            let calendar_id = required_str(arguments, "calendarId")?;
+            let start = required_str(arguments, "start")?;
+            let end = required_str(arguments, "end")?;
+            Ok(to_value(
+                calendar::delete_event(
+                    &state.sessions,
+                    &resolved.session_id,
+                    event_id,
+                    calendar_id,
+                    start,
+                    end,
+                    optional_str(arguments, "timezone"),
+                    optional_str(arguments, "locale"),
+                )
+                .await,
             )?)
         }
         _ => Err(format!("Unknown Cirrus MCP tool: {tool}")),

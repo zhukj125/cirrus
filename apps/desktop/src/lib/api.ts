@@ -4,6 +4,9 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type {
+  CalendarEventDeleteResult,
+  CalendarEventInput,
+  CalendarEventMutationResult,
   CalendarLoadResult,
   ContactsListResult,
   NoteDetailResult,
@@ -221,6 +224,13 @@ export function calendarLoad(payload: { sessionId: string; startDate: string; en
   return call<CalendarLoadResult>("calendar_load", payload);
 }
 
+export function calendarSaveEvent(payload: { sessionId: string; event: CalendarEventInput }): Promise<CalendarEventMutationResult> {
+  return call<CalendarEventMutationResult>("calendar_save", payload);
+}
+
+export function calendarDeleteEvent(payload: { sessionId: string; eventId: string; calendarId: string; start: string; end: string; timezone?: string | null; locale?: string | null }): Promise<CalendarEventDeleteResult> {
+  return call<CalendarEventDeleteResult>("calendar_delete", payload);
+}
 export function driveList(payload: { sessionId: string; folderId?: string | null }): Promise<DriveListing> {
   return call<DriveListing>("drive_list", payload);
 }

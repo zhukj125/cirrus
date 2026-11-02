@@ -187,6 +187,8 @@ pub fn run() {
             commands::contacts::contacts_list,
             commands::contacts::contact_photo,
             commands::calendar::calendar_load,
+            commands::calendar::calendar_save,
+            commands::calendar::calendar_delete,
             commands::photos::photos_login,
             commands::photos::photos_verify_2fa,
             commands::photos::photos_finish_2fa,

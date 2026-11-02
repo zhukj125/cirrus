@@ -566,6 +566,32 @@ export interface CalendarEvent {
   url: string;
 }
 
+export interface CalendarEventInput {
+  eventId?: string | null;
+  calendarId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  notes: string;
+  url: string;
+  timezone?: string | null;
+  timezoneOffset?: string | null;
+  locale?: string | null;
+}
+
+export interface CalendarEventMutationResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  event: CalendarEvent | null;
+}
+
+export interface CalendarEventDeleteResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  eventId: string | null;
+}
 export interface CalendarLoadResult {
   status: "OK" | "ERROR";
   message: string | null;

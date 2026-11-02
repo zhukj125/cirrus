@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock3, FileText, MapPin, RefreshCw, X } from "@lucide/vue";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock3, FileText, MapPin, Pencil, Plus, RefreshCw, Save, Trash2, X } from "@lucide/vue";
 
 import { Status } from "@/constants";
-import { calendarLoad } from "@/lib/api";
+import { calendarDeleteEvent, calendarLoad, calendarSaveEvent } from "@/lib/api";
+import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
 import { useLocaleStore } from "@/stores/locale";
 import Spinner from "@/components/ui/Spinner.vue";
-import type { CalendarCollection, CalendarEvent } from "@/types";
+import type { CalendarCollection, CalendarEvent, CalendarEventInput } from "@/types";
 
 type CalendarMode = "day" | "week" | "month";
 
@@ -24,6 +25,11 @@ const visibleCalendarIds = ref(new Set<string>());
 const selectedEventId = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const editorOpen = ref(false);
+const editorError = ref<string | null>(null);
+const savingEvent = ref(false);
+const deletingEvent = ref(false);
+const draft = ref<CalendarEventInput>(emptyDraft());
 let loadEpoch = 0;
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -218,6 +224,191 @@ function shift(direction: number): void {
   else anchorDate.value = addMonths(anchorDate.value, direction);
 }
 
+const writableCalendars = computed(() => calendars.value.filter((calendar) => !calendar.readOnly));
+
+function emptyDraft(): CalendarEventInput {
+  return {
+    eventId: null,
+    calendarId: "",
+    title: "",
+    start: "",
+    end: "",
+    allDay: false,
+    location: "",
+    notes: "",
+    url: "",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+    timezoneOffset: "+08:00",
+    locale: locale.locale,
+  };
+}
+
+function timezoneOffsetFor(value: string): string {
+  const date = new Date(value.length === 16 ? `${value}:00` : value);
+  const minutes = Number.isFinite(date.getTime()) ? -date.getTimezoneOffset() : 480;
+  const sign = minutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(minutes);
+  return `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+}
+
+function datetimeInputValue(value: string): string {
+  return value.slice(0, 16);
+}
+
+function datetimeValue(value: string): string {
+  return value.length === 16 ? `${value}:00` : value;
+}
+
+function canModifyEvent(event: CalendarEvent): boolean {
+  return !event.readOnly && !event.recurring && !(calendarForEvent(event)?.readOnly ?? false);
+}
+
+function openCreateEvent(): void {
+  const calendar = writableCalendars.value.find((item) => visibleCalendarIds.value.has(item.id)) ?? writableCalendars.value[0];
+  if (!calendar) {
+    toast.error(t("calendar.noWritableCalendar"));
+    return;
+  }
+  const day = dateKey(anchorDate.value);
+  const start = `${day}T09:00`;
+  const end = `${day}T10:00`;
+  draft.value = {
+    ...emptyDraft(),
+    calendarId: calendar.id,
+    start,
+    end,
+    timezoneOffset: timezoneOffsetFor(start),
+  };
+  selectedEventId.value = null;
+  editorError.value = null;
+  editorOpen.value = true;
+}
+
+function openEditEvent(): void {
+  const event = selectedEvent.value;
+  if (!event || !canModifyEvent(event)) {
+    toast.error(t("calendar.eventReadOnly"));
+    return;
+  }
+  draft.value = {
+    eventId: event.id,
+    calendarId: event.calendarId,
+    title: event.title,
+    start: datetimeInputValue(event.start),
+    end: datetimeInputValue(event.end),
+    allDay: event.allDay,
+    location: event.location,
+    notes: event.notes,
+    url: event.url,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+    timezoneOffset: timezoneOffsetFor(event.start),
+    locale: locale.locale,
+  };
+  editorError.value = null;
+  editorOpen.value = true;
+}
+
+function closeEditor(): void {
+  if (savingEvent.value) return;
+  editorOpen.value = false;
+  editorError.value = null;
+}
+
+function onAllDayChange(): void {
+  if (!draft.value.allDay) return;
+  const day = draft.value.start.slice(0, 10);
+  const next = addDays(new Date(`${day}T12:00:00`), 1);
+  draft.value.start = `${day}T00:00`;
+  draft.value.end = `${dateKey(next)}T00:00`;
+}
+
+async function saveCalendarEvent(): Promise<void> {
+  if (savingEvent.value) return;
+  if (!draft.value.calendarId) {
+    editorError.value = t("calendar.selectCalendar");
+    return;
+  }
+  if (!draft.value.title.trim()) {
+    editorError.value = t("calendar.titleRequired");
+    return;
+  }
+  const start = datetimeValue(draft.value.start);
+  const end = datetimeValue(draft.value.end);
+  if (!start || !end || new Date(end).getTime() < new Date(start).getTime()) {
+    editorError.value = t("calendar.invalidTimeRange");
+    return;
+  }
+  savingEvent.value = true;
+  editorError.value = null;
+  try {
+    const result = await calendarSaveEvent({
+      sessionId: props.sessionId,
+      event: {
+        ...draft.value,
+        title: draft.value.title.trim(),
+        start,
+        end,
+        timezone: draft.value.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+        timezoneOffset: timezoneOffsetFor(start),
+        locale: locale.locale,
+      },
+    });
+    if (isSessionGoneMessage(result.message)) {
+      emit("logout");
+      return;
+    }
+    if (result.status === Status.error) {
+      editorError.value = result.message ?? t("calendar.saveFailed");
+      return;
+    }
+    const eventId = result.event?.id ?? draft.value.eventId;
+    editorOpen.value = false;
+    await loadCalendar();
+    if (eventId) selectedEventId.value = eventId;
+    toast.success(t("calendar.saved"));
+  } catch (caught) {
+    editorError.value = caught instanceof Error ? caught.message : t("calendar.saveFailed");
+  } finally {
+    savingEvent.value = false;
+  }
+}
+
+async function deleteSelectedEvent(): Promise<void> {
+  const event = selectedEvent.value;
+  if (!event || deletingEvent.value) return;
+  if (!canModifyEvent(event)) {
+    toast.error(t("calendar.eventReadOnly"));
+    return;
+  }
+  if (!window.confirm(t("calendar.deleteConfirm", { title: event.title }))) return;
+  deletingEvent.value = true;
+  try {
+    const result = await calendarDeleteEvent({
+      sessionId: props.sessionId,
+      eventId: event.id,
+      calendarId: event.calendarId,
+      start: datetimeValue(event.start),
+      end: datetimeValue(event.end),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+      locale: locale.locale,
+    });
+    if (isSessionGoneMessage(result.message)) {
+      emit("logout");
+      return;
+    }
+    if (result.status === Status.error) {
+      toast.error(result.message ?? t("calendar.deleteFailed"));
+      return;
+    }
+    selectedEventId.value = null;
+    await loadCalendar();
+    toast.success(t("calendar.deleted"));
+  } catch (caught) {
+    toast.error(t("calendar.deleteFailedWithError", { error: caught instanceof Error ? caught.message : t("app.unknownError") }));
+  } finally {
+    deletingEvent.value = false;
+  }
+}
 async function loadCalendar(): Promise<void> {
   if (loading.value) return;
   loading.value = true;
@@ -312,6 +503,10 @@ onMounted(() => void loadCalendar());
             {{ option.label }}
           </button>
         </div>
+        <button type="button" class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50" :disabled="writableCalendars.length === 0" @click="openCreateEvent">
+          <Plus :size="14" />
+          {{ t("calendar.newEvent") }}
+        </button>
         <div class="flex items-center gap-1">
           <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" @click="shift(-1)"><ChevronLeft :size="16" /></button>
           <button type="button" class="h-8 rounded-md px-2.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" @click="anchorDate = startOfDay(new Date())">{{ t("calendar.today") }}</button>
@@ -405,6 +600,22 @@ onMounted(() => void loadCalendar());
               <p class="mt-2 flex items-start gap-2 text-sm text-muted-foreground"><Clock3 :size="14" class="mt-0.5 shrink-0" />{{ selectedEventTime(selectedEvent) }}</p>
               <p v-if="selectedEvent.location" class="mt-3 flex items-start gap-2 text-sm"><MapPin :size="14" class="mt-0.5 shrink-0" />{{ selectedEvent.location }}</p>
               <p v-if="selectedEvent.notes" class="mt-3 flex items-start gap-2 whitespace-pre-wrap text-sm"><FileText :size="14" class="mt-0.5 shrink-0" />{{ selectedEvent.notes }}</p>
+              <div class="mt-4 flex items-center gap-2">
+                <button type="button" class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs transition-colors hover:bg-accent disabled:opacity-40" :disabled="!canModifyEvent(selectedEvent)" @click="openEditEvent">
+                  <Pencil :size="13" />
+                  {{ t("calendar.edit") }}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-md border border-destructive/25 px-2.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
+                  :disabled="deletingEvent || !canModifyEvent(selectedEvent)"
+                  @click="deleteSelectedEvent"
+                >
+                  <Spinner v-if="deletingEvent" :size="12" />
+                  <Trash2 v-else :size="13" />
+                  {{ t("calendar.delete") }}
+                </button>
+              </div>
             </template>
             <p v-else class="text-center text-sm text-muted-foreground">{{ t("calendar.noEventSelected") }}</p>
           </div>
@@ -425,7 +636,85 @@ onMounted(() => void loadCalendar());
         <p class="mt-4 flex items-start gap-2 text-sm text-muted-foreground"><Clock3 :size="14" class="mt-0.5 shrink-0" />{{ selectedEventTime(selectedEvent) }}</p>
         <p v-if="selectedEvent.location" class="mt-3 flex items-start gap-2 text-sm"><MapPin :size="14" class="mt-0.5 shrink-0" />{{ selectedEvent.location }}</p>
         <p v-if="selectedEvent.notes" class="mt-3 flex items-start gap-2 whitespace-pre-wrap text-sm"><FileText :size="14" class="mt-0.5 shrink-0" />{{ selectedEvent.notes }}</p>
+        <div class="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+          <button type="button" class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs transition-colors hover:bg-accent disabled:opacity-40" :disabled="!canModifyEvent(selectedEvent)" @click="openEditEvent">
+            <Pencil :size="13" />
+            {{ t("calendar.edit") }}
+          </button>
+          <button type="button" class="inline-flex h-8 items-center gap-1.5 rounded-md border border-destructive/25 px-3 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40" :disabled="deletingEvent || !canModifyEvent(selectedEvent)" @click="deleteSelectedEvent">
+            <Spinner v-if="deletingEvent" :size="12" />
+            <Trash2 v-else :size="13" />
+            {{ t("calendar.delete") }}
+          </button>
+        </div>
       </div>
     </div>
+  </div>
+  <div v-if="editorOpen" class="fixed inset-0 z-[70] grid place-items-center bg-black/40 p-5" @click.self="closeEditor">
+    <form class="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-xl border border-border bg-card p-5 text-card-foreground shadow-2xl" @submit.prevent="saveCalendarEvent">
+      <div class="flex items-center gap-2">
+        <CalendarDays :size="17" class="text-primary" />
+        <h2 class="min-w-0 flex-1 text-base font-semibold">{{ draft.eventId ? t("calendar.editEvent") : t("calendar.newEvent") }}</h2>
+        <button type="button" class="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" :aria-label="t('common.close')" @click="closeEditor">
+          <X :size="16" />
+        </button>
+      </div>
+
+      <div class="mt-4 space-y-3">
+        <label class="block text-xs text-muted-foreground">
+          {{ t("calendar.eventTitle") }}
+          <input v-model="draft.title" data-testid="calendar-event-title" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary" autofocus />
+        </label>
+
+        <label class="block text-xs text-muted-foreground">
+          {{ t("calendar.eventCalendar") }}
+          <select v-model="draft.calendarId" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary">
+            <option v-for="calendar in writableCalendars" :key="calendar.id" :value="calendar.id">{{ calendar.title }}</option>
+          </select>
+        </label>
+
+        <label class="flex items-center gap-2 text-sm">
+          <input v-model="draft.allDay" type="checkbox" class="size-4 rounded border-border" @change="onAllDayChange" />
+          {{ t("calendar.allDay") }}
+        </label>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="block text-xs text-muted-foreground">
+            {{ t("calendar.start") }}
+            <input v-model="draft.start" type="datetime-local" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary" />
+          </label>
+          <label class="block text-xs text-muted-foreground">
+            {{ t("calendar.end") }}
+            <input v-model="draft.end" type="datetime-local" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary" />
+          </label>
+        </div>
+
+        <label class="block text-xs text-muted-foreground">
+          {{ t("calendar.eventLocation") }}
+          <input v-model="draft.location" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary" />
+        </label>
+
+        <label class="block text-xs text-muted-foreground">
+          {{ t("calendar.eventNotes") }}
+          <textarea v-model="draft.notes" class="mt-1 min-h-28 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"></textarea>
+        </label>
+
+        <label class="block text-xs text-muted-foreground">
+          URL
+          <input v-model="draft.url" type="url" class="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary" />
+        </label>
+      </div>
+
+      <p v-if="editorError" class="mt-3 rounded-md border border-destructive/25 bg-destructive/5 p-2.5 text-xs text-destructive">{{ editorError }}</p>
+
+      <div class="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+        <button type="button" class="h-8 rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-accent hover:text-foreground" :disabled="savingEvent" @click="closeEditor">{{ t("common.cancel") }}</button>
+        <button type="submit" class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50" :disabled="savingEvent">
+          <Spinner v-if="savingEvent" :size="12" />
+          <Save v-else :size="13" />
+          {{ savingEvent ? t("calendar.saving") : t("calendar.save") }}
+        </button>
+      </div>
+    </form>
   </div>
 </template>

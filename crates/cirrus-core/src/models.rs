@@ -92,6 +92,66 @@ pub struct CalendarEvent {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEventInput {
+    #[serde(default)]
+    pub event_id: Option<String>,
+    pub calendar_id: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    #[serde(default)]
+    pub all_day: bool,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub timezone_offset: Option<String>,
+    #[serde(default)]
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEventMutationResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub event: Option<CalendarEvent>,
+}
+
+impl CalendarEventMutationResult {
+    pub fn ok(event: Option<CalendarEvent>) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, event }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self { status: statuses::ERROR.to_string(), message: Some(message.into()), event: None }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEventDeleteResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub event_id: Option<String>,
+}
+
+impl CalendarEventDeleteResult {
+    pub fn ok(event_id: String) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, event_id: Some(event_id) }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self { status: statuses::ERROR.to_string(), message: Some(message.into()), event_id: None }
+    }
+}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarLoadResult {

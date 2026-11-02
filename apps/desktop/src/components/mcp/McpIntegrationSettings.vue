@@ -52,6 +52,8 @@ const toolRows = [
   { name: "cirrus_download_drive_file", readOnly: false },
   { name: "cirrus_list_contacts", readOnly: true },
   { name: "cirrus_load_calendar", readOnly: true },
+  { name: "cirrus_save_calendar_event", readOnly: false },
+  { name: "cirrus_delete_calendar_event", readOnly: false },
 ] as const;
 const transportTab = ref<"stdio" | "http">("stdio");
 const selectedClientId = ref("claude");

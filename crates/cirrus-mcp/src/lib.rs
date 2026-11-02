@@ -733,6 +733,42 @@ fn tools_list() -> Value {
                 }), &["startDate", "endDate"]),
                 "outputSchema": tool_output_schema("cirrus_load_calendar"),
                 "annotations": { "title": "Load iCloud Calendar events", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
+                "name": "cirrus_save_calendar_event",
+                "title": "Create or update an iCloud Calendar event",
+                "description": "Create a calendar event when eventId is omitted, or update an existing event when eventId is provided. Recurring events are not supported yet.",
+                "inputSchema": account_schema_required(json!({
+                    "eventId": { "type": "string", "description": "Existing event ID to update. Omit to create a new event." },
+                    "calendarId": { "type": "string", "description": "Calendar ID returned by cirrus_load_calendar." },
+                    "title": { "type": "string", "description": "Event title." },
+                    "start": { "type": "string", "description": "Local start date-time, for example 2026-11-04T03:30:00." },
+                    "end": { "type": "string", "description": "Local end date-time, for example 2026-11-04T04:30:00." },
+                    "allDay": { "type": "boolean", "default": false, "description": "Whether this is an all-day event." },
+                    "location": { "type": "string", "description": "Optional event location." },
+                    "notes": { "type": "string", "description": "Optional event notes." },
+                    "url": { "type": "string", "description": "Optional event URL." },
+                    "timezone": { "type": "string", "default": "Asia/Shanghai", "description": "IANA timezone such as Asia/Shanghai." },
+                    "timezoneOffset": { "type": "string", "default": "+08:00", "description": "UTC offset for the event time, such as +08:00." },
+                    "locale": { "type": "string", "default": "zh-CN", "description": "Language for Apple calendar formatting." }
+                }), &["calendarId", "title", "start", "end"]),
+                "outputSchema": tool_output_schema("cirrus_save_calendar_event"),
+                "annotations": { "title": "Create or update an iCloud Calendar event", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true }
+            },
+            {
+                "name": "cirrus_delete_calendar_event",
+                "title": "Delete an iCloud Calendar event",
+                "description": "Delete a non-recurring iCloud Calendar event. Pass eventId, calendarId, and the original local start/end date-times from cirrus_load_calendar.",
+                "inputSchema": account_schema_required(json!({
+                    "eventId": { "type": "string", "description": "Event ID returned by cirrus_load_calendar." },
+                    "calendarId": { "type": "string", "description": "Calendar ID returned by cirrus_load_calendar." },
+                    "start": { "type": "string", "description": "Local event start date-time." },
+                    "end": { "type": "string", "description": "Local event end date-time." },
+                    "timezone": { "type": "string", "default": "Asia/Shanghai", "description": "IANA timezone such as Asia/Shanghai." },
+                    "locale": { "type": "string", "default": "zh-CN", "description": "Language for Apple calendar formatting." }
+                }), &["eventId", "calendarId", "start", "end"]),
+                "outputSchema": tool_output_schema("cirrus_delete_calendar_event"),
+                "annotations": { "title": "Delete an iCloud Calendar event", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true }
             }
         ]
     })
@@ -1240,6 +1276,37 @@ fn tool_output_schema(tool: &str) -> Value {
             }),
             &["status", "calendars", "events"],
         ),
+        "cirrus_save_calendar_event" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "event": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "calendarId": { "type": "string" },
+                        "start": { "type": "string" },
+                        "end": { "type": "string" },
+                        "allDay": { "type": "boolean" },
+                        "recurring": { "type": "boolean" },
+                        "readOnly": { "type": "boolean" },
+                        "location": { "type": "string" },
+                        "notes": { "type": "string" },
+                        "url": { "type": "string" }
+                    }
+                }
+            }),
+            &["status"],
+        ),
+        "cirrus_delete_calendar_event" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "eventId": { "type": ["string", "null"] }
+            }),
+            &["status"],
+        ),
         _ => json!({ "type": "object" }),
     }
 }
@@ -1320,6 +1387,8 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_download_drive_file" => drive_download_markdown(result),
         "cirrus_list_contacts" => contacts_markdown(result),
         "cirrus_load_calendar" => calendar_markdown(result),
+        "cirrus_save_calendar_event" => calendar_save_markdown(result),
+        "cirrus_delete_calendar_event" => calendar_delete_markdown(result),
         _ => serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string()),
     }
 }
@@ -1619,6 +1688,34 @@ fn note_mutation_markdown(result: &Value) -> String {
     }
     let rows = vec![("Status", string_field(result, "status")), ("Note ID", code_field(result, "noteId"))];
     key_value_markdown("iCloud Note", &rows)
+}
+fn calendar_save_markdown(result: &Value) -> String {
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        return format!("# iCloud Calendar event\n\n{message}");
+    }
+    let Some(event) = result.get("event").filter(|value| !value.is_null()) else {
+        return "# iCloud Calendar event\n\nThe event was saved, but no event details were returned.".to_string();
+    };
+    let rows = vec![
+        ("Title", string_field(event, "title")),
+        ("Event ID", code_field(event, "id")),
+        ("Calendar ID", code_field(event, "calendarId")),
+        ("Start", string_field(event, "start")),
+        ("End", string_field(event, "end")),
+        ("All day", yes_no(event.get("allDay")).to_string()),
+        ("Location", string_field(event, "location")),
+        ("Notes", truncate_text(&string_field(event, "notes"), 1_000)),
+    ];
+    key_value_markdown("iCloud Calendar event", &rows)
+}
+
+fn calendar_delete_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("Status", string_field(result, "status")),
+        ("Event ID", code_field(result, "eventId")),
+        ("Message", string_field(result, "message")),
+    ];
+    key_value_markdown("iCloud Calendar event deleted", &rows)
 }
 fn drive_items_markdown(result: &Value) -> String {
     if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
@@ -2584,7 +2681,7 @@ mod tests {
     fn tools_list_exposes_login_and_account_list_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 26);
+        assert_eq!(tools.len(), 28);
         assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),
