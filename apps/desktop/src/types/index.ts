@@ -318,6 +318,17 @@ export interface PhotosPage {
   nextCursor: string | null;
 }
 
+export interface PhotoDeleteFailure {
+  photoId: string;
+  message: string;
+}
+
+export interface PhotoDeleteResult {
+  status: "OK" | "PARTIAL" | "ERROR";
+  message: string | null;
+  deletedIds: string[];
+  failed: PhotoDeleteFailure[];
+}
 export interface LibraryTotal {
   photos: number;
   videos: number;

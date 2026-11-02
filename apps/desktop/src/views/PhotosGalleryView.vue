@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch, watchEffect } from "vue";
-import { CalendarRange, Check, ChevronDown, Download, ImageOff, Images, Info, LayoutGrid, List, Play, RotateCcw, X } from "@lucide/vue";
+import { CalendarRange, Check, ChevronDown, Download, ImageOff, Images, Info, LayoutGrid, List, Play, RotateCcw, Trash2, X } from "@lucide/vue";
 
 import { Status, StorageKey } from "@/constants";
-import { downloadPhoto, photosAssetDistribution, photosList, photosTotal } from "@/lib/api";
+import { downloadPhoto, photosAssetDistribution, photosDelete, photosList, photosTotal } from "@/lib/api";
 import { readStored, writeStored } from "@/lib/common/storage";
 import { toast } from "@/lib/common/toast";
 import { isSessionGoneMessage } from "@/lib/session-errors";
@@ -376,6 +376,7 @@ const detailsPhotoPosition = computed(() => {
 });
 const detailsPhotoTotal = computed(() => Math.max(1, visiblePhotos.value.length));
 const downloadingPhotoId = ref<string | null>(null);
+const deletingPhotos = ref(false);
 const selectedCount = computed(() => selectedPhotoIds.size);
 const selectedPhotos = computed(() => visiblePhotos.value.filter((photo) => selectedPhotoIds.has(photo.id)));
 
@@ -481,7 +482,7 @@ function onPhotoKeyboard(entry: { index: number }): void {
 function showPhotoContextMenu(entry: { photo: PhotoItem }, event: MouseEvent): void {
   event.preventDefault();
   const width = 208;
-  const height = 154;
+  const height = 190;
   contextMenu.value = {
     photo: entry.photo,
     x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
@@ -563,6 +564,47 @@ function downloadSelectedPhotos(): void {
   if (items.length === 0) return;
   downloads.openDialogWithPhotos(items);
   clearPhotoSelection();
+}
+
+async function deletePhotosByIds(photoIds: string[]): Promise<void> {
+  if (deletingPhotos.value || photoIds.length === 0) return;
+  if (!window.confirm(t("photos.deleteConfirm", { count: photoIds.length }))) return;
+  deletingPhotos.value = true;
+  try {
+    const result = await photosDelete({ sessionId: props.sessionId, photoIds });
+    if (handleExpiredSession(result.message)) return;
+    if (result.status === Status.error) {
+      const detail = result.failed[0]?.message;
+      toast.error(detail ? t("photos.deleteFailedWithError", { error: detail }) : (result.message ?? t("photos.deleteFailed")));
+      return;
+    }
+    const deleted = new Set(result.deletedIds);
+    photos.value = photos.value.filter((photo) => !deleted.has(photo.id));
+    if (viewerPhotos.value) viewerPhotos.value = viewerPhotos.value.filter((photo) => !deleted.has(photo.id));
+    for (const photoId of deleted) selectedPhotoIds.delete(photoId);
+    if (detailsPhoto.value && deleted.has(detailsPhoto.value.id)) detailsPhoto.value = null;
+    contextMenu.value = null;
+    if (viewerIndex.value !== null) closeViewer();
+    if (result.status === "PARTIAL") {
+      toast.warning(t("photos.deletePartial", { count: result.deletedIds.length, failed: result.failed.length }));
+    } else {
+      toast.success(t("photos.deleted", { count: result.deletedIds.length }));
+    }
+    await Promise.allSettled([reload(), loadTotal(props.sessionId), loadTimeline(props.sessionId)]);
+  } catch (caught) {
+    toast.error(t("photos.deleteFailedWithError", { error: caught instanceof Error ? caught.message : t("app.unknownError") }));
+  } finally {
+    deletingPhotos.value = false;
+  }
+}
+
+function deleteSelectedPhotos(): void {
+  void deletePhotosByIds(selectedPhotos.value.map((photo) => photo.id));
+}
+
+function deletePhotoFromContext(photo: PhotoItem): void {
+  contextMenu.value = null;
+  void deletePhotosByIds([photo.id]);
 }
 
 function closePhotoOverlays(): void {
@@ -1196,9 +1238,14 @@ watch(
         {{ t("photos.selected", { count: selectedCount }) }}
       </span>
       <span class="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
-      <Button size="sm" variant="outline" class="h-7 gap-1 rounded-md border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary shadow-none hover:bg-primary/10 hover:text-primary" @click="downloadSelectedPhotos">
+      <Button size="sm" variant="outline" class="h-7 gap-1 rounded-md border-primary/20 bg-primary/5 px-3 text-xs font-medium text-primary shadow-none hover:bg-primary/10 hover:text-primary" :disabled="deletingPhotos" @click="downloadSelectedPhotos">
         <Download :size="13" />
         {{ t("photos.downloadSelected") }}
+      </Button>
+      <Button size="sm" variant="outline" class="h-7 gap-1 rounded-md border-destructive/20 bg-destructive/5 px-3 text-xs font-medium text-destructive shadow-none hover:bg-destructive/10 hover:text-destructive" :disabled="deletingPhotos" @click="deleteSelectedPhotos">
+        <Spinner v-if="deletingPhotos" :size="12" />
+        <Trash2 v-else :size="13" />
+        {{ deletingPhotos ? t("photos.deleting") : t("photos.deleteSelected") }}
       </Button>
       <button type="button" class="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" :aria-label="t('photos.clearSelection')" :title="t('photos.clearSelection')" @click="clearPhotoSelection">
         <X :size="14" />
@@ -1220,6 +1267,11 @@ watch(
         <button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground" @click="selectPhotoFromContext(contextMenu.photo)">
           <Check :size="14" />
           {{ t("photos.selectThis") }}
+        </button>
+        <button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50" :disabled="deletingPhotos" @click="deletePhotoFromContext(contextMenu.photo)">
+          <Spinner v-if="deletingPhotos" :size="13" />
+          <Trash2 v-else :size="14" />
+          {{ t("photos.delete") }}
         </button>
       </div>
     </div>

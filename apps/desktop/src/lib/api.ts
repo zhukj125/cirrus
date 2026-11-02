@@ -28,6 +28,7 @@ import type {
   McpInfo,
   McpToolAccessSettings,
   Photos2faOptions,
+  PhotoDeleteResult,
   PhotosListRequest,
   PhotosLoginResult,
   PhotosPage,
@@ -244,6 +245,10 @@ export function photosSendCode(sessionId: string): Promise<PhotosLoginResult> {
 
 export function photosList(payload: PhotosListRequest): Promise<PhotosPage> {
   return call<PhotosPage>("photos_list", payload);
+}
+
+export function photosDelete(payload: { sessionId: string; photoIds: string[] }): Promise<PhotoDeleteResult> {
+  return call<PhotoDeleteResult>("photos_delete", payload);
 }
 
 export function photosTotal(sessionId: string): Promise<LibraryTotal> {

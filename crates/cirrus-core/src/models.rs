@@ -686,6 +686,48 @@ impl PhotosPage {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PhotoDeleteFailure {
+    pub photo_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotoDeleteResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub deleted_ids: Vec<String>,
+    pub failed: Vec<PhotoDeleteFailure>,
+}
+
+impl PhotoDeleteResult {
+    pub fn from_outcome(deleted_ids: Vec<String>, failed: Vec<PhotoDeleteFailure>) -> Self {
+        let status = if deleted_ids.is_empty() {
+            statuses::ERROR
+        } else if failed.is_empty() {
+            statuses::OK
+        } else {
+            "PARTIAL"
+        };
+        let message = match (deleted_ids.len(), failed.len()) {
+            (_, 0) => None,
+            (0, _) => Some("No photos were deleted".to_string()),
+            (deleted, failed_count) => Some(format!("Deleted {deleted} photos; {failed_count} failed")),
+        };
+        Self { status: status.to_string(), message, deleted_ids, failed }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: statuses::ERROR.to_string(),
+            message: Some(message.into()),
+            deleted_ids: Vec::new(),
+            failed: Vec::new(),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryTotal {
     pub photos: i64,
     pub videos: i64,

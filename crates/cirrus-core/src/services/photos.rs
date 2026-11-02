@@ -12,9 +12,9 @@ use crate::apple::http::{client as hc, headers as hh};
 use crate::error::{AppError, AppResult};
 use crate::models::session_keys::*;
 use crate::models::{
-    statuses, AssetBucketDto, AssetDistributionDto, LibraryTotal, MonthEntryDto, MonthExactDto, PhoneOption, PhotoItem,
-    PhotoMetadata, Photos2faOptions, PhotosLoginResult, PhotosPage, PhotosTimelineDto, SrpAuthRequest, TimelineDto,
-    YearEntryDto,
+    statuses, AssetBucketDto, AssetDistributionDto, LibraryTotal, MonthEntryDto, MonthExactDto, PhoneOption,
+    PhotoDeleteFailure, PhotoDeleteResult, PhotoItem, PhotoMetadata, Photos2faOptions, PhotosLoginResult, PhotosPage,
+    PhotosTimelineDto, SrpAuthRequest, TimelineDto, YearEntryDto,
 };
 use crate::services::auth as auth_service;
 use crate::services::devices;
@@ -106,6 +106,7 @@ pub mod cloud_kit_schema {
     pub const FIELD_TIME_ZONE_OFFSET: &str = "timeZoneOffset";
     pub const FIELD_CODEC: &str = "codec";
     pub const FIELD_RECORD_NAME: &str = "recordName";
+    pub const FIELD_IS_DELETED: &str = "isDeleted";
 
     pub const WRAPPER_VALUE: &str = "value";
     pub const ASSET_DOWNLOAD_URL: &str = "downloadURL";
@@ -887,6 +888,200 @@ pub async fn library_total(manager: &SessionManager, session_id: &str) -> AppRes
     parse_library_total(&body)
 }
 
+pub async fn delete(manager: &SessionManager, session_id: &str, requested_photo_ids: Vec<String>) -> PhotoDeleteResult {
+    if session_id.trim().is_empty() {
+        return PhotoDeleteResult::error("Missing session ID. Please sign in again.");
+    }
+    let mut photo_ids: Vec<String> = Vec::new();
+    for photo_id in requested_photo_ids {
+        let photo_id = photo_id.trim();
+        if !photo_id.is_empty() && !photo_ids.iter().any(|value| value == photo_id) {
+            photo_ids.push(photo_id.to_string());
+        }
+    }
+    if photo_ids.is_empty() {
+        return PhotoDeleteResult::error("Select at least one photo to delete");
+    }
+    if photo_ids.len() > 100 {
+        return PhotoDeleteResult::error("Delete at most 100 photos at a time");
+    }
+    let handle = match manager.get(session_id).await {
+        Ok(handle) => handle,
+        Err(error) => return PhotoDeleteResult::error(error.to_string()),
+    };
+    let mut session = handle.lock().await;
+    if let Err(error) = devices::account_login(&mut session, false).await {
+        return PhotoDeleteResult::error(error.to_string());
+    }
+    let Some(zone_owner) = zone_owner_cached(&mut session).await else {
+        return PhotoDeleteResult::error("Photos library owner was not available");
+    };
+    let lookup_url = match build_lookup_url(&session) {
+        Ok(url) => url,
+        Err(error) => return PhotoDeleteResult::error(error.to_string()),
+    };
+    let lookup_body = build_batch_lookup_body(&photo_ids, Some(&zone_owner));
+    let headers = [(hh::CONTENT_TYPE, hc::CONTENT_TYPE_TEXT_PLAIN)];
+    let lookup = match session.request(Method::POST, &lookup_url, Some(&lookup_body), &headers).await {
+        Ok(response) => response,
+        Err(error) => return PhotoDeleteResult::error(error.to_string()),
+    };
+    if lookup.status != 200 {
+        return PhotoDeleteResult::error(format!(
+            "Could not look up photos: HTTP {} {}",
+            lookup.status,
+            auth_service::truncate(&lookup.body, photos_api::TRUNCATE_ERROR)
+        ));
+    }
+    if let Some(message) = cloud_kit_zone_error(&lookup.body) {
+        return PhotoDeleteResult::error(message);
+    }
+    let lookup_root: Value = match serde_json::from_str(&lookup.body) {
+        Ok(value) => value,
+        Err(error) => return PhotoDeleteResult::error(format!("Photo lookup response is invalid: {error}")),
+    };
+    if let Some(message) = record_error(&lookup_root) {
+        return PhotoDeleteResult::error(message);
+    }
+    let records = field(&lookup_root, ck::RECORDS).as_array().cloned().unwrap_or_default();
+    let mut change_tags = HashMap::new();
+    let mut failed = Vec::new();
+    for photo_id in &photo_ids {
+        let Some(record) = records.iter().find(|record| record_name(record).as_deref() == Some(photo_id)) else {
+            failed.push(PhotoDeleteFailure {
+                photo_id: photo_id.clone(),
+                message: "Photo record was not found".to_string(),
+            });
+            continue;
+        };
+        if let Some(message) = record_error(record) {
+            failed.push(PhotoDeleteFailure { photo_id: photo_id.clone(), message });
+            continue;
+        }
+        if field(record, ck::FIELD_RECORD_TYPE).as_str() != Some(ck::RECORD_TYPE_ASSET) {
+            failed.push(PhotoDeleteFailure {
+                photo_id: photo_id.clone(),
+                message: "CloudKit record is not a photo asset".to_string(),
+            });
+            continue;
+        }
+        let Some(change_tag) = record.get("recordChangeTag").and_then(Value::as_str) else {
+            failed.push(PhotoDeleteFailure {
+                photo_id: photo_id.clone(),
+                message: "Photo record is missing recordChangeTag".to_string(),
+            });
+            continue;
+        };
+        change_tags.insert(photo_id.clone(), change_tag.to_string());
+    }
+    if change_tags.is_empty() {
+        return PhotoDeleteResult::from_outcome(Vec::new(), failed);
+    }
+
+    let modify_body = build_photo_delete_body(&change_tags, &zone_owner);
+    let modify_url = match build_modify_url(&session) {
+        Ok(url) => url,
+        Err(error) => return PhotoDeleteResult::error(error.to_string()),
+    };
+    let response = match session.request(Method::POST, &modify_url, Some(&modify_body), &headers).await {
+        Ok(response) => response,
+        Err(error) => return PhotoDeleteResult::error(error.to_string()),
+    };
+    if response.status != 200 {
+        return PhotoDeleteResult::error(format!(
+            "Could not delete photos: HTTP {} {}",
+            response.status,
+            auth_service::truncate(&response.body, photos_api::TRUNCATE_ERROR)
+        ));
+    }
+    if let Some(message) = cloud_kit_zone_error(&response.body) {
+        return PhotoDeleteResult::error(message);
+    }
+    let response_root: Value = match serde_json::from_str(&response.body) {
+        Ok(value) => value,
+        Err(error) => return PhotoDeleteResult::error(format!("Photo delete response is invalid: {error}")),
+    };
+    if let Some(message) = record_error(&response_root) {
+        return PhotoDeleteResult::error(message);
+    }
+    let response_records = field(&response_root, ck::RECORDS).as_array().cloned().unwrap_or_default();
+    let mut deleted_ids = Vec::new();
+    for photo_id in change_tags.keys() {
+        let Some(record) = response_records.iter().find(|record| record_name(record).as_deref() == Some(photo_id))
+        else {
+            failed.push(PhotoDeleteFailure {
+                photo_id: photo_id.clone(),
+                message: "CloudKit did not return the deleted asset".to_string(),
+            });
+            continue;
+        };
+        if let Some(message) = record_error(record) {
+            failed.push(PhotoDeleteFailure { photo_id: photo_id.clone(), message });
+            continue;
+        }
+        if optional_long_value(field(record, ck::FIELD_FIELDS), ck::FIELD_IS_DELETED) == Some(1) {
+            deleted_ids.push(photo_id.clone());
+        } else {
+            failed.push(PhotoDeleteFailure {
+                photo_id: photo_id.clone(),
+                message: "CloudKit did not mark the photo as deleted".to_string(),
+            });
+        }
+    }
+    deleted_ids.sort();
+    failed.sort_by(|left, right| left.photo_id.cmp(&right.photo_id));
+    PhotoDeleteResult::from_outcome(deleted_ids, failed)
+}
+
+fn build_batch_lookup_body(photo_ids: &[String], zone_owner: Option<&str>) -> Value {
+    let records = photo_ids
+        .iter()
+        .map(|photo_id| json_object(vec![(ck::FIELD_RECORD_NAME, Value::String(photo_id.clone()))]))
+        .collect::<Vec<_>>();
+    json_object(vec![(ck::RECORDS, Value::Array(records)), (ckq::ZONE_ID, build_zone_id(zone_owner))])
+}
+
+fn build_photo_delete_body(change_tags: &HashMap<String, String>, zone_owner: &str) -> Value {
+    let operations = change_tags
+        .iter()
+        .map(|(photo_id, change_tag)| {
+            json!({
+                "operationType": "update",
+                "record": {
+                    "recordName": photo_id,
+                    "recordChangeTag": change_tag,
+                    "recordType": ck::RECORD_TYPE_ASSET,
+                    "fields": { ck::FIELD_IS_DELETED: { "value": 1 } }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "atomic": true,
+        "operations": operations,
+        "zoneID": build_zone_id(Some(zone_owner))
+    })
+}
+fn build_modify_url(session: &SrpSession) -> AppResult<String> {
+    let Some(base) = cloud_kit_base(session) else {
+        return Err(AppError::auth(
+            "iCloud Photos is not enabled for this account or no CloudKit service URL was returned",
+        ));
+    };
+    let dsid = session.dsid().unwrap_or("null");
+    Ok(format!(
+        "{base}{modify}{params}{param_dsid}{dsid}",
+        modify = api::cloud_kit::RECORDS_MODIFY,
+        params = api::cloud_kit::QUERY_PARAMS,
+        param_dsid = api::cloud_kit::PARAM_DSID,
+    ))
+}
+
+fn record_error(record: &Value) -> Option<String> {
+    let code = record.get("serverErrorCode").and_then(Value::as_str)?;
+    let reason = record.get("reason").and_then(Value::as_str).unwrap_or("CloudKit error");
+    Some(format!("{code}: {reason}"))
+}
 async fn lookup_record_context(context: &PhotoReadContext, record_name: &str) -> AppResult<String> {
     let url = build_lookup_url(&context.session)?;
     let body = build_lookup_body(record_name, context.zone_owner.as_deref());
@@ -3696,5 +3891,43 @@ mod tests {
         assert_eq!(request.session_id, "s-1");
         assert_eq!(request.year, 2024);
         assert_eq!(request.month, 3);
+    }
+    #[test]
+    fn delete_body_uses_cloudkit_asset_updates() {
+        let change_tags =
+            HashMap::from([("asset-1".to_string(), "tag-1".to_string()), ("asset-2".to_string(), "tag-2".to_string())]);
+        let body = build_photo_delete_body(&change_tags, "_owner0001");
+        assert_eq!(body["atomic"], true);
+        assert_eq!(body["zoneID"]["zoneName"], "PrimarySync");
+        assert_eq!(body["zoneID"]["ownerRecordName"], "_owner0001");
+        let operations = body["operations"].as_array().expect("operations");
+        assert_eq!(operations.len(), 2);
+        for operation in operations {
+            assert_eq!(operation["operationType"], "update");
+            assert_eq!(operation["record"]["recordType"], "CPLAsset");
+            assert_eq!(operation["record"]["fields"]["isDeleted"]["value"], 1);
+        }
+    }
+
+    #[test]
+    fn batch_lookup_body_contains_all_photo_ids() {
+        let body = build_batch_lookup_body(&["asset-1".to_string(), "asset-2".to_string()], Some("_owner0001"));
+        let records = body["records"].as_array().expect("records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["recordName"], "asset-1");
+        assert_eq!(records[1]["recordName"], "asset-2");
+        assert_eq!(body["zoneID"]["ownerRecordName"], "_owner0001");
+    }
+
+    #[test]
+    fn photo_delete_result_reports_partial_and_complete_outcomes() {
+        let complete = PhotoDeleteResult::from_outcome(vec!["asset-1".to_string()], Vec::new());
+        assert_eq!(complete.status, statuses::OK);
+        let partial = PhotoDeleteResult::from_outcome(
+            vec!["asset-1".to_string()],
+            vec![PhotoDeleteFailure { photo_id: "asset-2".to_string(), message: "failed".to_string() }],
+        );
+        assert_eq!(partial.status, "PARTIAL");
+        assert_eq!(partial.deleted_ids, vec!["asset-1"]);
     }
 }

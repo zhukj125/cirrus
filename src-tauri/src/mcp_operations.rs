@@ -56,6 +56,10 @@ pub async fn call_tool(
                     .await,
             )?)
         }
+        "cirrus_delete_photos" => {
+            let photo_ids = required_string_array(arguments, "photoIds")?;
+            Ok(to_value(photos::delete(&state.sessions, &resolved.session_id, photo_ids).await)?)
+        }
         "cirrus_photos_total" => Ok(to_value(
             photos::library_total(&state.sessions, &resolved.session_id).await.map_err(|error| error.to_string())?,
         )?),
@@ -456,6 +460,25 @@ fn required_str<'a>(arguments: &'a Value, key: &str) -> Result<&'a str, String> 
         .ok_or_else(|| format!("Missing required argument: {key}"))
 }
 
+fn required_string_array(arguments: &Value, key: &str) -> Result<Vec<String>, String> {
+    let values = arguments
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("Missing required array argument: {key}"))?;
+    let mut result = Vec::new();
+    for value in values {
+        let Some(value) = value.as_str().map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if !result.iter().any(|existing| existing == value) {
+            result.push(value.to_string());
+        }
+    }
+    if result.is_empty() {
+        return Err(format!("{key} must contain at least one ID"));
+    }
+    Ok(result)
+}
 fn optional_str<'a>(arguments: &'a Value, key: &str) -> Option<&'a str> {
     arguments.get(key).and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty())
 }

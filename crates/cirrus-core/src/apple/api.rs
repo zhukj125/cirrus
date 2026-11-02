@@ -98,6 +98,7 @@ pub mod cloud_kit {
     pub const RECORDS_QUERY: &str = "/database/1/com.apple.photos.cloud/production/private/records/query";
 
     pub const RECORDS_LOOKUP: &str = "/database/1/com.apple.photos.cloud/production/private/records/lookup";
+    pub const RECORDS_MODIFY: &str = "/database/1/com.apple.photos.cloud/production/private/records/modify";
 
     pub const ZONES_LIST: &str = "/database/1/com.apple.photos.cloud/production/private/zones/list";
 

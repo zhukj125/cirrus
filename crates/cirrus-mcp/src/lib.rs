@@ -576,6 +576,22 @@ fn tools_list() -> Value {
                 "annotations": { "title": "Download an iCloud photo or video", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
+                "name": "cirrus_delete_photos",
+                "title": "Delete iCloud Photos",
+                "description": "Move one or more iCloud Photos assets to Recently Deleted. Pass photo IDs returned by cirrus_list_photos.",
+                "inputSchema": account_schema_required(json!({
+                    "photoIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": { "type": "string" },
+                        "description": "Photo IDs returned by cirrus_list_photos."
+                    }
+                }), &["photoIds"]),
+                "outputSchema": tool_output_schema("cirrus_delete_photos"),
+                "annotations": { "title": "Delete iCloud Photos", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true }
+            },
+            {
                 "name": "cirrus_cancel_download",
                 "title": "Cancel an MCP download",
                 "description": "Cancel a download started with cirrus_download_photo by its transferId.",
@@ -1030,6 +1046,25 @@ fn tool_output_schema(tool: &str) -> Value {
             }),
             &["transferId", "path", "sizeBytes", "fileName", "persisted"],
         ),
+        "cirrus_delete_photos" => object_schema(
+            json!({
+                "status": { "type": "string", "description": "OK, PARTIAL, or ERROR." },
+                "message": { "type": ["string", "null"] },
+                "deletedIds": { "type": "array", "items": { "type": "string" } },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "photoId": { "type": "string" },
+                            "message": { "type": "string" }
+                        },
+                        "required": ["photoId", "message"]
+                    }
+                }
+            }),
+            &["status", "deletedIds", "failed"],
+        ),
         "cirrus_cancel_download" => object_schema(
             json!({
                 "transferId": { "type": "string" },
@@ -1274,6 +1309,7 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_photos_timeline" => photos_timeline_markdown(result),
         "cirrus_photos_month_exact" => month_exact_markdown(result),
         "cirrus_download_photo" => download_photo_markdown(result),
+        "cirrus_delete_photos" => photo_delete_markdown(result),
         "cirrus_cancel_download" => cancel_download_markdown(result),
         "cirrus_list_download_tasks" => download_tasks_markdown(result),
         "cirrus_get_account_avatar" | "cirrus_get_contact_photo" | "cirrus_get_note_image" => image_markdown(result),
@@ -1434,6 +1470,36 @@ fn download_photo_markdown(result: &Value) -> String {
     key_value_markdown("Download completed", &rows)
 }
 
+fn photo_delete_markdown(result: &Value) -> String {
+    let deleted = result.get("deletedIds").and_then(Value::as_array).cloned().unwrap_or_default();
+    let failed = result.get("failed").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!(
+        "# iCloud Photos deletion\n\n| Field | Value |\n| --- | --- |\n| Status | {} |\n| Deleted | {} |\n| Failed | {} |\n",
+        markdown_cell(string_field(result, "status")),
+        deleted.len(),
+        failed.len(),
+    );
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        output.push_str(&format!("| Message | {} |\n", markdown_cell(message)));
+    }
+    if !deleted.is_empty() {
+        output.push_str("\nDeleted photo IDs:\n\n");
+        for photo_id in deleted {
+            output.push_str(&format!("- `{}`\n", photo_id.as_str().unwrap_or_default()));
+        }
+    }
+    if !failed.is_empty() {
+        output.push_str("\nFailures:\n\n");
+        for item in failed {
+            output.push_str(&format!(
+                "- `{}`: {}\n",
+                string_field(&item, "photoId"),
+                markdown_cell(string_field(&item, "message"))
+            ));
+        }
+    }
+    output
+}
 fn cancel_download_markdown(result: &Value) -> String {
     let rows = vec![
         ("Transfer ID", code_field(result, "transferId")),
@@ -2518,7 +2584,7 @@ mod tests {
     fn tools_list_exposes_login_and_account_list_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 25);
+        assert_eq!(tools.len(), 26);
         assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),

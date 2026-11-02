@@ -192,6 +192,7 @@ pub fn run() {
             commands::photos::photos_finish_2fa,
             commands::photos::photos_send_code,
             commands::photos::photos_list,
+            commands::photos::photos_delete,
             commands::photos::photos_total,
             commands::photos::photos_asset_distribution,
             commands::photos::photos_month_exact,

@@ -37,6 +37,7 @@ const toolRows = [
   { name: "cirrus_photos_timeline", readOnly: true },
   { name: "cirrus_photos_month_exact", readOnly: true },
   { name: "cirrus_download_photo", readOnly: false },
+  { name: "cirrus_delete_photos", readOnly: false },
   { name: "cirrus_cancel_download", readOnly: false },
   { name: "cirrus_list_download_tasks", readOnly: true },
   { name: "cirrus_get_account_avatar", readOnly: true },

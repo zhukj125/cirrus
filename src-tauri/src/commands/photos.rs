@@ -176,6 +176,17 @@ pub async fn photos_list(state: SharedState<'_>, payload: PhotosListRequest) -> 
     Ok(photos::list(sessions(&state), &payload.session_id, payload.cursor, payload.limit, payload.start_rank).await)
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotosDeleteRequest {
+    pub session_id: String,
+    pub photo_ids: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn photos_delete(state: SharedState<'_>, payload: PhotosDeleteRequest) -> AppResult<PhotoDeleteResult> {
+    Ok(photos::delete(sessions(&state), &payload.session_id, payload.photo_ids).await)
+}
 #[tauri::command]
 pub async fn photos_total(state: SharedState<'_>, payload: SessionRequest) -> AppResult<LibraryTotal> {
     let session_id = payload.session_id.unwrap_or_default();
