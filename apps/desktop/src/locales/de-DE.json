@@ -38,7 +38,7 @@
   "notes.createFailed": "Notiz konnte nicht erstellt werden",
   "notes.updateFailed": "Notiz konnte nicht gespeichert werden",
   "notes.deleteFailed": "Notiz konnte nicht gelöscht werden",
-  "notes.attachmentsReadOnly": "Notizen mit Anhängen können noch nicht bearbeitet werden",
+  "notes.attachmentsReadOnly": "Vorhandene Bilder bleiben an ihrer Position. Das Hinzufügen, Entfernen oder Verschieben von Bildern wird noch nicht unterstützt.",
   "notes.emptyDraft": "Titel oder Text eingeben",
   "notes.titlePlaceholder": "Titel",
   "notes.bodyPlaceholder": "Text",

@@ -207,7 +207,7 @@ cirrus-mcp-server
 - Linux 的会话恢复需要 Secret Service 实现
 - 依赖 iCloud 私有 Web API，Apple 更新后可能需要适配
 - iCloud 云盘目前支持浏览和下载，暂不支持上传与删除
-- 备忘录编辑目前为纯文本，带附件的备忘录暂不支持编辑
+- 备忘录编辑会保留已有穿插图片，并可修改图片周围的文字；暂不支持新增、删除或移动附件
 - 删除的照片和视频会先移到“最近删除”，可在 iCloud 中恢复
 - 重复日程在当前版本中暂时只读
 - 设备地图需要配置 AMap 或 Google Maps API Key

@@ -38,7 +38,7 @@
   "notes.createFailed": "新建备忘录失败",
   "notes.updateFailed": "保存备忘录失败",
   "notes.deleteFailed": "删除备忘录失败",
-  "notes.attachmentsReadOnly": "带附件的备忘录暂不支持编辑",
+  "notes.attachmentsReadOnly": "已有图片会保留在原位置，暂不支持新增、删除或移动图片。",
   "notes.emptyDraft": "请输入标题或正文",
   "notes.titlePlaceholder": "标题",
   "notes.bodyPlaceholder": "正文",

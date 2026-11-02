@@ -38,7 +38,7 @@
   "notes.createFailed": "Could not create the note",
   "notes.updateFailed": "Could not save the note",
   "notes.deleteFailed": "Could not delete the note",
-  "notes.attachmentsReadOnly": "Notes with attachments cannot be edited yet",
+  "notes.attachmentsReadOnly": "Existing images stay in place. Adding, removing, or moving images is not supported yet.",
   "notes.emptyDraft": "Enter a title or body",
   "notes.titlePlaceholder": "Title",
   "notes.bodyPlaceholder": "Body",

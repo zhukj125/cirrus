@@ -38,7 +38,7 @@
   "notes.createFailed": "تعذر إنشاء الملاحظة",
   "notes.updateFailed": "تعذر حفظ الملاحظة",
   "notes.deleteFailed": "تعذر حذف الملاحظة",
-  "notes.attachmentsReadOnly": "لا يمكن تحرير الملاحظات التي تحتوي على مرفقات بعد",
+  "notes.attachmentsReadOnly": "تبقى الصور الحالية في مكانها. لا يزال إضافة الصور أو حذفها أو نقلها غير مدعوم.",
   "notes.emptyDraft": "أدخل عنوانًا أو نصًا",
   "notes.titlePlaceholder": "العنوان",
   "notes.bodyPlaceholder": "النص",

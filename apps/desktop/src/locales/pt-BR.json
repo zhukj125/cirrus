@@ -38,7 +38,7 @@
   "notes.createFailed": "Não foi possível criar a nota",
   "notes.updateFailed": "Não foi possível salvar a nota",
   "notes.deleteFailed": "Não foi possível excluir a nota",
-  "notes.attachmentsReadOnly": "Notas com anexos ainda não podem ser editadas",
+  "notes.attachmentsReadOnly": "As imagens existentes permanecem no lugar. Ainda não é possível adicionar, remover ou mover imagens.",
   "notes.emptyDraft": "Digite um título ou texto",
   "notes.titlePlaceholder": "Título",
   "notes.bodyPlaceholder": "Texto",

@@ -38,7 +38,7 @@
   "notes.createFailed": "Не удалось создать заметку",
   "notes.updateFailed": "Не удалось сохранить заметку",
   "notes.deleteFailed": "Не удалось удалить заметку",
-  "notes.attachmentsReadOnly": "Заметки с вложениями пока нельзя редактировать",
+  "notes.attachmentsReadOnly": "Существующие изображения остаются на своих местах. Добавление, удаление и перемещение изображений пока не поддерживаются.",
   "notes.emptyDraft": "Введите заголовок или текст",
   "notes.titlePlaceholder": "Заголовок",
   "notes.bodyPlaceholder": "Текст",

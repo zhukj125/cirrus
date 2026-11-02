@@ -207,7 +207,7 @@ cirrus-mcp-server
 - Linux session restore requires a Secret Service implementation.
 - iCloud uses private web APIs that may change without notice.
 - iCloud Drive currently supports browsing and downloading; uploading and deleting are not yet implemented.
-- Note editing is plain text; notes with attachments remain read-only for now.
+- Note editing preserves existing inline images and lets you edit the text around them; adding, removing, or moving attachments is not supported yet.
 - Deleted photos and videos are moved to Recently Deleted and can be recovered from iCloud.
 - Recurring calendar events remain read-only in this version.
 - The device map requires an AMap or Google Maps API key.

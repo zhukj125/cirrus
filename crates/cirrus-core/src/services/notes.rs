@@ -124,6 +124,10 @@ pub async fn detail(manager: &SessionManager, session_id: &str, note_id: &str) -
         Ok(note) => note,
         Err(error) => return NoteDetailResult::error(error.to_string()),
     };
+    let ordered_attachment_ids = match ordered_note_attachment_ids(record) {
+        Ok(ids) => ids,
+        Err(error) => return NoteDetailResult::error(error.to_string()),
+    };
     let mut attachment_ids = attachment_references(record);
     attachment_ids.extend(embedded_attachment_ids);
     attachment_ids.sort();
@@ -131,7 +135,9 @@ pub async fn detail(manager: &SessionManager, session_id: &str, note_id: &str) -
     log::info!("[NOTES] note={} attachmentRefs={}", note_id, attachment_ids.len());
     if !attachment_ids.is_empty() {
         match query_attachments(&mut session, &base, &attachment_ids).await {
-            Ok(attachments) => note.attachments = attachments,
+            Ok(attachments) => {
+                note.attachments = order_note_attachments(attachments, &ordered_attachment_ids);
+            }
             Err(error) => log::warn!("[NOTES] attachment lookup failed: {error}"),
         }
     }
@@ -411,8 +417,10 @@ fn create_operation(note_id: &str, folder_id: &str, title: &str, body: &str, now
 }
 
 fn update_operation(record: &Value, title: &str, body: &str, now: i64) -> AppResult<Value> {
-    if !note_attachment_ids(record)?.is_empty() {
-        return Err(AppError::other("Editing notes with attachments is not supported yet"));
+    let ordered_attachment_ids = ordered_note_attachment_ids(record)?;
+    let marker_count = body.matches('\u{fffc}').count();
+    if marker_count != ordered_attachment_ids.len() {
+        return Err(AppError::other("Inline attachment placeholders must remain unchanged when editing this note"));
     }
     let note_id = record
         .get("recordName")
@@ -433,7 +441,7 @@ fn update_operation(record: &Value, title: &str, body: &str, now: i64) -> AppRes
             "ModificationDate": { "value": now },
             "TitleEncrypted": { "value": BASE64.encode(title.as_bytes()) },
             "SnippetEncrypted": { "value": BASE64.encode(snippet.as_bytes()) },
-            "TextDataEncrypted": { "value": encode_note_document(&text)? }
+            "TextDataEncrypted": { "value": encode_note_document_with_attachments(&text, &ordered_attachment_ids)? }
         },
         "parent": { "recordName": folder_id },
         "recordType": "Note"
@@ -591,6 +599,27 @@ fn note_attachment_ids(record: &Value) -> AppResult<Vec<String>> {
     Ok(ids)
 }
 
+fn ordered_note_attachment_ids(record: &Value) -> AppResult<Vec<String>> {
+    let Some(encoded) = record.pointer("/fields/TextDataEncrypted/value").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    let bytes =
+        BASE64.decode(encoded).map_err(|error| AppError::other(format!("Could not decode note body: {error}")))?;
+    let raw = decompress_note_document(&bytes).or_else(|_| Ok::<Vec<u8>, AppError>(bytes.clone()))?;
+    extract_note_attachment_ids_ordered(&raw)
+}
+
+fn order_note_attachments(mut attachments: Vec<NoteAttachment>, ordered_ids: &[String]) -> Vec<NoteAttachment> {
+    let mut ordered = Vec::with_capacity(attachments.len());
+    for id in ordered_ids {
+        if let Some(index) = attachments.iter().position(|attachment| &attachment.id == id) {
+            ordered.push(attachments.remove(index));
+        }
+    }
+    ordered.extend(attachments);
+    ordered
+}
+
 fn normalized_title(title: &str) -> String {
     let title = title.lines().next().unwrap_or("").trim();
     if title.is_empty() {
@@ -631,8 +660,30 @@ fn now_millis() -> i64 {
 }
 
 fn encode_note_document(text: &str) -> AppResult<String> {
+    encode_note_document_with_attachments(text, &[])
+}
+
+fn encode_note_document_with_attachments(text: &str, attachment_ids: &[String]) -> AppResult<String> {
+    let marker_count = text.matches('\u{fffc}').count();
+    if marker_count != attachment_ids.len() {
+        return Err(AppError::other("Inline attachment IDs do not match note placeholders"));
+    }
     let mut topotext = protobuf_bytes(2, text.as_bytes());
-    topotext.extend(protobuf_varint(5, 1));
+    if attachment_ids.is_empty() {
+        topotext.extend(protobuf_varint(5, 1));
+    } else {
+        for (index, segment) in text.split('\u{fffc}').enumerate() {
+            if !segment.is_empty() {
+                let run = protobuf_varint(1, segment.encode_utf16().count() as u64);
+                topotext.extend(protobuf_bytes(5, &run));
+            }
+            if let Some(attachment_id) = attachment_ids.get(index) {
+                let mut run = protobuf_varint(1, 1);
+                run.extend(protobuf_bytes(12, &protobuf_bytes(1, attachment_id.as_bytes())));
+                topotext.extend(protobuf_bytes(5, &run));
+            }
+        }
+    }
     let mut version = protobuf_varint(1, 0);
     version.extend(protobuf_bytes(3, &topotext));
     let mut document = protobuf_varint(1, 0);
@@ -1102,6 +1153,13 @@ fn extract_note_text(document: &[u8]) -> AppResult<Option<String>> {
 }
 
 fn extract_note_attachment_ids(document: &[u8]) -> AppResult<Vec<String>> {
+    let mut ids = extract_note_attachment_ids_ordered(document)?;
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+fn extract_note_attachment_ids_ordered(document: &[u8]) -> AppResult<Vec<String>> {
     let Some(version) = last_length_delimited(document, 2)? else {
         return Ok(Vec::new());
     };
@@ -1120,8 +1178,6 @@ fn extract_note_attachment_ids(document: &[u8]) -> AppResult<Vec<String>> {
             }
         }
     }
-    ids.sort();
-    ids.dedup();
     Ok(ids)
 }
 
@@ -1252,6 +1308,19 @@ mod tests {
             value >>= 7;
         }
         out.push(value as u8);
+    }
+
+    fn note_record_with_inline_attachments(text: &str, attachment_ids: &[String]) -> Value {
+        let encoded = encode_note_document_with_attachments(text, attachment_ids).expect("encode inline note");
+        json!({
+            "recordName": "note-1",
+            "recordChangeTag": "tag-1",
+            "recordType": "Note",
+            "fields": {
+                "Folder": { "value": { "recordName": DEFAULT_FOLDER } },
+                "TextDataEncrypted": { "value": encoded }
+            }
+        })
     }
 
     fn encoded_note(text: &str, gzip: bool) -> String {
@@ -1389,6 +1458,57 @@ mod tests {
     }
 
     #[test]
+    fn update_operation_preserves_inline_attachments_and_edited_text() {
+        let record =
+            note_record_with_inline_attachments("\n旧标题\n图片前\u{fffc}图片后", &["attachment-1".to_string()]);
+        let operation = update_operation(&record, "新标题", "修改后的图片前\u{fffc}修改后的图片后", 456)
+            .expect("update inline note");
+        let encoded = operation["record"]["fields"]["TextDataEncrypted"]["value"].as_str().expect("encoded body");
+        let (body, attachments) = decode_note_document(encoded).expect("decode updated note");
+        assert_eq!(body, "\n新标题\n修改后的图片前\u{fffc}修改后的图片后");
+        assert_eq!(attachments, vec!["attachment-1"]);
+    }
+
+    #[test]
+    fn update_operation_rejects_removed_inline_attachments() {
+        let record = note_record_with_inline_attachments("\n标题\n图片前\u{fffc}图片后", &["attachment-1".to_string()]);
+        let error = update_operation(&record, "标题", "没有图片占位符", 456)
+            .expect_err("removing an inline attachment should fail");
+        assert!(error.to_string().contains("placeholders"));
+    }
+
+    #[test]
+    fn update_operation_preserves_multiple_inline_attachment_order() {
+        let attachment_ids = vec!["attachment-z".to_string(), "attachment-a".to_string()];
+        let record = note_record_with_inline_attachments("\n标题\na\u{fffc}b\u{fffc}c", &attachment_ids);
+        let operation =
+            update_operation(&record, "标题", "前😀\u{fffc}中🙂\u{fffc}后", 456).expect("update inline note");
+        let encoded = operation["record"]["fields"]["TextDataEncrypted"]["value"].as_str().expect("encoded body");
+        let bytes = BASE64.decode(encoded).expect("base64 note");
+        let raw = decompress_note_document(&bytes).expect("compressed note");
+        assert_eq!(extract_note_attachment_ids_ordered(&raw).expect("ordered ids"), attachment_ids);
+
+        let attachments = vec![image_attachment_with_id("attachment-z"), image_attachment_with_id("attachment-a")];
+        let html = note_content::render_body_html(encoded, "标题", &attachments).expect("render inline note");
+        let first = html.find("data-note-attachment-id=\"attachment-z\"").expect("first image");
+        let second = html.find("data-note-attachment-id=\"attachment-a\"").expect("second image");
+        assert!(first < second);
+        assert!(html.contains("前😀"));
+        assert!(html.contains("中🙂"));
+        assert!(html.contains("后"));
+    }
+
+    #[test]
+    fn order_note_attachments_follows_inline_document_order() {
+        let attachments = vec![image_attachment_with_id("attachment-a"), image_attachment_with_id("attachment-z")];
+        let ordered = order_note_attachments(attachments, &["attachment-z".to_string(), "attachment-a".to_string()]);
+        assert_eq!(
+            ordered.iter().map(|attachment| attachment.id.as_str()).collect::<Vec<_>>(),
+            vec!["attachment-z", "attachment-a"]
+        );
+    }
+
+    #[test]
     fn trash_operation_moves_the_note_to_trash() {
         let record = json!({
             "recordName": "note-1",
@@ -1412,6 +1532,14 @@ mod tests {
         assert_eq!(strip_note_title("\n标题\n正文\n第二行\n", "标题"), "正文\n第二行");
         assert_eq!(strip_note_title("正文", "标题"), "正文");
     }
+    fn image_attachment_with_id(id: &str) -> NoteAttachment {
+        let mut attachment = image_attachment();
+        attachment.id = id.to_string();
+        attachment.name = format!("{id}.png");
+        attachment.download_url = Some(format!("https://cvws.icloud-content.com.cn/{id}.png"));
+        attachment
+    }
+
     fn image_attachment() -> NoteAttachment {
         NoteAttachment {
             id: "attachment-1".to_string(),

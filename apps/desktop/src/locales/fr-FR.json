@@ -38,7 +38,7 @@
   "notes.createFailed": "Impossible de créer la note",
   "notes.updateFailed": "Impossible d’enregistrer la note",
   "notes.deleteFailed": "Impossible de supprimer la note",
-  "notes.attachmentsReadOnly": "Les notes avec pièces jointes ne peuvent pas encore être modifiées",
+  "notes.attachmentsReadOnly": "Les images existantes restent à leur place. L’ajout, la suppression ou le déplacement d’images n’est pas encore pris en charge.",
   "notes.emptyDraft": "Saisissez un titre ou un texte",
   "notes.titlePlaceholder": "Titre",
   "notes.bodyPlaceholder": "Texte",

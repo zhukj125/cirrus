@@ -38,7 +38,7 @@
   "notes.createFailed": "メモを作成できませんでした",
   "notes.updateFailed": "メモを保存できませんでした",
   "notes.deleteFailed": "メモを削除できませんでした",
-  "notes.attachmentsReadOnly": "添付ファイル付きのメモはまだ編集できません",
+  "notes.attachmentsReadOnly": "既存の画像は元の位置に保持されます。画像の追加、削除、移動はまだサポートされていません。",
   "notes.emptyDraft": "タイトルまたは本文を入力してください",
   "notes.titlePlaceholder": "タイトル",
   "notes.bodyPlaceholder": "本文",

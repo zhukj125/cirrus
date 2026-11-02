@@ -38,7 +38,7 @@
   "notes.createFailed": "新增備忘錄失敗",
   "notes.updateFailed": "儲存備忘錄失敗",
   "notes.deleteFailed": "刪除備忘錄失敗",
-  "notes.attachmentsReadOnly": "目前不支援編輯含附件的備忘錄",
+  "notes.attachmentsReadOnly": "現有圖片會保留在原位置，暫不支援新增、刪除或移動圖片。",
   "notes.emptyDraft": "請輸入標題或內容",
   "notes.titlePlaceholder": "標題",
   "notes.bodyPlaceholder": "內容",

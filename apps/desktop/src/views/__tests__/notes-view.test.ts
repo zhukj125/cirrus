@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   noteCreate: vi.fn(),
   noteUpdate: vi.fn(),
   noteDelete: vi.fn(),
+  openExternal: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -18,6 +19,7 @@ vi.mock("@/lib/api", () => ({
   noteCreate: api.noteCreate,
   noteUpdate: api.noteUpdate,
   noteDelete: api.noteDelete,
+  openExternal: api.openExternal,
 }));
 
 function mountNotes() {
@@ -175,6 +177,78 @@ describe("备忘录页", () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it("edits text around inline images and preserves image positions", async () => {
+    api.noteDetail.mockResolvedValue({
+      status: "OK",
+      message: null,
+      note: {
+        id: "note-1",
+        title: "项目计划",
+        body: "图片前\uFFFC中间\uFFFC图片后",
+        bodyHtml: "",
+        folderId: "folder-1",
+        createdAt: 1,
+        modifiedAt: 1_700_000_000_000,
+        attachments: [
+          {
+            id: "attachment-1",
+            name: "示意图.png",
+            uti: "public.png",
+            previewUrl: "https://cvws.icloud-content.com.cn/preview.png",
+            darkPreviewUrl: null,
+            fallbackUrl: null,
+            downloadUrl: "https://cvws.icloud-content.com.cn/original.png",
+            renderUrl: null,
+            table: null,
+            fileSize: 1024,
+            width: 100,
+            height: 100,
+          },
+          {
+            id: "attachment-2",
+            name: "示意图2.png",
+            uti: "public.jpeg",
+            previewUrl: "https://cvws.icloud-content.com.cn/preview-2.jpg",
+            darkPreviewUrl: null,
+            fallbackUrl: null,
+            downloadUrl: "https://cvws.icloud-content.com.cn/original-2.jpg",
+            renderUrl: null,
+            table: null,
+            fileSize: 2048,
+            width: 120,
+            height: 90,
+          },
+        ],
+      },
+    });
+    const wrapper = mountNotes();
+    await flushPromises();
+
+    const noteButton = wrapper.findAll("button").find((button) => button.text().includes("项目计划"));
+    await noteButton?.trigger("click");
+    await flushPromises();
+    await wrapper.get('button[aria-label="Edit note"]').trigger("click");
+    await flushPromises();
+
+    const editors = wrapper.findAll<HTMLTextAreaElement>('[data-testid="note-body-input"]');
+    expect(editors).toHaveLength(3);
+    expect(editors.map((editor) => editor.element.value)).toEqual(["图片前", "中间", "图片后"]);
+    expect(wrapper.findAll(".note-draft-body img").map((image) => image.attributes("src"))).toEqual(["https://cvws.icloud-content.com.cn/original.png", "https://cvws.icloud-content.com.cn/original-2.jpg"]);
+
+    await editors[0]?.setValue("修改前");
+    await editors[1]?.setValue("修改中");
+    await editors[2]?.setValue("修改后");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(api.noteUpdate).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      noteId: "note-1",
+      title: "项目计划",
+      body: "修改前\uFFFC修改中\uFFFC修改后",
+    });
+  });
 
   it("updates and deletes the selected note", async () => {
     const confirm = vi.fn(() => true);

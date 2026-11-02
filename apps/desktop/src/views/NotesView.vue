@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { Clock3, FileText, Folder, NotebookPen, Pencil, Plus, RefreshCw, Save, Search, StickyNote, Trash2, X } from "@lucide/vue";
 
 import { Status } from "@/constants";
@@ -33,7 +33,7 @@ const creating = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const draftTitle = ref("");
-const draftBody = ref("");
+const draftSegments = ref<string[]>([""]);
 let loadEpoch = 0;
 
 const visibleNotes = computed(() => {
@@ -46,6 +46,11 @@ const visibleNotes = computed(() => {
 });
 
 const noteBody = computed(() => detail.value?.body.replaceAll("\uFFFC", "").trim() ?? "");
+const draftBody = computed(() => draftSegments.value.join("\uFFFC"));
+const draftInlineAttachments = computed<(NoteAttachment | null)[]>(() => {
+  const markerCount = Math.max(0, draftSegments.value.length - 1);
+  return Array.from({ length: markerCount }, (_, index) => detail.value?.attachments[index] ?? null);
+});
 const selectedFolderName = computed(() => {
   if (!selectedFolderId.value) return t("notes.allNotes");
   return folders.value.find((folder) => folder.id === selectedFolderId.value)?.name ?? t("notes.allNotes");
@@ -87,6 +92,29 @@ function openAttachment(attachment: NoteAttachment): void {
   void openExternal(url);
 }
 
+function isInlineImageAttachment(attachment: NoteAttachment): boolean {
+  const uti = attachment.uti?.toLocaleLowerCase() ?? "";
+  return uti === "com.apple.paper" || uti.startsWith("public.image") || [".png", ".jpeg", ".jpg", ".heic", ".gif", ".webp", ".tiff"].some((suffix) => uti.endsWith(suffix));
+}
+
+function draftAttachment(index: number): NoteAttachment | null {
+  return draftInlineAttachments.value[index] ?? null;
+}
+
+function draftAttachmentName(index: number): string {
+  return draftAttachment(index)?.name ?? "";
+}
+
+function draftAttachmentImageUrl(index: number): string | null {
+  const attachment = draftAttachment(index);
+  return attachment && isInlineImageAttachment(attachment) ? attachmentUrl(attachment) : null;
+}
+
+function openDraftAttachment(index: number): void {
+  const attachment = draftAttachment(index);
+  if (attachment) openAttachment(attachment);
+}
+
 function handleNoteContentClick(event: MouseEvent): void {
   const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-note-attachment-id]");
   const attachmentId = target?.dataset.noteAttachmentId;
@@ -99,40 +127,58 @@ function noteTitle(note: NoteSummary | NoteDetail): string {
 }
 
 function editableBody(note: NoteDetail): string {
-  const lines = note.body.replaceAll("\uFFFC", "").replaceAll("\r\n", "\n").split("\n");
+  const lines = note.body.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
   while (lines.length > 0 && !lines[0]?.trim()) lines.shift();
   if (lines[0]?.trim() === note.title.trim()) lines.shift();
   return lines.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+function resizeDraftTextarea(element: HTMLTextAreaElement): void {
+  element.style.height = "auto";
+  element.style.height = `${Math.max(element.scrollHeight, 48)}px`;
+}
+
+function resizeDraftEditors(): void {
+  document.querySelectorAll<HTMLTextAreaElement>("[data-note-draft-segment]").forEach(resizeDraftTextarea);
+}
+
+function draftRows(segment: string): number {
+  return Math.min(12, Math.max(1, segment.split("\n").length));
+}
+
+function updateDraftSegment(index: number, event: Event): void {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLTextAreaElement)) return;
+  draftSegments.value[index] = target.value;
+  resizeDraftTextarea(target);
 }
 
 function startCreate(): void {
   editing.value = true;
   creating.value = true;
   draftTitle.value = "";
-  draftBody.value = "";
+  draftSegments.value = [""];
   selectedNoteId.value = null;
   detail.value = null;
   detailError.value = null;
   activeAttachment.value = null;
+  void nextTick(resizeDraftEditors);
 }
 
 function startEdit(): void {
   if (!detail.value) return;
-  if (detail.value.attachments.length > 0) {
-    toast.error(t("notes.attachmentsReadOnly"));
-    return;
-  }
   editing.value = true;
   creating.value = false;
   draftTitle.value = detail.value.title.trim();
-  draftBody.value = editableBody(detail.value);
+  draftSegments.value = editableBody(detail.value).split("\uFFFC");
+  void nextTick(resizeDraftEditors);
 }
 
 function cancelEdit(): void {
   editing.value = false;
   creating.value = false;
   draftTitle.value = "";
-  draftBody.value = "";
+  draftSegments.value = [""];
 }
 
 async function saveDraft(): Promise<void> {
@@ -363,15 +409,38 @@ watch(
       <form v-if="editing" class="mx-auto flex h-full max-w-4xl flex-col px-10 py-8" @submit.prevent="saveDraft">
         <div class="flex items-center justify-between gap-3 border-b border-border pb-3">
           <p class="text-xs text-muted-foreground">{{ creating ? t("notes.new") : selectedFolderName }}</p>
-          <span class="text-xs text-muted-foreground">{{ t("notes.plainTextOnly") }}</span>
+          <span v-if="draftInlineAttachments.length === 0" class="text-xs text-muted-foreground">{{ t("notes.plainTextOnly") }}</span>
         </div>
         <input v-model="draftTitle" data-testid="note-title-input" class="mt-5 w-full border-0 bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55" :placeholder="t('notes.titlePlaceholder')" autofocus />
-        <textarea
-          v-model="draftBody"
-          data-testid="note-body-input"
-          class="mt-4 min-h-[50vh] w-full flex-1 resize-none rounded-lg border border-border bg-card/35 p-4 text-[15px] leading-7 outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-primary"
-          :placeholder="t('notes.bodyPlaceholder')"
-        ></textarea>
+        <p v-if="draftInlineAttachments.length > 0" class="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          {{ t("notes.attachmentsReadOnly") }}
+        </p>
+        <div class="note-draft-body mt-4 flex min-h-[50vh] flex-1 flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-card/35 p-4 transition-colors focus-within:border-primary">
+          <template v-for="(segment, index) in draftSegments" :key="index">
+            <textarea
+              :value="segment"
+              :rows="draftRows(segment)"
+              data-testid="note-body-input"
+              data-note-draft-segment
+              :class="draftSegments.length === 1 ? 'min-h-[calc(50vh-3.5rem)] flex-1' : 'min-h-12'"
+              class="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-7 outline-none placeholder:text-muted-foreground/55"
+              :placeholder="index === 0 ? t('notes.bodyPlaceholder') : ''"
+              @input="updateDraftSegment(index, $event)"
+            ></textarea>
+            <div v-if="index < draftInlineAttachments.length" class="shrink-0">
+              <button v-if="draftAttachment(index)" type="button" class="group relative block w-full overflow-hidden rounded-lg border border-border bg-background text-left transition-colors hover:border-primary/60" :title="draftAttachmentName(index)" @click="openDraftAttachment(index)">
+                <img v-if="draftAttachmentImageUrl(index)" :src="draftAttachmentImageUrl(index) ?? undefined" :alt="draftAttachmentName(index)" class="max-h-80 w-full bg-white object-contain" loading="lazy" decoding="async" />
+                <span v-else class="flex min-h-20 items-center justify-center gap-2 px-4 text-sm text-muted-foreground">
+                  <FileText :size="18" />
+                  {{ draftAttachmentName(index) }}
+                </span>
+              </button>
+              <div v-else class="flex min-h-16 items-center justify-center rounded-lg border border-dashed border-border bg-background/60 px-4 text-center text-xs text-muted-foreground">
+                {{ t("notes.attachmentsReadOnly") }}
+              </div>
+            </div>
+          </template>
+        </div>
         <div class="mt-4 flex items-center gap-2">
           <button type="submit" class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50" :disabled="saving">
             <Spinner v-if="saving" :size="12" />

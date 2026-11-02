@@ -674,11 +674,11 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_update_note",
                 "title": "Update an iCloud Note",
-                "description": "Replace the title and plain-text body of an existing iCloud Note. Notes with attachments cannot be edited by this tool yet.",
+                "description": "Update an iCloud Note's title and body. Existing inline images are preserved by passing every U+FFFC placeholder back in the same position; attachments cannot be added, removed, or moved yet.",
                 "inputSchema": account_schema_required(json!({
                     "noteId": { "type": "string", "description": "Note ID returned by cirrus_list_notes." },
                     "title": { "type": "string", "description": "New note title." },
-                    "body": { "type": "string", "description": "New plain-text note body." }
+                    "body": { "type": "string", "description": "New note body. Preserve each U+FFFC placeholder for an existing inline attachment in its original position." }
                 }), &["noteId", "title", "body"]),
                 "outputSchema": tool_output_schema("cirrus_update_note"),
                 "annotations": { "title": "Update an iCloud Note", "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": true }
