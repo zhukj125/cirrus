@@ -186,7 +186,7 @@ class GoogleMapController implements MapInstance {
   }
 
   panBy(x: number, y: number): void {
-    this.map.panBy(x, y);
+    this.map.panBy(-x, -y);
   }
 
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void {

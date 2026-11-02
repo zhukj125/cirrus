@@ -66,6 +66,7 @@ export interface MapInstance {
   getZoom(): number;
   setZoom(zoom: number): void;
   setZoomAndCenter(zoom: number, center: LngLat): void;
+  /** Pan by a content delta: positive x/y moves the visible map content right/down. */
   panBy(x: number, y: number): void;
   fitMarkers(markers: MapMarker[], options: FitMarkersOptions): void;
   zoomIn(): void;

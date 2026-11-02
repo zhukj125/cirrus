@@ -689,7 +689,7 @@ function flushMapPointerPan(): void {
   mapPointerPendingX = 0;
   mapPointerPendingY = 0;
   if (deltaX === 0 && deltaY === 0) return;
-  map?.panBy(-deltaX, -deltaY);
+  map?.panBy(deltaX, deltaY);
 }
 
 function onMapPointerDown(event: PointerEvent): void {

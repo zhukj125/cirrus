@@ -262,7 +262,7 @@ describe("MapView location fallback", () => {
     container.dispatchEvent(pointer("pointermove", 120, 110));
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-    expect(mapMocks.panBy).toHaveBeenCalledWith(-20, -10);
+    expect(mapMocks.panBy).toHaveBeenCalledWith(20, 10);
     container.dispatchEvent(pointer("pointerup", 120, 110));
     wrapper.unmount();
   });
