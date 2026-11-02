@@ -3,6 +3,7 @@ pub mod avatar;
 pub mod calendar;
 pub mod contacts;
 pub mod devices;
+pub mod drive;
 pub mod media;
 pub(crate) mod note_content;
 pub(crate) mod note_paper;

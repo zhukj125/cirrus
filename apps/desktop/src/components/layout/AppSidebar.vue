@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { CalendarDays, Check, ChevronUp, Download, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, Palette, PanelLeftClose, PanelLeftOpen, Plus, Sun, Users } from "@lucide/vue";
+import { CalendarDays, Check, ChevronUp, Download, HardDrive, Images, LogOut, MapPin, Monitor, Moon, NotebookPen, Palette, PanelLeftClose, PanelLeftOpen, Plus, Sun, Users } from "@lucide/vue";
 
 import { StorageKey, type ShellView, type ThemeMode } from "@/constants";
 import { readStored, writeStored } from "@/lib/common/storage";
@@ -96,6 +96,7 @@ const THEME_OPTIONS = computed<Array<{ value: ThemeMode; label: string; icon: ty
 const NAV_ITEMS = computed<Array<{ value: ShellView; label: string; icon: typeof MapPin }>>(() => [
   { value: "findmy", label: locale.t("nav.devices"), icon: MapPin },
   { value: "photos-gallery", label: locale.t("nav.photos"), icon: Images },
+  { value: "drive", label: locale.t("nav.drive"), icon: HardDrive },
   { value: "notes", label: locale.t("nav.notes"), icon: NotebookPen },
   { value: "contacts", label: locale.t("nav.contacts"), icon: Users },
   { value: "calendar", label: locale.t("nav.calendar"), icon: CalendarDays },

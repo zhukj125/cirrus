@@ -512,6 +512,26 @@ export const useAppStore = defineStore("app", () => {
     beginRelogin(current.key);
     toast.info(t("app.photosExpired"));
   }
+  async function openDrive(): Promise<void> {
+    const current = activeAccount.value;
+    const sessionId = sessionIdOf(current);
+    if (!current || !sessionId) {
+      beginSwitchAccount();
+      return;
+    }
+    const state = await sessionState(sessionId).catch(() => null);
+    if (state?.valid && state.verified) {
+      view.value = "drive";
+      return;
+    }
+    if (!state) {
+      toast.error(t("app.photosVerifyFailed"));
+      return;
+    }
+    setAccountStatus(current.key, "expired");
+    beginRelogin(current.key);
+    toast.info(t("app.photosExpired"));
+  }
   async function openCalendar(): Promise<void> {
     const current = activeAccount.value;
     const sessionId = sessionIdOf(current);
@@ -650,6 +670,7 @@ export const useAppStore = defineStore("app", () => {
     logoutCurrentAccount,
     openPhotos,
     openNotes,
+    openDrive,
     openContacts,
     openCalendar,
     ensureDevices,

@@ -66,6 +66,7 @@ pub mod json {
     pub const DOMAIN_TO_USE: &str = "domainToUse";
     pub const WEBSERVICES: &str = "webservices";
     pub const SERVICE_FINDME: &str = "findme";
+    pub const SERVICE_DOCWS: &str = "docws";
     pub const SERVICE_PHOTOS: &str = "photos";
     pub const SERVICE_CONTACTS: &str = "contacts";
     pub const SERVICE_CKDATABASEWS: &str = "ckdatabasews";

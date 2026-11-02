@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
 use cirrus_core::models::{MonthExactDto, PhotosListRequest};
-use cirrus_core::services::{avatar, calendar, contacts, devices, media, notes, photos};
+use cirrus_core::services::{avatar, calendar, contacts, devices, drive, media, notes, photos};
 use cirrus_core::SessionHandle;
 
 use crate::account_store::{AccountStoreRepository, StoredAccount};
@@ -103,6 +103,27 @@ pub async fn call_tool(
         "cirrus_get_note" => {
             let note_id = required_str(arguments, "noteId")?;
             Ok(to_value(notes::detail(&state.sessions, &resolved.session_id, note_id).await)?)
+        }
+        "cirrus_list_drive_items" => {
+            let folder_id = optional_str(arguments, "folderId").map(ToOwned::to_owned);
+            Ok(to_value(drive::list(&state.sessions, &resolved.session_id, folder_id).await)?)
+        }
+        "cirrus_download_drive_file" => {
+            let url = required_str(arguments, "url")?;
+            let target_path = required_str(arguments, "targetPath")?;
+            let target = PathBuf::from(target_path);
+            if !target.is_absolute() {
+                return Err("targetPath must be an absolute file path".to_string());
+            }
+            let downloaded =
+                drive::download(&state.sessions, &resolved.session_id, url, optional_str(arguments, "name"), &target)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            Ok(json!({
+                "path": downloaded.path.to_string_lossy(),
+                "fileName": downloaded.file_name,
+                "sizeBytes": downloaded.size_bytes
+            }))
         }
         "cirrus_list_contacts" => {
             let locale = optional_str(arguments, "locale").unwrap_or("zh-CN");

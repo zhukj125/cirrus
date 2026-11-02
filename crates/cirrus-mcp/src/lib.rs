@@ -630,6 +630,26 @@ fn tools_list() -> Value {
                 "annotations": { "title": "Read an iCloud Note", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
             },
             {
+                "name": "cirrus_list_drive_items",
+                "title": "List iCloud Drive items",
+                "description": "List files, folders, and app containers in an iCloud Drive folder. Use folderId from a previous result to browse deeper; omit it to list the iCloud Drive root.",
+                "inputSchema": account_schema(json!({ "folderId": { "type": "string", "description": "Optional item id returned by cirrus_list_drive_items. Omit for the root folder." } })),
+                "outputSchema": tool_output_schema("cirrus_list_drive_items"),
+                "annotations": { "title": "List iCloud Drive items", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
+                "name": "cirrus_download_drive_file",
+                "title": "Download an iCloud Drive file",
+                "description": "Download a file returned by cirrus_list_drive_items to an absolute local targetPath. Pass the item's downloadUrl and name.",
+                "inputSchema": account_schema_required(json!({
+                    "url": { "type": "string", "description": "downloadUrl returned by cirrus_list_drive_items." },
+                    "targetPath": { "type": "string", "description": "Absolute local file path to save." },
+                    "name": { "type": "string", "description": "Optional display file name for extension fallback." }
+                }), &["url", "targetPath"]),
+                "outputSchema": tool_output_schema("cirrus_download_drive_file"),
+                "annotations": { "title": "Download an iCloud Drive file", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+            },
+            {
                 "name": "cirrus_list_contacts",
                 "title": "List iCloud Contacts",
                 "description": "List contacts, phone numbers, email addresses, postal addresses, and other contact fields.",
@@ -1024,6 +1044,43 @@ fn tool_output_schema(tool: &str) -> Value {
             }),
             &["status"],
         ),
+        "cirrus_list_drive_items" => object_schema(
+            json!({
+                "status": { "type": "string" },
+                "message": { "type": ["string", "null"] },
+                "folderId": { "type": "string" },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "drivewsid": { "type": "string" },
+                            "parentId": { "type": ["string", "null"] },
+                            "name": { "type": "string" },
+                            "kind": { "type": "string", "enum": ["folder", "file", "app-library"] },
+                            "zone": { "type": ["string", "null"] },
+                            "extension": { "type": ["string", "null"] },
+                            "sizeBytes": { "type": ["integer", "null"] },
+                            "dateModified": { "type": ["string", "null"] },
+                            "downloadUrl": { "type": ["string", "null"] },
+                            "childCount": { "type": ["integer", "null"] },
+                            "favorite": { "type": "boolean" }
+                        }
+                    }
+                },
+                "nextCursor": { "type": ["string", "null"] }
+            }),
+            &["status", "folderId", "items"],
+        ),
+        "cirrus_download_drive_file" => object_schema(
+            json!({
+                "path": { "type": "string", "description": "Absolute path of the saved file." },
+                "fileName": { "type": "string" },
+                "sizeBytes": { "type": "integer" }
+            }),
+            &["path", "fileName", "sizeBytes"],
+        ),
         "cirrus_list_contacts" => object_schema(
             json!({
                 "status": { "type": "string" },
@@ -1146,6 +1203,8 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_get_account_avatar" | "cirrus_get_contact_photo" => image_markdown(result),
         "cirrus_list_notes" => notes_list_markdown(result),
         "cirrus_get_note" => note_detail_markdown(result),
+        "cirrus_list_drive_items" => drive_items_markdown(result),
+        "cirrus_download_drive_file" => drive_download_markdown(result),
         "cirrus_list_contacts" => contacts_markdown(result),
         "cirrus_load_calendar" => calendar_markdown(result),
         _ => serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string()),
@@ -1396,6 +1455,43 @@ fn note_detail_markdown(result: &Value) -> String {
         output.push_str("\n\n[Body summary truncated. Read structuredContent.note.body for the full text.]");
     }
     output
+}
+
+fn drive_items_markdown(result: &Value) -> String {
+    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        return format!("# iCloud Drive\n\n{message}");
+    }
+    let items = result.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut output = format!("# iCloud Drive ({})\n\n", items.len());
+    if items.is_empty() {
+        output.push_str("No items were returned for this folder.");
+        return output;
+    }
+    output.push_str("| Name | Kind | Size | Modified | Item ID | Download URL |\n");
+    output.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    for item in items {
+        let size = item.get("sizeBytes").and_then(Value::as_u64).map(human_bytes).unwrap_or_else(|| "-".to_string());
+        let url = string_field(&item, "downloadUrl");
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | `{}` | {} |\n",
+            markdown_cell(string_field(&item, "name")),
+            markdown_cell(string_field(&item, "kind")),
+            size,
+            markdown_cell(string_field(&item, "dateModified")),
+            markdown_cell(string_field(&item, "id")),
+            if url.is_empty() { "-".to_string() } else { format!("[download]({url})") },
+        ));
+    }
+    output
+}
+
+fn drive_download_markdown(result: &Value) -> String {
+    let rows = vec![
+        ("File name", string_field(result, "fileName")),
+        ("Size", human_bytes(result.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0))),
+        ("Path", code_field(result, "path")),
+    ];
+    key_value_markdown("iCloud Drive download", &rows)
 }
 
 fn contacts_markdown(result: &Value) -> String {
@@ -2290,7 +2386,7 @@ mod tests {
     fn tools_list_exposes_login_and_account_list_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 21);
         assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),

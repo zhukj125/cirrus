@@ -14,6 +14,7 @@ import type {
   AppUpdateProgressEvent,
   DeviceInfoResult,
   DownloadProgressEvent,
+  DriveListing,
   LibraryTotal,
   LoadedDownloadTasks,
   McpAccountInfo,
@@ -34,6 +35,7 @@ import type {
   PlaySoundResult,
   RuntimeInfo,
   SavedPhotoResult,
+  SavedDriveFile,
   SessionStateResponse,
 } from "@/types";
 
@@ -203,6 +205,14 @@ export function contactsList(payload: { sessionId: string; locale: string }): Pr
 
 export function calendarLoad(payload: { sessionId: string; startDate: string; endDate: string; timezone: string; locale: string }): Promise<CalendarLoadResult> {
   return call<CalendarLoadResult>("calendar_load", payload);
+}
+
+export function driveList(payload: { sessionId: string; folderId?: string | null }): Promise<DriveListing> {
+  return call<DriveListing>("drive_list", payload);
+}
+
+export function driveDownload(payload: { sessionId: string; url: string; name: string; targetPath: string }): Promise<SavedDriveFile> {
+  return call<SavedDriveFile>("drive_download", payload);
 }
 export function contactPhoto(payload: { sessionId: string; url: string }): Promise<AccountAvatar> {
   return call<AccountAvatar>("contact_photo", payload);

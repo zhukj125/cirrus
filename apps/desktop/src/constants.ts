@@ -32,7 +32,7 @@ export const StorageKey = {
   interfaceScale: "cirrus.interfaceScale",
 } as const;
 
-export const SHELL_VIEWS = ["findmy", "photos-gallery", "notes", "contacts", "calendar"] as const;
+export const SHELL_VIEWS = ["findmy", "photos-gallery", "drive", "notes", "contacts", "calendar"] as const;
 
 export type ShellView = (typeof SHELL_VIEWS)[number];
 

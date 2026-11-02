@@ -198,6 +198,8 @@ pub fn run() {
             commands::photos::photos_2fa_sms,
             commands::photos::photos_verify_2fa_phone,
             commands::photos::save_photo,
+            commands::drive::drive_list,
+            commands::drive::drive_download,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Tauri application");

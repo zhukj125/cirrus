@@ -59,6 +59,35 @@ export interface AccountAvatar {
   dataUrl: string;
 }
 
+export interface DriveItem {
+  id: string;
+  drivewsid: string;
+  parentId: string | null;
+  name: string;
+  kind: "folder" | "file" | "app-library";
+  zone: string | null;
+  extension: string | null;
+  sizeBytes: number | null;
+  dateModified: string | null;
+  downloadUrl: string | null;
+  childCount: number | null;
+  favorite: boolean;
+}
+
+export interface DriveListing {
+  status: "OK" | "ERROR";
+  message: string | null;
+  folderId: string;
+  items: DriveItem[];
+  nextCursor: string | null;
+}
+
+export interface SavedDriveFile {
+  path: string;
+  fileName: string;
+  sizeBytes: number;
+}
+
 export interface AccountInfo {
   appleId: string | null;
   dsid: string | null;

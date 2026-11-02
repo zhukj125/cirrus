@@ -43,6 +43,8 @@ const toolRows = [
   { name: "cirrus_get_contact_photo", readOnly: true },
   { name: "cirrus_list_notes", readOnly: true },
   { name: "cirrus_get_note", readOnly: true },
+  { name: "cirrus_list_drive_items", readOnly: true },
+  { name: "cirrus_download_drive_file", readOnly: false },
   { name: "cirrus_list_contacts", readOnly: true },
   { name: "cirrus_load_calendar", readOnly: true },
 ] as const;

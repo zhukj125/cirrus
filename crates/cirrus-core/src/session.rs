@@ -85,6 +85,7 @@ pub struct SrpSession {
     dsid: Option<String>,
     find_me_url: Option<String>,
     photos_url: Option<String>,
+    docws_url: Option<String>,
     cloud_kit_url: Option<String>,
     contacts_url: Option<String>,
     first_name: Option<String>,
@@ -159,6 +160,7 @@ impl SrpSession {
             dsid: None,
             find_me_url: None,
             photos_url: None,
+            docws_url: None,
             cloud_kit_url: None,
             contacts_url: None,
             first_name: None,
@@ -252,6 +254,14 @@ impl SrpSession {
         self.photos_url = value;
     }
 
+    pub fn docws_url(&self) -> Option<&str> {
+        self.docws_url.as_deref()
+    }
+
+    pub fn set_docws_url(&mut self, value: Option<String>) {
+        self.docws_url = value;
+    }
+
     pub fn cloud_kit_url(&self) -> Option<&str> {
         self.cloud_kit_url.as_deref()
     }
@@ -342,6 +352,7 @@ impl SrpSession {
         self.dsid = None;
         self.find_me_url = None;
         self.photos_url = None;
+        self.docws_url = None;
         self.cloud_kit_url = None;
         self.contacts_url = None;
         self.first_name = None;
@@ -362,6 +373,7 @@ impl SrpSession {
             dsid: self.dsid.clone(),
             find_me_url: self.find_me_url.clone(),
             photos_url: self.photos_url.clone(),
+            docws_url: self.docws_url.clone(),
             cloud_kit_url: self.cloud_kit_url.clone(),
             contacts_url: self.contacts_url.clone(),
             first_name: self.first_name.clone(),
@@ -390,6 +402,7 @@ impl SrpSession {
         session.dsid = snapshot.dsid.clone();
         session.find_me_url = snapshot.find_me_url.clone();
         session.photos_url = snapshot.photos_url.clone();
+        session.docws_url = snapshot.docws_url.clone();
         session.cloud_kit_url = snapshot.cloud_kit_url.clone();
         session.contacts_url = snapshot.contacts_url.clone();
         session.first_name = snapshot.first_name.clone();

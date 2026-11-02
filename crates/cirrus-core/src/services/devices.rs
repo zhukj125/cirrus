@@ -32,6 +32,7 @@ fn account_login_ready(session: &SrpSession) -> bool {
         .unwrap_or(false);
     session.dsid().is_some()
         && session.find_me_url().is_some()
+        && session.docws_url().is_some()
         && session.contacts_url().is_some()
         && has_web_auth_token
 }
@@ -170,13 +171,15 @@ pub async fn account_login(session: &mut SrpSession, force: bool) -> AppResult<(
 
         session.set_find_me_url(service_url(&data, api::json::SERVICE_FINDME));
         session.set_photos_url(service_url(&data, api::json::SERVICE_PHOTOS));
+        session.set_docws_url(service_url(&data, api::json::SERVICE_DOCWS));
         session.set_cloud_kit_url(service_url(&data, api::json::SERVICE_CKDATABASEWS));
         session.set_contacts_url(service_url(&data, api::json::SERVICE_CONTACTS));
 
         log::info!(
-            "[DEVICE] accountLogin succeeded (dsid={:?}, findme={:?}, ckdatabasews={:?})",
+            "[DEVICE] accountLogin succeeded (dsid={:?}, findme={:?}, docws={:?}, ckdatabasews={:?})",
             session.dsid(),
             session.find_me_url(),
+            session.docws_url(),
             session.cloud_kit_url()
         );
         return Ok(());

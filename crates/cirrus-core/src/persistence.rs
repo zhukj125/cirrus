@@ -41,6 +41,8 @@ pub struct SessionSnapshot {
     #[serde(default)]
     pub photos_url: Option<String>,
     #[serde(default)]
+    pub docws_url: Option<String>,
+    #[serde(default)]
     pub cloud_kit_url: Option<String>,
     #[serde(default)]
     pub contacts_url: Option<String>,
@@ -447,6 +449,7 @@ mod tests {
             dsid: Some("123456789".to_string()),
             find_me_url: Some("https://fmipmobile.icloud.com/fmipservice/device".to_string()),
             photos_url: Some("https://p01-ckdatabasews.icloud.com".to_string()),
+            docws_url: Some("https://p01-docws.icloud.com".to_string()),
             cloud_kit_url: Some("https://p01-ckdatabasews.icloud.com".to_string()),
             contacts_url: Some("https://p01-contactsws.icloud.com".to_string()),
             first_name: Some("三".to_string()),
@@ -492,6 +495,7 @@ mod tests {
         assert_eq!(loaded.dsid, expected.dsid);
         assert_eq!(loaded.find_me_url, expected.find_me_url);
         assert_eq!(loaded.photos_url, expected.photos_url);
+        assert_eq!(loaded.docws_url, expected.docws_url);
         assert_eq!(loaded.cloud_kit_url, expected.cloud_kit_url);
         assert_eq!(loaded.contacts_url, expected.contacts_url);
         assert_eq!(loaded.first_name, expected.first_name);

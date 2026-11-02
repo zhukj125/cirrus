@@ -115,6 +115,56 @@ impl CalendarLoadResult {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveItem {
+    pub id: String,
+    pub drivewsid: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub kind: String,
+    pub zone: Option<String>,
+    pub extension: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub date_modified: Option<String>,
+    pub download_url: Option<String>,
+    pub child_count: Option<u64>,
+    pub favorite: bool,
+}
+
+impl DriveItem {
+    pub fn is_folder(&self) -> bool {
+        self.kind == "folder" || self.kind == "app-library"
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveListing {
+    pub status: String,
+    pub message: Option<String>,
+    pub folder_id: String,
+    pub items: Vec<DriveItem>,
+    pub next_cursor: Option<String>,
+}
+
+impl DriveListing {
+    pub fn ok(folder_id: String, items: Vec<DriveItem>, next_cursor: Option<String>) -> Self {
+        Self { status: statuses::OK.to_string(), message: None, folder_id, items, next_cursor }
+    }
+
+    pub fn error(folder_id: String, message: impl Into<String>) -> Self {
+        Self {
+            status: statuses::ERROR.to_string(),
+            message: Some(message.into()),
+            folder_id,
+            items: Vec::new(),
+            next_cursor: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactField {

@@ -17,6 +17,7 @@ import Toaster from "@/components/ui/Toaster.vue";
 import { Button } from "@/components/ui/button";
 import CalendarView from "@/views/CalendarView.vue";
 import ContactsView from "@/views/ContactsView.vue";
+import DriveView from "@/views/DriveView.vue";
 import MapView from "@/views/MapView.vue";
 import NotesView from "@/views/NotesView.vue";
 import PhotosGalleryView from "@/views/PhotosGalleryView.vue";
@@ -57,7 +58,7 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
-const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
+const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "drive" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
 function isWorkspaceTab(value: unknown): value is WorkspaceTab {
   return typeof value === "string" && (isShellView(value) || value === "settings");
 }
@@ -102,6 +103,7 @@ watch(
 
 const headerTitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
+  if (shellView.value === "drive") return i18n.t("nav.drive");
   if (shellView.value === "notes") return i18n.t("nav.notes");
   if (shellView.value === "contacts") return i18n.t("nav.contacts");
   if (shellView.value === "calendar") return i18n.t("nav.calendar");
@@ -110,6 +112,7 @@ const headerTitle = computed(() => {
 
 const headerSubtitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("header.photosLibrary");
+  if (shellView.value === "drive") return i18n.t("header.drive");
   if (shellView.value === "notes") return i18n.t("header.notes");
   if (shellView.value === "contacts") return i18n.t("header.contacts");
   if (shellView.value === "calendar") return i18n.t("header.calendar");
@@ -130,6 +133,10 @@ async function activateWorkspaceTab(next: WorkspaceTab): Promise<void> {
   }
   if (next === "photos-gallery") {
     await store.openPhotos();
+    return;
+  }
+  if (next === "drive") {
+    await store.openDrive();
     return;
   }
   if (next === "notes") {
@@ -515,6 +522,10 @@ onUnmounted(() => {
 
           <div v-if="openWorkspaceTabs.includes('photos-gallery')" v-show="shellView === 'photos-gallery'" class="h-full">
             <PhotosGalleryView v-if="photosSession" :key="photosSession" :session-id="photosSession" @logout="store.logoutCurrentAccount()" />
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('drive')" v-show="shellView === 'drive'" class="h-full">
+            <DriveView v-if="photosSession" :key="'drive-' + photosSession" :session-id="photosSession" />
           </div>
 
           <div v-if="openWorkspaceTabs.includes('notes')" v-show="shellView === 'notes'" class="h-full">
