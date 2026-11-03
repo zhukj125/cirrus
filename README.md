@@ -177,15 +177,17 @@ The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, an
 Cirrus supports two MCP transports:
 
 - **Streamable HTTP** runs inside the desktop process and listens on `http://127.0.0.1:5226/mcp` when enabled. It does not start a separate console process.
-- **stdio** uses a `cirrus-mcp-server` launcher (`cirrus-mcp-server.exe` on Windows), matching DBX's `dbx-mcp-server` wrapper. The launcher starts the native `cirrus-mcp` binary with hidden Windows console handling while inheriting stdin/stdout for MCP. In development, Cirrus looks for it next to the running application, for example:
+- **stdio** launches the standalone native `cirrus-mcp` binary directly (`cirrus-mcp.exe` on Windows). It opens the Cirrus database and encrypted session vault itself and executes account-scoped tools locally, so the desktop HTTP bridge does not need to be running. The desktop app is only required for interactive sign-in and legacy bridge mode. The older `cirrus-mcp-server` launcher remains available as a compatibility alias.
+
+In development, Cirrus looks for the native executable next to the running application, for example:
 
 ```text
-target/debug/cirrus-mcp-server.exe
+target/debug/cirrus-mcp.exe
 ```
 
-The desktop publishes its current loopback port and token in `mcp-bridge.json` under the Cirrus data directory; the stdio server reads that single discovery file before falling back to the legacy `mcp-bridge-port` and `mcp-bridge-token` files. `CIRRUS_DATA_DIR` can override the data directory for portable or development setups, and client configurations written by Cirrus pass the resolved directory through the server environment.
+`CIRRUS_DATA_DIR` can override the data directory for portable or development setups, and client configurations written by Cirrus pass the resolved directory through the server environment. Local mode is the default. Set `CIRRUS_MCP_BACKEND=bridge` (or provide `CIRRUS_MCP_URL` and `CIRRUS_MCP_TOKEN`) only when deliberately using the desktop bridge compatibility path. Headless deployments that cannot access the OS credential store can provide the existing vault key through `CIRRUS_SESSION_KEY` or `CIRRUS_SESSION_KEY_FILE`; the standalone server never creates a new vault key. `CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` optionally sets a local download limit in bytes per second.
 
-If **Settings → MCP** reports that the MCP launcher was not found, build the development executables first:
+If **Settings → MCP** reports that the MCP executable was not found, build the development executables first:
 
 ```sh
 cargo build -p cirrus-mcp
@@ -197,14 +199,18 @@ Reopen the MCP settings or restart Cirrus after building. For packaged builds, u
 
 ### Standalone MCP installation
 
-**Settings → MCP → Access → Local stdio** includes an MCP engine panel. It can independently install, update, reinstall, or uninstall the launcher and native binary under `~/.cirrus/bin`. New client configurations prefer this standalone launcher; if it is not installed, Cirrus falls back to the copies bundled with the desktop application.
+**Settings → MCP → Access → Local stdio** includes an MCP engine panel. It can independently install, update, reinstall, or uninstall the native binary and legacy compatibility launcher under `~/.cirrus/bin`. New client configurations prefer the native `cirrus-mcp` executable; if it is not installed, Cirrus falls back to the copy bundled with the desktop application.
 
-The native executable can still be used manually for HTTP, and the launcher for stdio:
+Both stdio and HTTP can use the same native executable:
 
 ```sh
+cirrus-mcp
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
-cirrus-mcp-server
+cirrus-mcp --authorize-keychain  # interactive one-time OS credential authorization
+cirrus-mcp-server  # legacy launcher, forwards to cirrus-mcp
 ```
+
+Do not add `--authorize-keychain` to MCP client arguments; run it once from a terminal if the OS credential store requires explicit background access.
 
 ## Limitations
 

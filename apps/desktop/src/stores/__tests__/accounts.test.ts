@@ -3,13 +3,13 @@ import { createPinia, setActivePinia } from "pinia";
 
 import { Status } from "@/constants";
 import { mockAccountStore } from "@/lib/accounts/__tests__/helpers";
-import { accountAvatar, accountStoreSave, sessionLogout, sessionState } from "@/lib/api";
+import { accountAvatar, accountStoreLoad, accountStoreSave, sessionLogout, sessionState } from "@/lib/api";
 import { useAppStore } from "@/stores/app";
 import type { KnownAccount, SessionStateResponse } from "@/types";
 
 vi.mock("@/lib/api", () => ({
   accountStoreLoad: vi.fn(async () => ({ accounts: [], activeAccountKey: null, avatars: {} })),
-  accountStoreSave: vi.fn(async () => undefined),
+  accountStoreSave: vi.fn(async () => 1),
   accountAvatar: vi.fn(async () => ({ dataUrl: "" })),
   runtimeInfo: vi.fn(async () => ({ vaultEnabled: true })),
   sessionState: vi.fn(),
@@ -71,6 +71,27 @@ describe("应用 store 多账号基础状态", () => {
     await store.flushAccountPersistence();
     expect(accountStoreSave).toHaveBeenCalledWith(expect.objectContaining({ avatars: { [valid.key]: "data:image/jpeg;base64,avatar" } }));
   });
+  it("账号快照 revision 冲突时重新加载而不是覆盖较新数据", async () => {
+    const valid = account("dsid:111", "a@example.com", "session-a");
+    mockAccountStore([valid], valid.key, {}, 7);
+    const store = useAppStore();
+    await store.loadAccountStore();
+
+    vi.mocked(accountStoreSave).mockRejectedValueOnce(new Error("ACCOUNT_STORE_CONFLICT: stale revision"));
+    const refreshed = { ...valid, firstName: "Reloaded" };
+    vi.mocked(accountStoreLoad).mockResolvedValueOnce({
+      accounts: [refreshed],
+      activeAccountKey: valid.key,
+      avatars: {},
+      revision: 8,
+    });
+    store.upsertAccount({ ...valid, firstName: "Local change" });
+    await store.flushAccountPersistence();
+
+    expect(accountStoreLoad).toHaveBeenCalledTimes(2);
+    expect(store.accounts[0]?.firstName).toBe("Reloaded");
+  });
+
   it("有效账号直接切换且不注销原账号", async () => {
     const a = account("dsid:111", "a@example.com", "session-a");
     const b = account("dsid:222", "b@example.com", "session-b");

@@ -1,6 +1,6 @@
 [package]
 name = "cirrus-mcp"
-description = "Cirrus MCP stdio bridge for the desktop app"
+description = "Standalone Cirrus MCP server with local and desktop-bridge backends"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,10 +8,16 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
+log = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
 uuid = { workspace = true }
+cirrus-core = { path = "../cirrus-core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"

@@ -56,13 +56,12 @@ pub fn status() -> Result<McpServerStatus, String> {
     let install_dir = install_dir()?;
     let launcher = installed_launcher_path()?;
     let native = installed_native_path()?;
-    let installed = launcher.is_file() && native.is_file();
+    let installed = native.is_file();
     let installed_version = installed.then(|| installed_version(&install_dir)).flatten();
-    let bundled_launcher = crate::mcp::bundled_mcp_binary_path().is_some_and(|path| path.is_file());
     let bundled_native = crate::mcp::bundled_mcp_native_binary_path().is_some_and(|path| path.is_file());
     let active_source = if installed {
         "installed"
-    } else if bundled_launcher && bundled_native {
+    } else if bundled_native {
         "bundled"
     } else {
         "missing"
@@ -154,19 +153,18 @@ fn copy_atomic(source: &Path, destination: &Path) -> Result<(), String> {
 }
 
 pub fn install_or_update() -> Result<McpServerStatus, String> {
-    let source_launcher = crate::mcp::bundled_mcp_binary_path()
-        .filter(|path| path.is_file())
-        .ok_or_else(|| "The bundled cirrus-mcp-server launcher is missing. Reinstall Cirrus.".to_string())?;
     let source_native = crate::mcp::bundled_mcp_native_binary_path()
         .filter(|path| path.is_file())
         .ok_or_else(|| "The bundled cirrus-mcp binary is missing. Reinstall Cirrus.".to_string())?;
+    let source_launcher = crate::mcp::bundled_mcp_binary_path().filter(|path| path.is_file());
     let install_dir = install_dir()?;
-    let destination_launcher = installed_launcher_path()?;
     let destination_native = installed_native_path()?;
 
     stop_installed_processes()?;
-    copy_atomic(&source_launcher, &destination_launcher)?;
     copy_atomic(&source_native, &destination_native)?;
+    if let Some(source_launcher) = source_launcher {
+        copy_atomic(&source_launcher, &installed_launcher_path()?)?;
+    }
     fs::write(install_dir.join(VERSION_FILE), env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("Could not write the MCP version marker: {error}"))?;
     log::info!("[MCP] installed standalone MCP engine at {}", install_dir.display());

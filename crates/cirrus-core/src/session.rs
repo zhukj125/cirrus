@@ -364,6 +364,7 @@ impl SrpSession {
         SessionSnapshot {
             id: self.id.clone(),
             apple_id: self.apple_id.clone(),
+            revision: 0,
             china_mainland: self.is_china_mainland(),
             auth_base: self.auth_base.clone(),
             setup_base: self.setup_base.clone(),
@@ -591,6 +592,7 @@ impl SrpSession {
 pub struct SessionHandle {
     inner: Mutex<SrpSession>,
     last_access: AtomicI64,
+    revision: AtomicI64,
 
     last_persisted: AtomicI64,
 }
@@ -600,12 +602,34 @@ impl SessionHandle {
         Self {
             inner: Mutex::new(session),
             last_access: AtomicI64::new(now_millis()),
+            revision: AtomicI64::new(0),
             last_persisted: AtomicI64::new(0),
         }
     }
 
     pub fn with_last_access(session: SrpSession, last_access: i64) -> Self {
-        Self { inner: Mutex::new(session), last_access: AtomicI64::new(last_access), last_persisted: AtomicI64::new(0) }
+        Self {
+            inner: Mutex::new(session),
+            last_access: AtomicI64::new(last_access),
+            revision: AtomicI64::new(0),
+            last_persisted: AtomicI64::new(0),
+        }
+    }
+
+    pub fn revision(&self) -> i64 {
+        self.revision.load(Ordering::Relaxed)
+    }
+
+    pub fn set_revision(&self, revision: i64) {
+        self.revision.store(revision, Ordering::Relaxed);
+    }
+
+    pub async fn replace_from_snapshot(&self, snapshot: &crate::persistence::SessionSnapshot) -> AppResult<()> {
+        let session = SrpSession::from_snapshot(snapshot)?;
+        *self.inner.lock().await = session;
+        self.last_access.store(snapshot.last_access, Ordering::Relaxed);
+        self.set_revision(snapshot.revision);
+        Ok(())
     }
 
     pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, SrpSession> {

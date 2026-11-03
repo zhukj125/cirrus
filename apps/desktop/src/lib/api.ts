@@ -179,8 +179,8 @@ export function accountStoreLoad(): Promise<AccountStoreSnapshot> {
   return call<AccountStoreSnapshot>("account_store_load");
 }
 
-export function accountStoreSave(snapshot: AccountStoreSnapshot): Promise<void> {
-  return call<void>("account_store_save", snapshot);
+export function accountStoreSave(snapshot: AccountStoreSnapshot): Promise<number> {
+  return call<number>("account_store_save", snapshot);
 }
 export function accountAvatar(sessionId: string): Promise<AccountAvatar> {
   return call<AccountAvatar>("session_avatar", { sessionId });
@@ -325,8 +325,8 @@ export function loadDownloadTasks(accountKey: string): Promise<LoadedDownloadTas
   return call<LoadedDownloadTasks>("download_tasks_load", { accountKey });
 }
 
-export function saveDownloadTasks(accountKey: string, tasks: unknown[]): Promise<void> {
-  return call<void>("download_tasks_save", { accountKey, tasks });
+export function saveDownloadTasks(accountKey: string, tasks: unknown[], revision: number): Promise<number> {
+  return call<number>("download_tasks_save", { accountKey, tasks, revision });
 }
 
 export function rekeyDownloadTasks(fromKey: string, toKey: string): Promise<void> {

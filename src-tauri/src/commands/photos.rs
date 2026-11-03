@@ -246,7 +246,14 @@ pub async fn save_photo(
     let file_name = payload.name.clone().unwrap_or_default();
     let transfer_id = payload.transfer_id.clone();
     let cancel_flag = match transfer_id.as_ref() {
-        Some(id) => Some(state.inner().download_transfers.register(id).await),
+        Some(id) => Some(
+            state
+                .inner()
+                .download_transfers
+                .register(id)
+                .await
+                .ok_or_else(|| cirrus_core::AppError::other("This transfer ID is already active"))?,
+        ),
         None => None,
     };
     let limiter = &state.inner().download_limiter;

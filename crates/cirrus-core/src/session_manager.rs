@@ -140,7 +140,17 @@ impl SessionManager {
         };
 
         snapshot.last_access = handle.last_access();
-        vault.save(&snapshot)?;
+        snapshot.revision = handle.revision();
+        match vault.save(&snapshot) {
+            Ok(revision) => handle.set_revision(revision),
+            Err(error) if error.to_string().contains("SESSION_VAULT_CONFLICT") => {
+                if let Some(latest) = vault.load(&snapshot.id) {
+                    handle.replace_from_snapshot(&latest).await?;
+                    log::info!("[SESSION] adopted the newer shared vault revision for this session");
+                }
+            }
+            Err(error) => return Err(error),
+        }
         handle.mark_persisted();
         Ok(())
     }
@@ -202,6 +212,7 @@ impl SessionManager {
             snapshot.apple_id.len()
         );
         let handle = Arc::new(SessionHandle::with_last_access(session, snapshot.last_access));
+        handle.set_revision(snapshot.revision);
         let mut sessions = self.sessions.lock().await;
 
         Some(sessions.entry(session_id.to_string()).or_insert(handle).clone())
@@ -319,6 +330,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persist_conflict_adopts_the_newer_shared_session() {
+        let (dir, file) = temp_vault_path();
+        let first_vault = Arc::new(SessionVault::open_with_key(file.clone(), [9u8; 32]));
+        let second_vault = Arc::new(SessionVault::open_with_key(file, [9u8; 32]));
+        let first = SessionManager::new(None, Some(Arc::clone(&first_vault)));
+        let second = SessionManager::new(None, Some(second_vault));
+        let first_handle =
+            first.create("tester@example.com".into(), "secret".into(), false).await.expect("create first");
+        let session_id = {
+            let mut session = first_handle.lock().await;
+            session.set_session_data(crate::models::session_keys::SESSION_TOKEN, "FIRST");
+            session.id().to_string()
+        };
+        first.persist(&first_handle).await.expect("persist first");
+
+        let second_handle = second.get(&session_id).await.expect("restore second");
+        {
+            let mut session = second_handle.lock().await;
+            session.set_session_data(crate::models::session_keys::SESSION_TOKEN, "SECOND");
+        }
+        second.persist(&second_handle).await.expect("persist second");
+
+        {
+            let mut session = first_handle.lock().await;
+            session.set_session_data(crate::models::session_keys::SESSION_TOKEN, "STALE");
+        }
+        first.persist(&first_handle).await.expect("adopt new revision");
+        let adopted = first_handle.lock().await;
+        assert_eq!(adopted.session_data(crate::models::session_keys::SESSION_TOKEN), Some("SECOND"));
+        drop(adopted);
+        first.persist(&first_handle).await.expect("persist adopted session");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn expired_vault_record_is_pruned_on_start() {
         let (dir, file) = temp_vault_path();
         let session_id = {
@@ -331,6 +377,7 @@ mod tests {
             };
 
             snapshot.last_access = crate::session::now_millis() - 10 * 60 * 60 * 1000;
+            snapshot.revision = vault.load(&snapshot.id).expect("load persisted session").revision;
             vault.save(&snapshot).expect("落盘失败");
             snapshot.id
         };

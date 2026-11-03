@@ -138,6 +138,7 @@ export interface LoadedDownloadTasks {
 
   writable: boolean;
   warning: string | null;
+  revision: number;
 }
 
 export interface DownloadProgressEvent {
@@ -456,6 +457,7 @@ export interface AccountStoreSnapshot {
   accounts: KnownAccount[];
   activeAccountKey: string | null;
   avatars: Record<string, string>;
+  revision: number;
 }
 export type LoginMode = "normal" | "switch" | "relogin-expired" | "mcp";
 

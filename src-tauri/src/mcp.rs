@@ -4,7 +4,11 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use cirrus_core::{load_app_state_json, save_app_state_json};
+pub use cirrus_core::mcp_access::McpToolAccessSettings;
+use cirrus_core::mcp_access::{
+    load_account_access, load_mcp_settings, load_tool_access, save_account_access, save_mcp_settings, save_tool_access,
+    McpAccountAccessSettings,
+};
 use cirrus_mcp::{serve_http_on_listener, BridgeTarget, HttpConfig as McpHttpConfig};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Bytes};
@@ -29,12 +33,6 @@ pub const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const RUNTIME_FILE: &str = "mcp-bridge.json";
 const PORT_FILE: &str = "mcp-bridge-port";
 const TOKEN_FILE: &str = "mcp-bridge-token";
-const LEGACY_SETTINGS_FILE: &str = "mcp-settings.json";
-const LEGACY_ACCOUNT_ACCESS_FILE: &str = "mcp-account-access.json";
-const LEGACY_TOOL_ACCESS_FILE: &str = "mcp-tool-access.json";
-const SETTINGS_KEY: &str = "mcp_settings";
-const ACCOUNT_ACCESS_KEY: &str = "mcp_account_access";
-const TOOL_ACCESS_KEY: &str = "mcp_tool_access";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
 const BRIDGE_FILE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -133,26 +131,6 @@ struct McpLoginRequestEvent {
 #[serde(rename_all = "camelCase")]
 struct McpLoginFinishedEvent {
     request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McpSettings {
-    enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct McpAccountAccessSettings {
-    #[serde(default)]
-    disabled_account_keys: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolAccessSettings {
-    #[serde(default)]
-    pub disabled_tools: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,15 +361,24 @@ impl McpService {
     }
 
     pub fn disabled_account_keys(&self) -> BTreeSet<String> {
-        self.data_dir
-            .as_deref()
-            .map(load_account_access)
-            .map(|settings| settings.disabled_account_keys)
+        let Some(data_dir) = self.data_dir.as_deref() else {
+            return BTreeSet::new();
+        };
+        let settings = load_account_access(data_dir);
+        if !settings.deny_all {
+            return settings.disabled_account_keys;
+        }
+        AccountStoreRepository::new(Some(data_dir))
+            .load()
+            .map(|snapshot| snapshot.accounts.into_iter().map(|account| account.key).collect())
             .unwrap_or_default()
     }
 
     pub fn account_enabled(&self, account_key: &str) -> bool {
-        !self.disabled_account_keys().contains(account_key)
+        let settings = self.data_dir.as_deref().map(load_account_access);
+        settings
+            .map(|settings| !settings.deny_all && !settings.disabled_account_keys.contains(account_key))
+            .unwrap_or(false)
     }
 
     pub fn ensure_account_enabled(&self, account_key: &str) -> Result<(), String> {
@@ -413,8 +400,7 @@ impl McpService {
         } else {
             settings.disabled_account_keys.insert(account_key.to_string());
         }
-        save_app_state_json(data_dir, ACCOUNT_ACCESS_KEY, &settings)
-            .map_err(|error| format!("Could not save MCP account access: {error}"))
+        save_account_access(data_dir, &settings).map_err(|error| format!("Could not save MCP account access: {error}"))
     }
 
     pub fn tool_access(&self) -> McpToolAccessSettings {
@@ -422,7 +408,8 @@ impl McpService {
     }
 
     pub fn tool_enabled(&self, tool: &str) -> bool {
-        !self.tool_access().disabled_tools.contains(tool)
+        let access = self.tool_access();
+        !access.deny_all && !access.disabled_tools.contains(tool)
     }
 
     pub fn set_tool_enabled(&self, tool: &str, enabled: bool) -> Result<McpToolAccessSettings, String> {
@@ -436,19 +423,22 @@ impl McpService {
         } else {
             settings.disabled_tools.insert(tool.to_string());
         }
-        save_app_state_json(data_dir, TOOL_ACCESS_KEY, &settings)
-            .map_err(|error| format!("Could not save MCP tool access: {error}"))?;
+        save_tool_access(data_dir, &settings).map_err(|error| format!("Could not save MCP tool access: {error}"))?;
         Ok(settings)
     }
 
     pub fn visible_accounts(&self) -> Result<McpAccountList, String> {
         let snapshot =
             AccountStoreRepository::new(self.data_dir.as_deref()).load().map_err(|error| error.to_string())?;
-        let disabled = self.disabled_account_keys();
+        let account_access = self
+            .data_dir
+            .as_deref()
+            .map(load_account_access)
+            .unwrap_or_else(|| McpAccountAccessSettings { deny_all: true, ..Default::default() });
         let mut accounts = snapshot
             .accounts
             .into_iter()
-            .filter(|account| !disabled.contains(&account.key))
+            .filter(|account| !account_access.deny_all && !account_access.disabled_account_keys.contains(&account.key))
             .map(|account| McpVisibleAccount {
                 account_key: account.key.clone(),
                 apple_id: account.apple_id,
@@ -797,6 +787,12 @@ async fn handle_request(
         };
         return handle_history(request, &app_state).await;
     }
+    if request.method() == Method::POST && path == "/v1/events" {
+        if !authorized_bearer(&request, &bridge_token) {
+            return json_response(StatusCode::UNAUTHORIZED, json!({ "ok": false, "error": "Unauthorized" }));
+        }
+        return handle_bridge_event(request, &app).await;
+    }
     if request.method() != Method::POST || path != "/v1/call" {
         return json_response(StatusCode::NOT_FOUND, json!({ "ok": false, "error": "Not found" }));
     }
@@ -816,6 +812,38 @@ async fn handle_request(
         );
     };
     handle_call(request, service, app_state, app).await
+}
+
+#[derive(serde::Deserialize)]
+struct McpBridgeEvent {
+    event: String,
+    payload: Value,
+}
+
+async fn handle_bridge_event(request: Request<hyper::body::Incoming>, app: &AppHandle) -> Response<Full<Bytes>> {
+    let body = match read_body_with_limit(request, MAX_HTTP_BODY).await {
+        Ok(body) => body,
+        Err(error) => return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
+    };
+    let event: McpBridgeEvent = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "error": format!("Invalid bridge event: {error}") }),
+            )
+        }
+    };
+    if !matches!(event.event.as_str(), "mcp-accounts-changed" | "mcp-download-completed") {
+        return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": "Unsupported bridge event" }));
+    }
+    match app.emit(&event.event, event.payload) {
+        Ok(()) => json_response(StatusCode::OK, json!({ "ok": true })),
+        Err(error) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "error": format!("Could not emit bridge event: {error}") }),
+        ),
+    }
 }
 
 async fn handle_history(request: Request<hyper::body::Incoming>, app_state: &AppState) -> Response<Full<Bytes>> {
@@ -1082,36 +1110,6 @@ pub fn account_key(apple_id: &str, dsid: Option<&str>) -> String {
     format!("apple:{}", apple_id.trim().to_lowercase())
 }
 
-fn load_tool_access(data_dir: &Path) -> McpToolAccessSettings {
-    if let Ok(Some(settings)) = load_app_state_json::<McpToolAccessSettings>(data_dir, TOOL_ACCESS_KEY) {
-        return settings;
-    }
-    let legacy_path = data_dir.join(LEGACY_TOOL_ACCESS_FILE);
-    let settings = std::fs::read_to_string(&legacy_path)
-        .ok()
-        .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default();
-    if save_app_state_json(data_dir, TOOL_ACCESS_KEY, &settings).is_ok() {
-        let _ = std::fs::remove_file(legacy_path);
-    }
-    settings
-}
-
-fn load_account_access(data_dir: &Path) -> McpAccountAccessSettings {
-    if let Ok(Some(settings)) = load_app_state_json::<McpAccountAccessSettings>(data_dir, ACCOUNT_ACCESS_KEY) {
-        return settings;
-    }
-    let legacy_path = data_dir.join(LEGACY_ACCOUNT_ACCESS_FILE);
-    let settings = std::fs::read_to_string(&legacy_path)
-        .ok()
-        .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default();
-    if save_app_state_json(data_dir, ACCOUNT_ACCESS_KEY, &settings).is_ok() {
-        let _ = std::fs::remove_file(legacy_path);
-    }
-    settings
-}
-
 fn mask_apple_id(apple_id: &str) -> String {
     let trimmed = apple_id.trim();
     let Some((local, domain)) = trimmed.split_once('@') else {
@@ -1139,35 +1137,26 @@ pub(crate) fn bundled_mcp_native_binary_path() -> Option<PathBuf> {
 }
 
 pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
-    crate::mcp_installation::installed_launcher_path()
+    // Client configurations must always launch the native server directly.
+    // The legacy cirrus-mcp-server launcher remains shipped only for existing
+    // external configurations and forwards to this same native binary.
+    crate::mcp_installation::installed_native_path()
         .ok()
         .filter(|path| path.is_file())
-        .or_else(bundled_mcp_binary_path)
+        .or_else(bundled_mcp_native_binary_path)
 }
 
 fn load_enabled_setting(data_dir: &Path) -> bool {
-    if let Ok(Some(settings)) = load_app_state_json::<McpSettings>(data_dir, SETTINGS_KEY) {
-        return settings.enabled;
-    }
-    let legacy_path = data_dir.join(LEGACY_SETTINGS_FILE);
-    let settings = std::fs::read_to_string(&legacy_path)
-        .ok()
-        .and_then(|value| serde_json::from_str::<McpSettings>(&value).ok())
-        .unwrap_or(McpSettings { enabled: true });
-    if save_app_state_json(data_dir, SETTINGS_KEY, &settings).is_ok() {
-        let _ = std::fs::remove_file(legacy_path);
-    }
-    settings.enabled
+    load_mcp_settings(data_dir).enabled
 }
 
 fn save_enabled_setting(data_dir: Option<&Path>, enabled: bool) {
     let Some(data_dir) = data_dir else {
         return;
     };
-    if let Err(error) = save_app_state_json(data_dir, SETTINGS_KEY, &McpSettings { enabled }) {
+    if let Err(error) = save_mcp_settings(data_dir, enabled) {
         log::warn!("[MCP] could not save the MCP setting: {error}");
     }
-    let _ = std::fs::remove_file(data_dir.join(LEGACY_SETTINGS_FILE));
 }
 
 fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {
@@ -1288,10 +1277,7 @@ mod tests {
 
     #[test]
     fn toml_escaping_handles_windows_paths() {
-        assert_eq!(
-            escape_toml_string(r#"C:\Users\me\cirrus-mcp-server.exe"#),
-            r#"C:\\Users\\me\\cirrus-mcp-server.exe"#
-        );
+        assert_eq!(escape_toml_string(r#"C:\Users\me\cirrus-mcp.exe"#), r#"C:\\Users\\me\\cirrus-mcp.exe"#);
     }
 
     #[test]
@@ -1369,10 +1355,10 @@ mod tests {
     }
 
     #[test]
-    fn mcp_binary_uses_the_app_sibling_name() {
-        let path = mcp_binary_path().expect("binary path");
+    fn bundled_mcp_native_binary_uses_the_app_sibling_name() {
+        let path = bundled_mcp_native_binary_path().expect("native binary path");
         let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
-        assert_eq!(name, if cfg!(windows) { "cirrus-mcp-server.exe" } else { "cirrus-mcp-server" });
+        assert_eq!(name, if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" });
     }
 
     #[test]

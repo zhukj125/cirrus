@@ -83,14 +83,29 @@ pub fn open_database(path: &Path) -> AppResult<Connection> {
     }
 
     let connection = Connection::open(path)?;
-    connection.busy_timeout(Duration::from_secs(5))?;
-    connection.execute_batch(
-        r#"
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
+    connection.busy_timeout(Duration::from_secs(10))?;
+    // WAL is a best-effort upgrade. If another Cirrus process holds a lock,
+    // retry briefly and continue instead of preventing MCP from starting.
+    const WAL_ATTEMPTS: u32 = 5;
+    for attempt in 1..=WAL_ATTEMPTS {
+        match connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => break,
+            Ok(mode) => {
+                log::warn!(
+                    "cirrus.db journal_mode stayed at '{mode}'; concurrent access may encounter more lock contention"
+                );
+                break;
+            }
+            Err(_) if attempt < WAL_ATTEMPTS => {
+                std::thread::sleep(Duration::from_millis(100 * u64::from(attempt)));
+            }
+            Err(error) => {
+                log::warn!("cirrus.db could not enable WAL after {WAL_ATTEMPTS} attempts: {error}");
+                break;
+            }
+        }
+    }
+    connection.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
     connection.execute_batch(SCHEMA)?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(connection)

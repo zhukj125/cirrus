@@ -48,6 +48,7 @@ export const useAppStore = defineStore("app", () => {
   const runtime = ref<RuntimeInfo | null>(null);
 
   const accounts = ref<KnownAccount[]>([]);
+  const accountStoreRevision = ref(0);
 
   const activeAccountKey = ref<string | null>(null);
 
@@ -75,14 +76,23 @@ export const useAppStore = defineStore("app", () => {
   let pendingAccountPersist: Promise<void> = Promise.resolve();
 
   function persistAccountState(): void {
-    const snapshot = {
-      accounts: [...accounts.value],
-      activeAccountKey: activeAccountKey.value,
-      avatars: { ...accountAvatars.value },
-    };
     pendingAccountPersist = pendingAccountPersist
-      .then(() => accountStoreSave(snapshot))
-      .catch((error) => {
+      .then(async () => {
+        const savedRevision = await accountStoreSave({
+          accounts: [...accounts.value],
+          activeAccountKey: activeAccountKey.value,
+          avatars: { ...accountAvatars.value },
+          revision: accountStoreRevision.value,
+        });
+        accountStoreRevision.value = typeof savedRevision === "number" ? savedRevision : accountStoreRevision.value + 1;
+      })
+      .catch(async (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("ACCOUNT_STORE_CONFLICT")) {
+          toast.error(t("app.accountSaveFailed", { error: message }));
+          await loadAccountStore().catch(() => undefined);
+          return;
+        }
         toast.error(t("app.accountSaveFailed", { error: error instanceof Error ? error.message : t("app.unknownError") }));
       });
   }
@@ -280,6 +290,7 @@ export const useAppStore = defineStore("app", () => {
     accounts.value = stored.accounts;
     activeAccountKey.value = stored.activeAccountKey;
     accountAvatars.value = stored.avatars;
+    accountStoreRevision.value = stored.revision ?? 0;
   }
   async function restore(): Promise<void> {
     restoring.value = true;

@@ -375,15 +375,9 @@ async fn account_status(resolved: &ResolvedAccount) -> Result<Value, String> {
 }
 
 async fn logout(resolved: ResolvedAccount, state: &AppState, app: &AppHandle) -> Result<Value, String> {
-    let mut snapshot = AccountStoreRepository::new(state.data_dir()).load().map_err(|error| error.to_string())?;
-    for account in &mut snapshot.accounts {
-        if account.key == resolved.account.key {
-            account.photos_session_id = None;
-            account.devices_session_id = None;
-            account.last_known_status = "expired".to_string();
-        }
-    }
-    AccountStoreRepository::new(state.data_dir()).save(&snapshot).map_err(|error| error.to_string())?;
+    AccountStoreRepository::new(state.data_dir())
+        .clear_sessions(&resolved.account.key)
+        .map_err(|error| error.to_string())?;
     state.sessions.remove(&resolved.session_id).await;
     let _ = app.emit("mcp-accounts-changed", json!({ "accountKey": resolved.account.key, "reason": "logout" }));
     Ok(json!({ "accountKey": resolved.account.key, "signedOut": true }))
@@ -405,7 +399,11 @@ async fn download_photo(
     let transfer_id = optional_str(arguments, "transferId")
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let cancelled = state.download_transfers.register(&transfer_id).await;
+    let cancelled = state
+        .download_transfers
+        .register(&transfer_id)
+        .await
+        .ok_or_else(|| "This transfer ID is already active".to_string())?;
     let event_transfer_id = transfer_id.clone();
     let event_app = app.clone();
     let event_name = name.unwrap_or("iCloud media").to_string();

@@ -21,6 +21,7 @@ pub struct DownloadTasksLoadRequest {
 pub struct DownloadTasksSaveRequest {
     pub account_key: String,
     pub tasks: Vec<Value>,
+    pub revision: i64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -45,8 +46,8 @@ pub async fn download_tasks_load(
 }
 
 #[tauri::command]
-pub async fn download_tasks_save(state: SharedState<'_>, payload: DownloadTasksSaveRequest) -> AppResult<()> {
-    state.inner().download_tasks.save(&payload.account_key, payload.tasks).await
+pub async fn download_tasks_save(state: SharedState<'_>, payload: DownloadTasksSaveRequest) -> AppResult<i64> {
+    state.inner().download_tasks.save(&payload.account_key, payload.tasks, payload.revision).await
 }
 
 #[tauri::command]

@@ -325,6 +325,8 @@ export const useDownloadsStore = defineStore("downloads", () => {
 
   const loadedAccounts = new Set<string>();
 
+  const taskRevisions = new Map<string, number>();
+
   const persistenceWarning = ref<string | null>(null);
 
   const persistenceWritable = ref(true);
@@ -436,6 +438,8 @@ export const useDownloadsStore = defineStore("downloads", () => {
     const merged = [...source, ...existing];
     tasksByAccount.delete(fromKey);
     tasksByAccount.set(toKey, merged);
+    taskRevisions.delete(fromKey);
+    taskRevisions.delete(toKey);
     if (loadedAccounts.delete(fromKey)) loadedAccounts.add(toKey);
     if (activeAccountKey.value === fromKey) {
       activeAccountKey.value = toKey;
@@ -446,11 +450,28 @@ export const useDownloadsStore = defineStore("downloads", () => {
   function removeAccountTasks(accountKey: string): void {
     tasksByAccount.delete(accountKey);
     loadedAccounts.delete(accountKey);
+    taskRevisions.delete(accountKey);
     if (activeAccountKey.value === accountKey) {
       tasks.value = [];
       activeAccountKey.value = null;
       activeSessionId.value = null;
     }
+  }
+
+  async function refreshAccountTasksFromDatabase(accountKey: string): Promise<void> {
+    const result = await loadDownloadTasks(accountKey);
+    persistenceEnabled.value = result.persistenceEnabled;
+    persistenceWritable.value = result.writable;
+    taskRevisions.set(accountKey, result.revision ?? 0);
+    if (result.warning) persistenceWarning.value = result.warning;
+    const restored = parseDownloadTasks(result.tasks, accountKey).map(recoverInterruptedTask);
+    const merged = new Map(restored.map((task) => [task.id, task] as const));
+    for (const task of taskListFor(accountKey)) {
+      if (task.status === "running" || task.status === "queued" || task.status === "paused") {
+        merged.set(task.id, task);
+      }
+    }
+    restoreAccountTasks(accountKey, [...merged.values()]);
   }
 
   function restoreAccountTasks(accountKey: string, restored: DownloadTask[]): void {
@@ -513,6 +534,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
       const result = await loadDownloadTasks(accountKey);
       persistenceEnabled.value = result.persistenceEnabled;
       persistenceWritable.value = result.writable;
+      taskRevisions.set(accountKey, result.revision ?? 0);
       if (result.warning) {
         persistenceWarning.value = result.warning;
         toast.info(result.warning);
@@ -869,15 +891,30 @@ export const useDownloadsStore = defineStore("downloads", () => {
     dirtyAccounts.delete(accountKey);
     let failed = false;
     const payload = serializeDownloadTasks(taskListFor(accountKey));
-    const flight = saveDownloadTasks(accountKey, payload)
-      .then(() => {
+    const revision = taskRevisions.get(accountKey) ?? 0;
+    const flight = saveDownloadTasks(accountKey, payload, revision)
+      .then((nextRevision) => {
+        taskRevisions.set(accountKey, typeof nextRevision === "number" ? nextRevision : revision + 1);
         persistenceWarning.value = null;
         persistFailureNotified = false;
       })
-      .catch((caught: unknown) => {
+      .catch(async (caught: unknown) => {
+        const message = caught instanceof Error ? caught.message : t("downloads.saveTasksFailed");
+        if (message.includes("DOWNLOAD_TASKS_CONFLICT")) {
+          try {
+            await refreshAccountTasksFromDatabase(accountKey);
+            dirtyAccounts.add(accountKey);
+            return;
+          } catch (refreshError) {
+            const refreshMessage = refreshError instanceof Error ? refreshError.message : t("downloads.readTasksFailed");
+            persistenceWarning.value = refreshMessage;
+            failed = true;
+            dirtyAccounts.add(accountKey);
+            return;
+          }
+        }
         failed = true;
         dirtyAccounts.add(accountKey);
-        const message = caught instanceof Error ? caught.message : t("downloads.saveTasksFailed");
         persistenceWarning.value = message;
         if (!persistFailureNotified) {
           persistFailureNotified = true;
@@ -1433,6 +1470,7 @@ export const useDownloadsStore = defineStore("downloads", () => {
     restoreAccountTasks,
     isAccountLoaded,
     loadAccountTasks,
+    refreshAccountTasksFromDatabase,
     schedulePersist,
     flushPersistence,
     initDownloadTracking,

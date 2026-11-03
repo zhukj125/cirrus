@@ -7,6 +7,7 @@ use aes_gcm::aead::{rand_core::RngCore, Aead, OsRng};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use rusqlite::{OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -23,6 +24,8 @@ const TRUSTED_BROWSER_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub struct SessionSnapshot {
     pub id: String,
     pub apple_id: String,
+    #[serde(default)]
+    pub revision: i64,
 
     #[serde(default)]
     pub china_mainland: bool,
@@ -64,6 +67,13 @@ pub struct SessionSnapshot {
     pub last_access: i64,
 }
 
+/// Verify that an existing vault key can be read by this executable without
+/// creating a new key. On platforms with an interactive credential store this
+/// is the command users run once to grant background access.
+pub fn verify_vault_key_access() -> AppResult<()> {
+    SecretCodec::load_existing().map(|_| ())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TrustedBrowserRecord {
@@ -71,25 +81,117 @@ struct TrustedBrowserRecord {
     token: String,
     updated_at: i64,
 }
+struct KeyInitLock {
+    path: PathBuf,
+}
+
+impl KeyInitLock {
+    fn acquire(database: &Path) -> AppResult<Self> {
+        let parent = database.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let path = parent.join(".cirrus-vault-key-init.lock");
+        for _ in 0..50 {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|metadata| metadata.modified().ok())
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|age| age > Duration::from_secs(30))
+                    {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => {
+                    return Err(AppError::other(format!("Could not lock session vault key initialization: {error}")));
+                }
+            }
+        }
+        Err(AppError::other("Timed out while initializing the Cirrus session vault key"))
+    }
+}
+
+impl Drop for KeyInitLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn database_has_encrypted_records(database: &Path) -> AppResult<bool> {
+    let connection = crate::database::open_database(database)?;
+    let sessions: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM session_secrets)", [], |row| row.get(0))?;
+    let trusted: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM trusted_browsers)", [], |row| row.get(0))?;
+    Ok(sessions || trusted)
+}
+
 struct SecretCodec {
     cipher: Aes256Gcm,
 }
 
 impl SecretCodec {
-    fn load_or_create() -> AppResult<Self> {
+    fn load_or_create(database: &Path) -> AppResult<Self> {
+        if let Some(codec) = Self::load_from_environment()? {
+            return Ok(codec);
+        }
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+            .map_err(|error| AppError::other(format!("Could not open the OS credential store: {error}")))?;
+        match entry.get_password() {
+            Ok(encoded) => return Self::from_encoded_key(&encoded),
+            Err(keyring::Error::NoEntry) => {}
+            Err(error) => return Err(AppError::other(format!("Could not read the session key: {error}"))),
+        }
+
+        let _guard = KeyInitLock::acquire(database)?;
+        // Another process may have created the key while this process waited.
+        match entry.get_password() {
+            Ok(encoded) => return Self::from_encoded_key(&encoded),
+            Err(keyring::Error::NoEntry) => {}
+            Err(error) => return Err(AppError::other(format!("Could not read the session key: {error}"))),
+        }
+        if database_has_encrypted_records(database)? {
+            return Err(AppError::other(
+                "The Cirrus session vault key is missing while encrypted records exist. Open Cirrus to restore the OS credential entry.",
+            ));
+        }
+        let key: [u8; 32] = rand::random();
+        entry
+            .set_password(&URL_SAFE_NO_PAD.encode(key))
+            .map_err(|error| AppError::other(format!("Could not save the session key: {error}")))?;
+        Ok(Self::from_key(key))
+    }
+
+    fn load_existing() -> AppResult<Self> {
+        if let Some(codec) = Self::load_from_environment()? {
+            return Ok(codec);
+        }
         let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|error| AppError::other(format!("Could not open the OS credential store: {error}")))?;
         match entry.get_password() {
             Ok(encoded) => Self::from_encoded_key(&encoded),
-            Err(keyring::Error::NoEntry) => {
-                let key: [u8; 32] = rand::random();
-                entry
-                    .set_password(&URL_SAFE_NO_PAD.encode(key))
-                    .map_err(|error| AppError::other(format!("Could not save the session key: {error}")))?;
-                Ok(Self::from_key(key))
-            }
-            Err(error) => Err(AppError::other(format!("Could not read the session key: {error}"))),
+            Err(keyring::Error::NoEntry) => Err(AppError::other(
+                "The Cirrus session vault key is unavailable. Open Cirrus once to initialize it, or provide CIRRUS_SESSION_KEY_FILE.",
+            )),
+            Err(error) => Err(AppError::other(format!(
+                "Could not read the Cirrus session vault key: {error}. Open Cirrus and ensure the OS credential store is accessible."
+            ))),
         }
+    }
+
+    fn load_from_environment() -> AppResult<Option<Self>> {
+        if let Some(path) = std::env::var_os("CIRRUS_SESSION_KEY_FILE").filter(|value| !value.is_empty()) {
+            let path = PathBuf::from(path);
+            let encoded = std::fs::read_to_string(&path).map_err(|error| {
+                AppError::other(format!("Could not read CIRRUS_SESSION_KEY_FILE at {}: {error}", path.display()))
+            })?;
+            return Self::from_encoded_key(encoded.trim()).map(Some);
+        }
+        if let Some(encoded) = std::env::var("CIRRUS_SESSION_KEY").ok().filter(|value| !value.trim().is_empty()) {
+            return Self::from_encoded_key(encoded.trim()).map(Some);
+        }
+        Ok(None)
     }
 
     fn from_encoded_key(encoded: &str) -> AppResult<Self> {
@@ -139,7 +241,7 @@ pub struct SessionVault {
 
 impl SessionVault {
     pub fn open(database: PathBuf) -> Self {
-        let codec = match SecretCodec::load_or_create() {
+        let codec = match SecretCodec::load_or_create(&database) {
             Ok(codec) => codec,
             Err(error) => {
                 log::warn!("[VAULT] session persistence is unavailable: {error}");
@@ -178,6 +280,18 @@ impl SessionVault {
         }
     }
 
+    pub fn open_existing(database: PathBuf) -> AppResult<Self> {
+        let codec = SecretCodec::load_existing()?;
+        let records = load_records(&database, &codec)?;
+        let trusted_browsers = load_trusted_browsers(&database, &codec)?;
+        Ok(Self {
+            path: Some(database),
+            codec: Some(codec),
+            records: Mutex::new(records),
+            trusted_browsers: Mutex::new(trusted_browsers),
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn open_with_key(database: PathBuf, key: [u8; 32]) -> Self {
         let codec = SecretCodec::from_key(key);
@@ -195,18 +309,41 @@ impl SessionVault {
         self.path.is_some() && self.codec.is_some()
     }
 
-    pub fn save(&self, snapshot: &SessionSnapshot) -> AppResult<()> {
+    pub fn save(&self, snapshot: &SessionSnapshot) -> AppResult<i64> {
         if !self.is_enabled() {
-            return Ok(());
+            return Ok(snapshot.revision);
         }
-        let mut records = self.lock();
-        records.insert(snapshot.id.clone(), snapshot.clone());
-        self.flush(&records)
+        let Some(path) = self.path.as_ref() else {
+            return Ok(snapshot.revision);
+        };
+        let Some(codec) = self.codec.as_ref() else {
+            return Ok(snapshot.revision);
+        };
+        let revision = save_record(path, codec, snapshot)?;
+        let mut stored = snapshot.clone();
+        stored.revision = revision;
+        self.lock().insert(stored.id.clone(), stored);
+        Ok(revision)
     }
 
     pub fn load(&self, session_id: &str) -> Option<SessionSnapshot> {
         if !self.is_enabled() {
             return None;
+        }
+        if let (Some(path), Some(codec)) = (self.path.as_ref(), self.codec.as_ref()) {
+            match load_record(path, codec, session_id) {
+                Ok(Some(snapshot)) => {
+                    self.lock().insert(session_id.to_string(), snapshot.clone());
+                    return Some(snapshot);
+                }
+                Ok(None) => {
+                    self.lock().remove(session_id);
+                    return None;
+                }
+                Err(error) => {
+                    log::warn!("[VAULT] could not refresh session record from the shared database: {error}");
+                }
+            }
         }
         self.lock().get(session_id).cloned()
     }
@@ -215,11 +352,11 @@ impl SessionVault {
         if !self.is_enabled() {
             return;
         }
-        let mut records = self.lock();
-        if records.remove(session_id).is_none() {
+        self.lock().remove(session_id);
+        let Some(path) = self.path.as_ref() else {
             return;
-        }
-        if let Err(error) = self.flush(&records) {
+        };
+        if let Err(error) = delete_record(path, session_id) {
             log::warn!("[VAULT] failed to persist after deleting a session: {error}");
         }
     }
@@ -238,9 +375,14 @@ impl SessionVault {
             token: token.to_string(),
             updated_at: crate::session::now_millis(),
         };
-        let mut records = self.trusted_lock();
-        records.insert(key, record);
-        self.flush_trusted(&records)
+        self.trusted_lock().insert(key.clone(), record.clone());
+        let Some(path) = self.path.as_ref() else {
+            return Ok(());
+        };
+        let Some(codec) = self.codec.as_ref() else {
+            return Ok(());
+        };
+        save_trusted_browser_record(path, codec, &key, &record)
     }
 
     pub fn load_trusted_browser(&self, apple_id: &str) -> Option<String> {
@@ -248,6 +390,24 @@ impl SessionVault {
             return None;
         }
         let key = trusted_browser_key(apple_id);
+        if let (Some(path), Some(codec)) = (self.path.as_ref(), self.codec.as_ref()) {
+            match load_trusted_browser_record(path, codec, &key) {
+                Ok(Some(record)) => {
+                    self.trusted_lock().insert(key.clone(), record.clone());
+                    if crate::session::now_millis().saturating_sub(record.updated_at) <= TRUSTED_BROWSER_TTL_MS {
+                        return Some(record.token);
+                    }
+                    return None;
+                }
+                Ok(None) => {
+                    self.trusted_lock().remove(&key);
+                    return None;
+                }
+                Err(error) => {
+                    log::warn!("[VAULT] could not refresh trusted-browser record: {error}");
+                }
+            }
+        }
         let records = self.trusted_lock();
         let record = records.get(&key)?;
         if crate::session::now_millis().saturating_sub(record.updated_at) > TRUSTED_BROWSER_TTL_MS {
@@ -261,12 +421,11 @@ impl SessionVault {
             return;
         }
         let key = trusted_browser_key(apple_id);
-        let mut records = self.trusted_lock();
-        if records.remove(&key).is_none() {
-            return;
-        }
-        if let Err(error) = self.flush_trusted(&records) {
-            log::warn!("[VAULT] failed to persist after removing a trusted browser: {error}");
+        self.trusted_lock().remove(&key);
+        if let Some(path) = self.path.as_ref() {
+            if let Err(error) = delete_trusted_browser_record(path, &key) {
+                log::warn!("[VAULT] failed to persist after removing a trusted browser: {error}");
+            }
         }
     }
     pub fn prune(&self, ttl: Duration) {
@@ -278,13 +437,20 @@ impl SessionVault {
         let sessions_changed = {
             let mut records = self.lock();
             let before = records.len();
+            let expired = records
+                .iter()
+                .filter(|(_, snapshot)| now.saturating_sub(snapshot.last_access) > ttl_ms)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
             records.retain(|_, snapshot| now.saturating_sub(snapshot.last_access) <= ttl_ms);
             if records.len() == before {
                 false
             } else {
                 log::info!("[VAULT] pruned {} expired session records", before - records.len());
-                if let Err(error) = self.flush(&records) {
-                    log::warn!("[VAULT] failed to persist after pruning expired sessions: {error}");
+                if let Some(path) = self.path.as_ref() {
+                    if let Err(error) = delete_records(path, &expired) {
+                        log::warn!("[VAULT] failed to persist after pruning expired sessions: {error}");
+                    }
                 }
                 true
             }
@@ -293,13 +459,20 @@ impl SessionVault {
         let trusted_changed = {
             let mut records = self.trusted_lock();
             let before = records.len();
+            let expired = records
+                .iter()
+                .filter(|(_, record)| now.saturating_sub(record.updated_at) > TRUSTED_BROWSER_TTL_MS)
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
             records.retain(|_, record| now.saturating_sub(record.updated_at) <= TRUSTED_BROWSER_TTL_MS);
             if records.len() == before {
                 false
             } else {
                 log::info!("[VAULT] pruned {} expired trusted browsers", before - records.len());
-                if let Err(error) = self.flush_trusted(&records) {
-                    log::warn!("[VAULT] failed to persist after pruning trusted browsers: {error}");
+                if let Some(path) = self.path.as_ref() {
+                    if let Err(error) = delete_trusted_browser_records(path, &expired) {
+                        log::warn!("[VAULT] failed to persist after pruning trusted browsers: {error}");
+                    }
                 }
                 true
             }
@@ -308,32 +481,12 @@ impl SessionVault {
         let _ = (sessions_changed, trusted_changed);
     }
 
-    fn flush(&self, records: &HashMap<String, SessionSnapshot>) -> AppResult<()> {
-        let Some(path) = self.path.as_ref() else {
-            return Ok(());
-        };
-        let Some(codec) = self.codec.as_ref() else {
-            return Ok(());
-        };
-        write_records(path, codec, records)
-    }
-
     fn lock(&self) -> MutexGuard<'_, HashMap<String, SessionSnapshot>> {
         self.records.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn trusted_lock(&self) -> MutexGuard<'_, HashMap<String, TrustedBrowserRecord>> {
         self.trusted_browsers.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn flush_trusted(&self, records: &HashMap<String, TrustedBrowserRecord>) -> AppResult<()> {
-        let Some(path) = self.path.as_ref() else {
-            return Ok(());
-        };
-        let Some(codec) = self.codec.as_ref() else {
-            return Ok(());
-        };
-        write_trusted_browsers(path, codec, records)
     }
 }
 
@@ -349,35 +502,71 @@ fn load_trusted_browsers(database: &Path, codec: &SecretCodec) -> AppResult<Hash
     let mut records = HashMap::new();
     for row in rows {
         let (key, envelope) = row?;
-        let Some(plain) = codec.decrypt(&envelope) else {
-            log::warn!("[VAULT] skipped an unreadable trusted-browser record");
-            continue;
-        };
-        match serde_json::from_slice::<TrustedBrowserRecord>(&plain) {
-            Ok(record) => {
-                records.insert(key, record);
-            }
-            Err(error) => log::warn!("[VAULT] skipped a malformed trusted-browser record: {error}"),
-        }
+        let plain = codec
+            .decrypt(&envelope)
+            .ok_or_else(|| AppError::other("The session vault key cannot decrypt a trusted-browser record"))?;
+        let record = serde_json::from_slice::<TrustedBrowserRecord>(&plain)
+            .map_err(|error| AppError::other(format!("Stored trusted-browser record is invalid: {error}")))?;
+        records.insert(key, record);
     }
     Ok(records)
 }
 
-fn write_trusted_browsers(
+fn load_trusted_browser_record(
     database: &Path,
     codec: &SecretCodec,
-    records: &HashMap<String, TrustedBrowserRecord>,
+    key: &str,
+) -> AppResult<Option<TrustedBrowserRecord>> {
+    let connection = crate::database::open_database(database)?;
+    let envelope = connection
+        .query_row("SELECT encrypted FROM trusted_browsers WHERE apple_id_key = ?1", [key], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .optional()?;
+    let Some(envelope) = envelope else {
+        return Ok(None);
+    };
+    let Some(plain) = codec.decrypt(&envelope) else {
+        return Err(AppError::other("Could not decrypt a trusted-browser record"));
+    };
+    serde_json::from_slice::<TrustedBrowserRecord>(&plain)
+        .map(Some)
+        .map_err(|error| AppError::other(format!("Stored trusted-browser record is invalid: {error}")))
+}
+
+fn save_trusted_browser_record(
+    database: &Path,
+    codec: &SecretCodec,
+    key: &str,
+    record: &TrustedBrowserRecord,
 ) -> AppResult<()> {
+    let plain = serde_json::to_vec(record)?;
+    let envelope = codec.encrypt(&plain)?;
     let mut connection = crate::database::open_database(database)?;
-    let transaction = connection.transaction()?;
-    transaction.execute("DELETE FROM trusted_browsers", [])?;
-    for (key, record) in records {
-        let plain = serde_json::to_vec(record)?;
-        let envelope = codec.encrypt(&plain)?;
-        transaction.execute(
-            "INSERT INTO trusted_browsers (apple_id_key, encrypted, updated_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![key, envelope, record.updated_at],
-        )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute(
+        "INSERT INTO trusted_browsers (apple_id_key, encrypted, updated_at) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(apple_id_key) DO UPDATE SET encrypted = excluded.encrypted, updated_at = excluded.updated_at",
+        rusqlite::params![key, envelope, record.updated_at],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn delete_trusted_browser_record(database: &Path, key: &str) -> AppResult<()> {
+    let connection = crate::database::open_database(database)?;
+    connection.execute("DELETE FROM trusted_browsers WHERE apple_id_key = ?1", [key])?;
+    Ok(())
+}
+
+fn delete_trusted_browser_records(database: &Path, keys: &[String]) -> AppResult<()> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let mut connection = crate::database::open_database(database)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for key in keys {
+        transaction.execute("DELETE FROM trusted_browsers WHERE apple_id_key = ?1", [key])?;
     }
     transaction.commit()?;
     Ok(())
@@ -389,31 +578,87 @@ fn load_records(database: &Path, codec: &SecretCodec) -> AppResult<HashMap<Strin
     let mut records = HashMap::new();
     for row in rows {
         let (id, envelope) = row?;
-        let Some(plain) = codec.decrypt(&envelope) else {
-            log::warn!("[VAULT] skipped an unreadable session record");
-            continue;
-        };
-        match serde_json::from_slice::<SessionSnapshot>(&plain) {
-            Ok(snapshot) => {
-                records.insert(id, snapshot);
-            }
-            Err(error) => log::warn!("[VAULT] skipped a malformed session record: {error}"),
-        }
+        let plain = codec
+            .decrypt(&envelope)
+            .ok_or_else(|| AppError::other("The session vault key cannot decrypt a stored session record"))?;
+        let snapshot = serde_json::from_slice::<SessionSnapshot>(&plain)
+            .map_err(|error| AppError::other(format!("Stored session record is invalid: {error}")))?;
+        records.insert(id, snapshot);
     }
     Ok(records)
 }
 
-fn write_records(database: &Path, codec: &SecretCodec, records: &HashMap<String, SessionSnapshot>) -> AppResult<()> {
+fn load_record(database: &Path, codec: &SecretCodec, session_id: &str) -> AppResult<Option<SessionSnapshot>> {
+    let connection = crate::database::open_database(database)?;
+    let envelope = connection
+        .query_row("SELECT encrypted FROM session_secrets WHERE session_id = ?1", [session_id], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .optional()?;
+    let Some(envelope) = envelope else {
+        return Ok(None);
+    };
+    let Some(plain) = codec.decrypt(&envelope) else {
+        return Err(AppError::other("Could not decrypt the stored session record"));
+    };
+    serde_json::from_slice::<SessionSnapshot>(&plain)
+        .map(Some)
+        .map_err(|error| AppError::other(format!("Stored session record is invalid: {error}")))
+}
+
+fn save_record(database: &Path, codec: &SecretCodec, snapshot: &SessionSnapshot) -> AppResult<i64> {
     let mut connection = crate::database::open_database(database)?;
-    let transaction = connection.transaction()?;
-    transaction.execute("DELETE FROM session_secrets", [])?;
-    for (id, snapshot) in records {
-        let plain = serde_json::to_vec(snapshot)?;
-        let envelope = codec.encrypt(&plain)?;
-        transaction.execute(
-            "INSERT INTO session_secrets (session_id, encrypted, last_access) VALUES (?1, ?2, ?3)",
-            rusqlite::params![id, envelope, snapshot.last_access],
-        )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing = transaction
+        .query_row("SELECT encrypted FROM session_secrets WHERE session_id = ?1", [&snapshot.id], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .optional()?;
+    let current_revision = match existing {
+        Some(envelope) => {
+            let plain = codec
+                .decrypt(&envelope)
+                .ok_or_else(|| AppError::other("Could not decrypt the stored session record"))?;
+            serde_json::from_slice::<SessionSnapshot>(&plain)
+                .map_err(|error| AppError::other(format!("Stored session record is invalid: {error}")))?
+                .revision
+        }
+        None => 0,
+    };
+    if snapshot.revision != current_revision {
+        return Err(AppError::other(format!(
+            "SESSION_VAULT_CONFLICT: expected revision {}, current revision {}",
+            snapshot.revision, current_revision
+        )));
+    }
+    let next_revision = current_revision.saturating_add(1);
+    let mut stored = snapshot.clone();
+    stored.revision = next_revision;
+    let plain = serde_json::to_vec(&stored)?;
+    let envelope = codec.encrypt(&plain)?;
+    transaction.execute(
+        "INSERT INTO session_secrets (session_id, encrypted, last_access) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(session_id) DO UPDATE SET encrypted = excluded.encrypted, last_access = excluded.last_access",
+        rusqlite::params![snapshot.id, envelope, snapshot.last_access],
+    )?;
+    transaction.commit()?;
+    Ok(next_revision)
+}
+
+fn delete_record(database: &Path, session_id: &str) -> AppResult<()> {
+    let connection = crate::database::open_database(database)?;
+    connection.execute("DELETE FROM session_secrets WHERE session_id = ?1", [session_id])?;
+    Ok(())
+}
+
+fn delete_records(database: &Path, session_ids: &[String]) -> AppResult<()> {
+    if session_ids.is_empty() {
+        return Ok(());
+    }
+    let mut connection = crate::database::open_database(database)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for session_id in session_ids {
+        transaction.execute("DELETE FROM session_secrets WHERE session_id = ?1", [session_id])?;
     }
     transaction.commit()?;
     Ok(())
@@ -440,6 +685,7 @@ mod tests {
         SessionSnapshot {
             id: id.to_string(),
             apple_id: "tester@example.com".to_string(),
+            revision: 0,
             china_mainland: true,
             auth_base: "https://idmsa.apple.com.cn/appleauth/auth".to_string(),
             setup_base: "https://setup.icloud.com.cn/setup/ws/1".to_string(),
@@ -472,6 +718,60 @@ mod tests {
         let last = envelope.len() - 1;
         envelope[last] ^= 0x01;
         assert!(codec.decrypt(&envelope).is_none());
+    }
+
+    #[test]
+    fn shared_vault_instances_observe_latest_records_without_overwriting_each_other() {
+        let (dir, file) = temp_vault();
+        let first = SessionVault::open_with_key(file.clone(), TEST_KEY);
+        let second = SessionVault::open_with_key(file, TEST_KEY);
+
+        let mut session_a = snapshot("session-a", 1_700_000_000_000);
+        session_a.session_data.insert("token".to_string(), "A1".to_string());
+        first.save(&session_a).expect("save A");
+
+        let observed_a = second.load("session-a").expect("second sees A");
+        assert_eq!(observed_a.session_data.get("token").map(String::as_str), Some("A1"));
+
+        let mut session_b = snapshot("session-b", 1_700_000_000_100);
+        session_b.session_data.insert("token".to_string(), "B1".to_string());
+        second.save(&session_b).expect("save B");
+        assert!(first.load("session-b").is_some(), "first sees B");
+
+        let mut session_a = first.load("session-a").expect("reload A");
+        session_a.session_data.insert("token".to_string(), "A2".to_string());
+        first.save(&session_a).expect("update A");
+        let observed_a = second.load("session-a").expect("second sees updated A");
+        assert_eq!(observed_a.session_data.get("token").map(String::as_str), Some("A2"));
+
+        first.remove("session-a");
+        assert!(second.load("session-a").is_none());
+        assert!(second.load("session-b").is_some(), "removing A must not remove B");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_same_session_save_is_rejected() {
+        let (dir, file) = temp_vault();
+        let first = SessionVault::open_with_key(file.clone(), TEST_KEY);
+        let second = SessionVault::open_with_key(file, TEST_KEY);
+        let mut stale = snapshot("shared-session", 1_700_000_000_000);
+        stale.session_data.insert("token".to_string(), "OLD".to_string());
+        first.save(&stale).expect("save old");
+
+        let mut latest = second.load("shared-session").expect("load latest");
+        latest.session_data.insert("token".to_string(), "NEW".to_string());
+        second.save(&latest).expect("save new");
+
+        stale.session_data.insert("token".to_string(), "STALE".to_string());
+        let error = first.save(&stale).expect_err("stale same-session save must be rejected");
+        assert!(error.to_string().contains("SESSION_VAULT_CONFLICT"));
+        assert_eq!(
+            second.load("shared-session").expect("load final").session_data.get("token").map(String::as_str),
+            Some("NEW")
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -522,6 +822,29 @@ mod tests {
         assert!(reopened.load_trusted_browser("tester@example.com").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn wrong_vault_key_is_reported_instead_of_silently_skipping_records() {
+        let (dir, file) = temp_vault();
+        let vault = SessionVault::open_with_key(file.clone(), TEST_KEY);
+        vault.save(&snapshot("session-1", 1_700_000_000_000)).expect("save session");
+        let wrong_codec = SecretCodec::from_key([8u8; 32]);
+        let error = load_records(&file, &wrong_codec).expect_err("wrong key must fail");
+        assert!(error.to_string().contains("cannot decrypt"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shared_vault_trusted_browsers_do_not_overwrite_each_other() {
+        let (dir, file) = temp_vault();
+        let first = SessionVault::open_with_key(file.clone(), TEST_KEY);
+        let second = SessionVault::open_with_key(file, TEST_KEY);
+        first.save_trusted_browser("first@example.com", "FIRST").expect("save first");
+        second.save_trusted_browser("second@example.com", "SECOND").expect("save second");
+        assert_eq!(first.load_trusted_browser("second@example.com").as_deref(), Some("SECOND"));
+        assert_eq!(second.load_trusted_browser("first@example.com").as_deref(), Some("FIRST"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn vault_file_never_contains_plaintext_secrets() {
         let (dir, file) = temp_vault();

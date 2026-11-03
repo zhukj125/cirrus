@@ -177,15 +177,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 Cirrus 支持两种 MCP 传输：
 
 - **Streamable HTTP** 在桌面主进程内运行，启用后监听 `http://127.0.0.1:5226/mcp`，不会再启动独立的控制台进程。
-- **stdio** 使用 `cirrus-mcp-server` launcher（Windows 为 `cirrus-mcp-server.exe`），与 DBX 的 `dbx-mcp-server` 包装器保持一致。launcher 会以隐藏控制台的方式启动原生 `cirrus-mcp`，同时继承 stdin/stdout 供 MCP 通信。开发模式下，Cirrus 会查找与当前程序同目录的 launcher，例如：
+- **stdio** 直接启动独立的原生 `cirrus-mcp`（Windows 为 `cirrus-mcp.exe`）。它自己打开 Cirrus 数据库和加密会话保险箱，并在本地执行账号相关工具，因此不依赖桌面 HTTP bridge 是否运行。桌面应用只用于交互式登录以及旧版 bridge 兼容模式。原来的 `cirrus-mcp-server` launcher 仍保留为兼容入口。
+
+开发模式下，Cirrus 会查找与当前程序同目录的原生可执行文件，例如：
 
 ```text
-target/debug/cirrus-mcp-server.exe
+target/debug/cirrus-mcp.exe
 ```
 
-桌面端会把当前回环端口和令牌发布到数据目录下的 `mcp-bridge.json`，stdio 服务优先读取这一份统一的发现文件，再回退到旧版 `mcp-bridge-port` 和 `mcp-bridge-token`。便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录，Cirrus 自动写入的客户端配置会通过服务环境变量传递解析后的目录。
+便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录，Cirrus 自动写入的客户端配置会通过服务环境变量传递解析后的目录。默认使用真正的本地后端；只有显式设置 `CIRRUS_MCP_BACKEND=bridge`（或提供 `CIRRUS_MCP_URL` 与 `CIRRUS_MCP_TOKEN`）时才走桌面 bridge 兼容路径。无法访问系统凭据存储的无头环境可通过 `CIRRUS_SESSION_KEY` 或 `CIRRUS_SESSION_KEY_FILE` 提供已有保险箱密钥；独立服务不会自行生成新密钥。`CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` 可设置本地下载限速，单位为字节/秒。
 
-如果 **设置 → MCP** 提示未找到 MCP launcher，先构建开发用可执行文件：
+如果 **设置 → MCP** 提示未找到 MCP 可执行文件，先构建开发用可执行文件：
 
 ```sh
 cargo build -p cirrus-mcp
@@ -197,14 +199,18 @@ pnpm build:mcp
 
 ### 独立 MCP 安装
 
-**设置 → MCP → 访问 → 本地 stdio** 中提供 MCP 引擎面板，可以独立安装、更新、重新安装或卸载 launcher 与原生二进制，安装目录为 `~/.cirrus/bin`。新的客户端配置会优先使用独立安装的 launcher；未安装时自动回退到桌面应用内置的副本。
+**设置 → MCP → 访问 → 本地 stdio** 中提供 MCP 引擎面板，可以独立安装、更新、重新安装或卸载原生二进制与旧版兼容 launcher，安装目录为 `~/.cirrus/bin`。新的客户端配置会优先使用原生 `cirrus-mcp`；未安装时自动回退到桌面应用内置的副本。
 
-原生可执行文件仍可手动启动 HTTP，launcher 用于 stdio：
+stdio 和 HTTP 都使用同一个原生可执行文件：
 
 ```sh
+cirrus-mcp
 cirrus-mcp --http --http-host 127.0.0.1 --http-port 5226 --http-path /mcp
-cirrus-mcp-server
+cirrus-mcp --authorize-keychain  # 交互式授权一次系统凭据访问
+cirrus-mcp-server  # 旧版 launcher，转发到 cirrus-mcp
 ```
+
+不要把 `--authorize-keychain` 写进 MCP 客户端参数；仅在系统凭据存储需要后台访问授权时，从终端运行一次。
 
 ## 限制
 

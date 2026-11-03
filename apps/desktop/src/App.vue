@@ -423,6 +423,7 @@ onMounted(async () => {
     });
     unlistenMcpDownloadCompleted = await listen<{ accountKey: string; path: string; fileName: string; sizeBytes: number }>("mcp-download-completed", (event) => {
       toast.success(i18n.t("mcp.downloadCompleted", { file: event.payload.fileName }));
+      void downloads.refreshAccountTasksFromDatabase(event.payload.accountKey);
     });
   } catch {}
   try {

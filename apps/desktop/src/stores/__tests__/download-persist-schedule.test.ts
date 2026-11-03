@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
-import { saveDownloadTasks } from "@/lib/api";
+import { loadDownloadTasks, saveDownloadTasks } from "@/lib/api";
 import { toast } from "@/lib/common/toast";
 import { useDownloadsStore } from "@/stores/downloads";
 import type { DownloadTask } from "@/stores/downloads";
@@ -15,7 +15,7 @@ vi.mock("@/lib/api", () => ({
   accountStoreSave: vi.fn(async () => undefined),
   loadDownloadTasks: vi.fn(),
   photosList: vi.fn(),
-  saveDownloadTasks: vi.fn(async () => undefined),
+  saveDownloadTasks: vi.fn(async () => 1),
   savePhotoTo: vi.fn(),
   setDownloadSpeedLimit: vi.fn(async () => undefined),
   listenDownloadProgress: vi.fn(async () => () => undefined),
@@ -92,7 +92,7 @@ describe("下载任务保存调度", () => {
     const store = useDownloadsStore();
     store.pause("task-a");
     await vi.waitFor(() => expect(saveDownloadTasks).toHaveBeenCalledTimes(1));
-    expect(saveDownloadTasks).toHaveBeenCalledWith("dsid:a", expect.arrayContaining([expect.objectContaining({ status: "paused" })]));
+    expect(saveDownloadTasks).toHaveBeenCalledWith("dsid:a", expect.arrayContaining([expect.objectContaining({ status: "paused" })]), 0);
   });
 
   it("关闭前 flush 会绕过防抖并写完全部 dirty 账号", async () => {
@@ -100,6 +100,44 @@ describe("下载任务保存调度", () => {
     store.schedulePersist("dsid:a");
     await store.flushPersistence();
     expect(saveDownloadTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("revision 冲突时合并数据库中的新任务并重试", async () => {
+    const remote = { ...task("done"), id: "task-b", title: "B" };
+    vi.mocked(saveDownloadTasks).mockRejectedValueOnce(new Error("DOWNLOAD_TASKS_CONFLICT: stale revision")).mockResolvedValueOnce(2);
+    vi.mocked(loadDownloadTasks).mockResolvedValueOnce({
+      tasks: [task("running"), remote],
+      persistenceEnabled: true,
+      writable: true,
+      warning: null,
+      revision: 1,
+    });
+
+    const store = useDownloadsStore();
+    store.pause("task-a");
+    await store.flushPersistence();
+
+    expect(saveDownloadTasks).toHaveBeenCalledTimes(2);
+    const retry = vi.mocked(saveDownloadTasks).mock.calls[1];
+    expect(retry?.[0]).toBe("dsid:a");
+    expect(retry?.[2]).toBe(1);
+    expect(retry?.[1]).toEqual(expect.arrayContaining([expect.objectContaining({ id: "task-a", status: "paused" }), expect.objectContaining({ id: "task-b" })]));
+  });
+
+  it("数据库删除历史时不会把本地已完成任务重新写回", async () => {
+    vi.mocked(loadDownloadTasks).mockResolvedValueOnce({
+      tasks: [],
+      persistenceEnabled: true,
+      writable: true,
+      warning: null,
+      revision: 2,
+    });
+    const store = useDownloadsStore();
+    store.restoreAccountTasks("dsid:a", [task("done"), { ...task("paused"), id: "task-paused", title: "Paused" }]);
+
+    await store.refreshAccountTasksFromDatabase("dsid:a");
+
+    expect(store.tasks.map((item) => item.id)).toEqual(["task-paused"]);
   });
 
   it("写入失败不阻断任务且只提示一次", async () => {

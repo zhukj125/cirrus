@@ -512,7 +512,7 @@ mod tests {
         let path = dir.join("mcp.json");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, r#"{"mcpServers":{"other":{"command":"other.exe"}}}"#).expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
         write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), true).expect("install");
@@ -534,7 +534,7 @@ mod tests {
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, "model = \"test\"\n\n[mcp_servers.other]\ncommand = \"other\"\n").expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
         write_codex_config(&path, binary, Some(data_dir), true).expect("install");
@@ -572,7 +572,7 @@ Authorization = "Bearer test"
 "#,
         )
         .expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
         assert!(!codex_has_command(&std::fs::read_to_string(&path).expect("read"), binary, Some(data_dir)));
@@ -597,7 +597,7 @@ Authorization = "Bearer test"
 
     #[test]
     fn codex_snippet_includes_the_shared_data_directory() {
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
         let snippet = config_snippet(ClientKind::Codex, binary, Some(data_dir));
 
@@ -615,7 +615,7 @@ Authorization = "Bearer test"
             "[mcp_servers.cirrus]\ncommand = \"old\"\nenv = { CIRRUS_DATA_DIR = \"old\", KEEP = \"1\" }\n",
         )
         .expect("seed");
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp-server.exe");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
 
         write_codex_config(&path, binary, Some(data_dir), true).expect("install");

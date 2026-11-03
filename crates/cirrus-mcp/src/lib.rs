@@ -21,11 +21,17 @@ use reqwest::Url;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
-const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+mod local_backend;
+
+use local_backend::LocalBackend;
+
+const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const LOGIN_TOOL: &str = "cirrus_login";
 const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const CLIENT_NAME: &str = "cirrus-mcp";
+const SERVER_INSTRUCTIONS: &str = "Cirrus exposes iCloud sign-in and authorized-account listing. Account-scoped tools use the shared local database and encrypted session vault directly; the desktop app is only required for cirrus_login. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed. Preserve the first Markdown summary, including artwork URLs when provided. Render native MCP image content blocks when present, and include each device's last location update timestamp when presenting device lists.";
 const MAX_DEVICE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_HTTP_PORT: u16 = 5226;
@@ -55,21 +61,35 @@ pub struct HttpConfig {
 struct HttpState {
     token: Arc<str>,
     allow_remote: bool,
-    bridge: Option<BridgeTarget>,
+    backend: ToolBackend,
+}
+
+#[derive(Clone)]
+enum ToolBackend {
+    Bridge(BridgeTarget),
+    Local(Arc<LocalBackend>),
+    Unavailable(Arc<str>),
 }
 
 pub async fn run_cli() {
+    init_stderr_logging();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("cirrus-mcp");
         println!();
-        println!("MCP bridge for Cirrus.");
+        println!("Standalone MCP server for Cirrus.");
         println!();
         println!("Usage:");
         println!("  cirrus-mcp                         Start stdio transport");
         println!("  cirrus-mcp --http                  Start Streamable HTTP transport");
         println!("  cirrus-mcp --http --http-port 5226 Start HTTP on a custom port");
+        println!("  cirrus-mcp --authorize-keychain  Authorize and verify OS credential access once");
         println!();
+        println!("CIRRUS_DATA_DIR selects the Cirrus data directory.");
+        println!("CIRRUS_MCP_BACKEND=local uses the shared database and session vault directly (default).");
+        println!("CIRRUS_MCP_BACKEND=bridge uses the running Cirrus desktop bridge.");
+        println!("CIRRUS_SESSION_KEY or CIRRUS_SESSION_KEY_FILE supplies the vault key for headless MCP.");
+        println!("CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT sets the local download limit in bytes per second.");
         println!("HTTP authentication uses CIRRUS_MCP_HTTP_TOKEN or CIRRUS_MCP_HTTP_TOKEN_FILE.");
         return;
     }
@@ -77,6 +97,65 @@ pub async fn run_cli() {
         println!("cirrus-mcp {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if args.iter().any(|arg| arg == "--verify-keychain-access") {
+        if args.len() != 1 {
+            eprintln!("cirrus-mcp: --verify-keychain-access does not accept additional arguments");
+            std::process::exit(2);
+        }
+        if let Err(error) = disable_background_credential_interaction() {
+            eprintln!("cirrus-mcp: {error}");
+            std::process::exit(1);
+        }
+        match cirrus_core::persistence::verify_vault_key_access() {
+            Ok(()) => println!("Cirrus background session vault access verified."),
+            Err(error) => {
+                eprintln!("cirrus-mcp: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if args.iter().any(|arg| arg == "--authorize-keychain") {
+        if args.len() != 1 {
+            eprintln!("cirrus-mcp: --authorize-keychain does not accept additional arguments");
+            std::process::exit(2);
+        }
+        match cirrus_core::persistence::verify_vault_key_access() {
+            Ok(()) => {
+                let verification = std::env::current_exe().and_then(|executable| {
+                    std::process::Command::new(executable).arg("--verify-keychain-access").output()
+                });
+                match verification {
+                    Ok(output) if output.status.success() => {
+                        println!("Cirrus session vault access authorized and verified for background use.")
+                    }
+                    Ok(output) => {
+                        eprintln!(
+                            "cirrus-mcp: background verification failed: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        );
+                        std::process::exit(1);
+                    }
+                    Err(error) => {
+                        eprintln!("cirrus-mcp: could not verify background vault access: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("cirrus-mcp: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    let _credential_guard = match disable_background_credential_interaction() {
+        Ok(guard) => guard,
+        Err(error) => {
+            eprintln!("cirrus-mcp: {error}");
+            std::process::exit(1);
+        }
+    };
     let mode = match runtime_mode(args) {
         Ok(mode) => mode,
         Err(error) => {
@@ -94,27 +173,105 @@ pub async fn run_cli() {
     }
 }
 
+#[cfg(target_os = "macos")]
+struct BackgroundCredentialGuard {
+    _interaction: security_framework::os::macos::keychain::KeychainUserInteractionLock,
+}
+
+#[cfg(not(target_os = "macos"))]
+struct BackgroundCredentialGuard;
+
+fn disable_background_credential_interaction() -> Result<BackgroundCredentialGuard, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use security_framework::os::macos::keychain::SecKeychain;
+
+        return SecKeychain::disable_user_interaction()
+            .map(|interaction| BackgroundCredentialGuard { _interaction: interaction })
+            .map_err(|error| {
+                format!(
+                    "Could not disable background Keychain interaction: {error}. Unlock the user Keychain, then run cirrus-mcp --authorize-keychain once in a terminal."
+                )
+            });
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(BackgroundCredentialGuard)
+}
+
+fn is_concurrent_tool_call(line: &str) -> bool {
+    let Ok(Value::Object(request)) = serde_json::from_str::<Value>(line) else {
+        return false;
+    };
+    request.get("id").is_some() && request.get("method").and_then(Value::as_str) == Some("tools/call")
+}
+
+fn init_stderr_logging() {
+    struct StderrLogger;
+
+    impl log::Log for StderrLogger {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record) {
+            if self.enabled(record.metadata()) {
+                eprintln!("[{}] {}", record.level(), record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static LOGGER: StderrLogger = StderrLogger;
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Warn);
+}
+
 async fn run_stdio() -> Result<(), String> {
+    let (responses_tx, mut responses_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let writer = tokio::spawn(async move {
+        let mut stdout = io::BufWriter::new(io::stdout());
+        while let Some(response) = responses_rx.recv().await {
+            let encoded =
+                serde_json::to_string(&response).map_err(|error| format!("could not encode response: {error}"))?;
+            stdout.write_all(encoded.as_bytes()).map_err(|error| format!("could not write stdout: {error}"))?;
+            stdout.write_all(b"\n").map_err(|error| format!("could not write stdout: {error}"))?;
+            stdout.flush().map_err(|error| format!("could not flush stdout: {error}"))?;
+        }
+        Ok::<(), String>(())
+    });
+
     let stdin = io::stdin();
-    let mut stdout = io::BufWriter::new(io::stdout().lock());
     let mut client = ClientIdentity::default();
+    let backend = ToolBackend::from_stdio();
+    let mut tasks = tokio::task::JoinSet::new();
 
     for line in stdin.lock().lines() {
         let line = line.map_err(|error| format!("could not read stdin: {error}"))?;
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_line(&line, &mut client, None).await;
-        let Some(response) = response else {
+        if is_concurrent_tool_call(&line) {
+            let task_backend = backend.clone();
+            let task_sender = responses_tx.clone();
+            let mut task_client = client.clone();
+            tasks.spawn(async move {
+                if let Some(response) = handle_line(&line, &mut task_client, &task_backend).await {
+                    let _ = task_sender.send(response);
+                }
+            });
             continue;
-        };
-        let encoded =
-            serde_json::to_string(&response).map_err(|error| format!("could not encode response: {error}"))?;
-        stdout.write_all(encoded.as_bytes()).map_err(|error| format!("could not write stdout: {error}"))?;
-        stdout.write_all(b"\n").map_err(|error| format!("could not write stdout: {error}"))?;
-        stdout.flush().map_err(|error| format!("could not flush stdout: {error}"))?;
+        }
+        if let Some(response) = handle_line(&line, &mut client, &backend).await {
+            responses_tx.send(response).map_err(|_| "could not queue the stdout response".to_string())?;
+        }
     }
-    Ok(())
+
+    while let Some(result) = tasks.join_next().await {
+        result.map_err(|error| format!("MCP tool task failed: {error}"))?;
+    }
+    drop(responses_tx);
+    writer.await.map_err(|error| format!("MCP stdout writer failed: {error}"))?
 }
 
 fn runtime_mode(args: Vec<String>) -> Result<RuntimeMode, String> {
@@ -271,7 +428,11 @@ pub async fn serve_http_on_listener(
 ) -> Result<(), String> {
     let local_addr = listener.local_addr().map_err(|error| format!("could not read HTTP address: {error}"))?;
     let path = config.path.clone();
-    let state = HttpState { token: Arc::from(config.token), allow_remote: config.allow_remote, bridge: config.bridge };
+    let state = HttpState {
+        token: Arc::from(config.token),
+        allow_remote: config.allow_remote,
+        backend: ToolBackend::from_http(config.bridge),
+    };
     let router = Router::new()
         .route("/healthz", get(http_health))
         .route(&path, post(http_message).get(http_stream).delete(http_delete).options(http_options))
@@ -299,9 +460,14 @@ async fn http_message(State(state): State<HttpState>, headers: HeaderMap, Json(p
     if let Err(response) = authorize_http(&state, &headers) {
         return with_http_headers(*response);
     }
+    let protocol_version = if payload.get("params").is_some_and(is_modern_request) {
+        MODERN_PROTOCOL_VERSION
+    } else {
+        LATEST_PROTOCOL_VERSION
+    };
     let mut client = ClientIdentity::default();
-    match handle_message(payload, &mut client, state.bridge.as_ref()).await {
-        Some(response) => http_json(response),
+    match handle_message(payload, &mut client, &state.backend).await {
+        Some(response) => http_json(response, protocol_version),
         None => with_http_headers(StatusCode::ACCEPTED.into_response()),
     }
 }
@@ -378,9 +544,9 @@ fn host_is_loopback(headers: &HeaderMap) -> bool {
         || host.starts_with("[::1]:")
 }
 
-fn http_json(value: Value) -> Response {
+fn http_json(value: Value, protocol_version: &'static str) -> Response {
     let mut response = Json(value).into_response();
-    response.headers_mut().insert("MCP-Protocol-Version", HeaderValue::from_static("2025-06-18"));
+    response.headers_mut().insert("MCP-Protocol-Version", HeaderValue::from_static(protocol_version));
     with_http_headers(response)
 }
 
@@ -395,7 +561,7 @@ fn with_http_headers(mut response: Response) -> Response {
     response
 }
 
-async fn handle_line(line: &str, client: &mut ClientIdentity, bridge: Option<&BridgeTarget>) -> Option<Value> {
+async fn handle_line(line: &str, client: &mut ClientIdentity, backend: &ToolBackend) -> Option<Value> {
     let payload: Value = match serde_json::from_str(line) {
         Ok(value) => value,
         Err(error) => {
@@ -406,17 +572,17 @@ async fn handle_line(line: &str, client: &mut ClientIdentity, bridge: Option<&Br
     if let Value::Array(items) = payload {
         let mut responses = Vec::new();
         for item in items {
-            if let Some(response) = handle_message(item, client, bridge).await {
+            if let Some(response) = handle_message(item, client, backend).await {
                 responses.push(response);
             }
         }
         return if responses.is_empty() { None } else { Some(Value::Array(responses)) };
     }
 
-    handle_message(payload, client, bridge).await
+    handle_message(payload, client, backend).await
 }
 
-async fn handle_message(payload: Value, client: &mut ClientIdentity, bridge: Option<&BridgeTarget>) -> Option<Value> {
+async fn handle_message(payload: Value, client: &mut ClientIdentity, backend: &ToolBackend) -> Option<Value> {
     let id = payload.get("id").cloned();
     let Some(method) = payload.get("method").and_then(Value::as_str) else {
         return id.map(|id| error_response(id, -32600, "Invalid Request"));
@@ -436,28 +602,109 @@ async fn handle_message(payload: Value, client: &mut ClientIdentity, bridge: Opt
                 client.version = info.get("version").and_then(Value::as_str).map(ToOwned::to_owned);
             }
             let requested = params.get("protocolVersion").and_then(Value::as_str);
-            let protocol = requested
-                .filter(|version| SUPPORTED_PROTOCOL_VERSIONS.contains(version))
-                .unwrap_or(LATEST_PROTOCOL_VERSION);
-            Some(success_response(
-                id,
-                json!({
-                    "protocolVersion": protocol,
-                    "capabilities": {
-                        "tools": { "listChanged": false }
-                    },
-                    "serverInfo": {
-                        "name": CLIENT_NAME,
-                        "version": env!("CARGO_PKG_VERSION")
-                    },
-                    "instructions": "Cirrus exposes iCloud sign-in and authorized-account listing. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed. Preserve the first Markdown summary, including artwork URLs when provided. Render native MCP image content blocks when present, and include each device's last location update timestamp when presenting device lists."
-                }),
-            ))
+            let protocol = if requested == Some(MODERN_PROTOCOL_VERSION) {
+                LATEST_PROTOCOL_VERSION
+            } else {
+                requested
+                    .filter(|version| SUPPORTED_PROTOCOL_VERSIONS.contains(version))
+                    .unwrap_or(LATEST_PROTOCOL_VERSION)
+            };
+            Some(success_response(id, initialize_result(protocol)))
+        }
+        "server/discover" => {
+            if has_request_metadata(&params) {
+                Some(success_response(id, discovery_result()))
+            } else {
+                Some(error_response(id, -32601, "Method not found: server/discover"))
+            }
         }
         "ping" | "logging/setLevel" => Some(success_response(id, json!({}))),
-        "tools/list" => Some(success_response(id, tools_list())),
-        "tools/call" => Some(handle_tool_call(id, params, client, bridge).await),
+        "tools/list" => {
+            let mut result = tools_list();
+            annotate_modern_list(&mut result, &params);
+            Some(success_response(id, result))
+        }
+        "resources/list" => {
+            let mut result = json!({ "resources": [] });
+            annotate_modern_list(&mut result, &params);
+            Some(success_response(id, result))
+        }
+        "resources/templates/list" => {
+            let mut result = json!({ "resourceTemplates": [] });
+            annotate_modern_list(&mut result, &params);
+            Some(success_response(id, result))
+        }
+        "prompts/list" => {
+            let mut result = json!({ "prompts": [] });
+            annotate_modern_list(&mut result, &params);
+            Some(success_response(id, result))
+        }
+        "tools/call" => {
+            let modern = is_modern_request(&params);
+            let mut response = handle_tool_call(id, params, client, backend).await;
+            if modern {
+                if let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) {
+                    result.insert("resultType".to_string(), json!("complete"));
+                }
+            }
+            Some(response)
+        }
         _ => Some(error_response(id, -32601, format!("Method not found: {method}"))),
+    }
+}
+
+fn initialize_result(protocol: &str) -> Value {
+    json!({
+        "protocolVersion": protocol,
+        "capabilities": {
+            "tools": { "listChanged": false },
+            "resources": { "listChanged": false, "subscribe": false },
+            "prompts": { "listChanged": false }
+        },
+        "serverInfo": {
+            "name": CLIENT_NAME,
+            "version": env!("CARGO_PKG_VERSION")
+        },
+        "instructions": SERVER_INSTRUCTIONS
+    })
+}
+
+fn discovery_result() -> Value {
+    json!({
+        "resultType": "complete",
+        "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
+        "capabilities": {
+            "tools": { "listChanged": false },
+            "resources": { "listChanged": false, "subscribe": false },
+            "prompts": { "listChanged": false }
+        },
+        "serverInfo": {
+            "name": CLIENT_NAME,
+            "version": env!("CARGO_PKG_VERSION")
+        },
+        "instructions": SERVER_INSTRUCTIONS
+    })
+}
+
+fn has_request_metadata(params: &Value) -> bool {
+    params.get("_meta").and_then(Value::as_object).is_some_and(|metadata| !metadata.is_empty())
+}
+
+fn is_modern_request(params: &Value) -> bool {
+    params
+        .get("_meta")
+        .and_then(|metadata| metadata.get("io.modelcontextprotocol/protocolVersion"))
+        .and_then(Value::as_str)
+        == Some(MODERN_PROTOCOL_VERSION)
+}
+
+fn annotate_modern_list(result: &mut Value, params: &Value) {
+    if is_modern_request(params) {
+        if let Some(result) = result.as_object_mut() {
+            result.insert("resultType".to_string(), json!("complete"));
+            result.insert("ttlMs".to_string(), json!(0));
+            result.insert("cacheScope".to_string(), json!("private"));
+        }
     }
 }
 
@@ -815,7 +1062,7 @@ fn artwork_mode(arguments: &Value) -> ArtworkMode {
     }
 }
 
-async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bridge: Option<&BridgeTarget>) -> Value {
+async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, backend: &ToolBackend) -> Value {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, -32602, "Missing tool name");
     };
@@ -829,7 +1076,7 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
             "content": [{ "type": "text", "text": format!("{name} does not accept arguments.") }],
             "isError": true
         });
-        record_mcp_history(name, &arguments, client, started_at, started, &result, bridge).await;
+        record_mcp_history(name, &arguments, client, started_at, started, &result, backend).await;
         return success_response(id, result);
     }
 
@@ -840,7 +1087,7 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
             object.remove("includeArtwork");
         }
     }
-    match call_bridge(name, &bridge_arguments, client, bridge).await {
+    match backend.call_tool(name, &bridge_arguments, client).await {
         Ok(mut result) => {
             if name == "cirrus_list_devices" {
                 annotate_device_list_timestamps(&mut result, now_millis());
@@ -874,7 +1121,7 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
                 "structuredContent": structured_result,
                 "isError": false
             });
-            record_mcp_history(name, &arguments, client, started_at, started, &result, bridge).await;
+            record_mcp_history(name, &arguments, client, started_at, started, &result, backend).await;
             success_response(id, result)
         }
         Err(message) => {
@@ -882,7 +1129,7 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bri
                 "content": [{ "type": "text", "text": tool_error_text(&message) }],
                 "isError": true
             });
-            record_mcp_history(name, &arguments, client, started_at, started, &result, bridge).await;
+            record_mcp_history(name, &arguments, client, started_at, started, &result, backend).await;
             success_response(id, result)
         }
     }
@@ -895,12 +1142,8 @@ async fn record_mcp_history(
     started_at: i64,
     started: Instant,
     response: &Value,
-    bridge: Option<&BridgeTarget>,
+    backend: &ToolBackend,
 ) {
-    let target = match bridge.cloned().or_else(|| discover_bridge().ok()) {
-        Some(target) => target,
-        None => return,
-    };
     let error = response.get("isError").and_then(Value::as_bool).unwrap_or(false).then(|| {
         response
             .get("content")
@@ -911,21 +1154,9 @@ async fn record_mcp_history(
             .unwrap_or("MCP tool call failed")
             .to_string()
     });
-    let body = json!({
-        "tool": tool,
-        "arguments": arguments,
-        "clientName": client.name.as_deref().unwrap_or("MCP client"),
-        "clientVersion": client.version,
-        "startedAt": started_at,
-        "durationMs": started.elapsed().as_millis() as i64,
-        "success": response.get("isError").and_then(Value::as_bool) != Some(true),
-        "error": error,
-        "response": response
-    });
-    let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).no_proxy().build() else {
-        return;
-    };
-    let _ = http.post(format!("{}/v1/history", target.base_url)).bearer_auth(target.token).json(&body).send().await;
+    backend
+        .record_history(tool, arguments, client, started_at, started.elapsed().as_millis() as i64, error, response)
+        .await;
 }
 
 fn now_millis() -> i64 {
@@ -1104,7 +1335,7 @@ fn tool_output_schema(tool: &str) -> Value {
         "cirrus_cancel_download" => object_schema(
             json!({
                 "transferId": { "type": "string" },
-                "cancelled": { "type": "boolean", "description": "Whether an active transfer was found and cancelled." }
+                "cancelled": { "type": "boolean", "description": "Whether a cancellation request was recorded for the transfer, including a transfer that registers immediately afterward." }
             }),
             &["transferId", "cancelled"],
         ),
@@ -2456,6 +2687,188 @@ pub struct BridgeTarget {
     pub token: String,
 }
 
+impl ToolBackend {
+    fn from_stdio() -> Self {
+        let requested = std::env::var("CIRRUS_MCP_BACKEND").unwrap_or_default().trim().to_ascii_lowercase();
+        match requested.as_str() {
+            "bridge" => Self::bridge_or_unavailable(),
+            "local" => Self::local_or_unavailable(),
+            _ if std::env::var_os("CIRRUS_MCP_URL").is_some() => Self::bridge_or_unavailable(),
+            _ => Self::local_or_unavailable(),
+        }
+    }
+
+    fn from_http(bridge: Option<BridgeTarget>) -> Self {
+        match bridge {
+            Some(target) => Self::Bridge(target),
+            None => Self::local_or_unavailable(),
+        }
+    }
+
+    fn bridge_or_unavailable() -> Self {
+        match discover_bridge() {
+            Ok(target) => Self::Bridge(target),
+            Err(error) => Self::Unavailable(
+                format!("Cirrus desktop bridge is unavailable: {error}. Start Cirrus or use CIRRUS_MCP_BACKEND=local.")
+                    .into(),
+            ),
+        }
+    }
+
+    fn local_or_unavailable() -> Self {
+        let Some(data_dir) = app_data_dir() else {
+            return Self::Unavailable(
+                "Could not resolve the Cirrus application data directory. Set CIRRUS_DATA_DIR to the Cirrus data folder."
+                    .into(),
+            );
+        };
+        match LocalBackend::open(data_dir.clone()) {
+            Ok(local) => {
+                eprintln!("cirrus-mcp local backend ready at {}", data_dir.display());
+                Self::Local(Arc::new(local))
+            }
+            Err(error) => {
+                let reason = format!("Cirrus local MCP backend is unavailable: {error}");
+                eprintln!("{reason}");
+                Self::Unavailable(reason.into())
+            }
+        }
+    }
+
+    async fn call_tool(&self, tool: &str, arguments: &Value, client: &ClientIdentity) -> Result<Value, String> {
+        match self {
+            Self::Bridge(target) => call_bridge(tool, arguments, client, Some(target)).await,
+            Self::Local(local) if tool == LOGIN_TOOL => {
+                let target = discover_bridge().map_err(|_| {
+                    "Sign-in requires the Cirrus desktop app. Start Cirrus, then retry cirrus_login.".to_string()
+                })?;
+                call_bridge(tool, arguments, client, Some(&target)).await
+            }
+            Self::Local(local) => local.call_tool(tool, arguments).await,
+            Self::Unavailable(reason) => {
+                if tool == LOGIN_TOOL {
+                    let target = discover_bridge().map_err(|_| {
+                        "Sign-in requires the Cirrus desktop app. Start Cirrus, then retry cirrus_login.".to_string()
+                    })?;
+                    return call_bridge(tool, arguments, client, Some(&target)).await;
+                }
+                // Transfers have process-local cancellation state. In degraded
+                // mode route both start and cancel consistently to the bridge.
+                if tool == "cirrus_download_photo" || tool == "cirrus_cancel_download" {
+                    let target = discover_bridge()
+                        .map_err(|error| format!("{reason} The desktop bridge is also unavailable: {error}"))?;
+                    return call_bridge(tool, arguments, client, Some(&target)).await;
+                }
+                if let Some(data_dir) = app_data_dir() {
+                    if let Ok(local) = LocalBackend::open(data_dir) {
+                        return local.call_tool(tool, arguments).await;
+                    }
+                }
+                // Try the desktop bridge only after local recovery fails. Do
+                // not fall back again after a bridge request is sent: the
+                // operation may already have run and could be non-idempotent.
+                if let Ok(target) = discover_bridge() {
+                    return call_bridge(tool, arguments, client, Some(&target)).await;
+                }
+                Err(reason.to_string())
+            }
+        }
+    }
+
+    async fn record_history(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        client: &ClientIdentity,
+        started_at: i64,
+        duration_ms: i64,
+        error: Option<String>,
+        response: &Value,
+    ) {
+        let success = response.get("isError").and_then(Value::as_bool) != Some(true);
+        match self {
+            Self::Bridge(target) => {
+                let body = json!({
+                    "tool": tool,
+                    "arguments": arguments,
+                    "clientName": client.name.as_deref().unwrap_or("MCP client"),
+                    "clientVersion": client.version,
+                    "startedAt": started_at,
+                    "durationMs": duration_ms,
+                    "success": success,
+                    "error": error,
+                    "response": response
+                });
+                let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).no_proxy().build()
+                else {
+                    return;
+                };
+                let _ = http
+                    .post(format!("{}/v1/history", target.base_url))
+                    .bearer_auth(&target.token)
+                    .json(&body)
+                    .send()
+                    .await;
+            }
+            Self::Local(local) => {
+                let entry = history_entry(tool, arguments, client, started_at, duration_ms, success, error, response);
+                if let Err(error) = local.record_history(entry) {
+                    log::warn!("[MCP] could not persist call history: {error}");
+                }
+            }
+            Self::Unavailable(_) => {
+                if let Some(data_dir) = app_data_dir() {
+                    let entry =
+                        history_entry(tool, arguments, client, started_at, duration_ms, success, error, response);
+                    if let Err(error) = cirrus_core::McpHistoryRepository::new(Some(&data_dir)).record(entry) {
+                        log::warn!("[MCP] could not persist recovered call history: {error}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn history_entry(
+    tool: &str,
+    arguments: &Value,
+    client: &ClientIdentity,
+    started_at: i64,
+    duration_ms: i64,
+    success: bool,
+    error: Option<String>,
+    response: &Value,
+) -> cirrus_core::McpCallHistoryEntry {
+    cirrus_core::McpCallHistoryEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        tool_name: tool.to_string(),
+        account_key: arguments.get("accountKey").and_then(Value::as_str).map(ToOwned::to_owned),
+        client_name: client.name.clone(),
+        client_version: client.version.clone(),
+        started_at,
+        duration_ms,
+        success,
+        error,
+        request_json: serde_json::to_string(arguments).ok(),
+        response_json: serde_json::to_string(response).ok(),
+    }
+}
+
+pub(crate) async fn notify_bridge_event(event: &str, payload: Value) {
+    let Ok(target) = discover_bridge() else {
+        return;
+    };
+    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).no_proxy().build() else {
+        return;
+    };
+    let _ = client
+        .post(format!("{}/v1/events", target.base_url))
+        .bearer_auth(&target.token)
+        .json(&json!({ "event": event, "payload": payload }))
+        .send()
+        .await;
+}
+
 async fn call_bridge(
     tool: &str,
     arguments: &Value,
@@ -2614,7 +3027,121 @@ mod tests {
 
     #[test]
     fn supported_protocol_versions_are_ordered_newest_first() {
-        assert_eq!(SUPPORTED_PROTOCOL_VERSIONS[0], LATEST_PROTOCOL_VERSION);
+        assert_eq!(SUPPORTED_PROTOCOL_VERSIONS[0], MODERN_PROTOCOL_VERSION);
+        assert!(SUPPORTED_PROTOCOL_VERSIONS.contains(&LATEST_PROTOCOL_VERSION));
+    }
+
+    #[test]
+    fn identified_tool_calls_are_dispatched_as_concurrent_requests() {
+        assert!(is_concurrent_tool_call(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"cirrus_list_accounts","arguments":{}}}"#
+        ));
+        assert!(!is_concurrent_tool_call(
+            r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cirrus_list_accounts","arguments":{}}}"#
+        ));
+        assert!(!is_concurrent_tool_call(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#));
+        assert!(!is_concurrent_tool_call(r#"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}]"#));
+    }
+
+    #[tokio::test]
+    async fn modern_discovery_and_list_results_use_complete_shapes() {
+        let backend = ToolBackend::Unavailable("offline".into());
+        let mut client = ClientIdentity::default();
+        let metadata = json!({
+            "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": { "name": "modern-test", "version": "1" }
+        });
+        let discovery = handle_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": { "_meta": metadata.clone() }
+            })
+            .to_string(),
+            &mut client,
+            &backend,
+        )
+        .await
+        .expect("discovery response");
+        assert_eq!(discovery["result"]["resultType"], "complete");
+        assert!(discovery["result"]["supportedVersions"]
+            .as_array()
+            .expect("versions")
+            .contains(&json!(MODERN_PROTOCOL_VERSION)));
+
+        for (index, (method, items)) in [
+            ("tools/list", "tools"),
+            ("resources/list", "resources"),
+            ("resources/templates/list", "resourceTemplates"),
+            ("prompts/list", "prompts"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let response = handle_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": index + 2,
+                    "method": method,
+                    "params": { "_meta": metadata.clone() }
+                })
+                .to_string(),
+                &mut client,
+                &backend,
+            )
+            .await
+            .expect("modern list response");
+            assert_eq!(response["result"]["resultType"], "complete", "{method}");
+            assert_eq!(response["result"]["ttlMs"], 0, "{method}");
+            assert_eq!(response["result"]["cacheScope"], "private", "{method}");
+            assert!(response["result"][items].is_array(), "{method}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_discovery_probe_keeps_the_legacy_initialize_fallback() {
+        let backend = ToolBackend::Unavailable("offline".into());
+        let mut client = ClientIdentity::default();
+        let response = handle_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {}
+            })
+            .to_string(),
+            &mut client,
+            &backend,
+        )
+        .await
+        .expect("legacy probe response");
+        assert_eq!(response["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn initialize_negotiates_modern_requests_to_the_newest_legacy_lifecycle() {
+        let backend = ToolBackend::Unavailable("offline".into());
+        let mut client = ClientIdentity::default();
+        let response = handle_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": MODERN_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "1" }
+                }
+            })
+            .to_string(),
+            &mut client,
+            &backend,
+        )
+        .await
+        .expect("initialize response");
+        assert_eq!(response["result"]["protocolVersion"], LATEST_PROTOCOL_VERSION);
     }
 
     #[test]
@@ -2976,6 +3503,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unavailable_local_backend_keeps_the_stdio_server_answerable() {
+        let backend = ToolBackend::Unavailable("local Cirrus data directory is unavailable".into());
+        let mut client = ClientIdentity::default();
+        let initialize = handle_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": LATEST_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "1" }
+                }
+            })
+            .to_string(),
+            &mut client,
+            &backend,
+        )
+        .await
+        .expect("initialize response");
+        assert_eq!(initialize["result"]["serverInfo"]["name"], CLIENT_NAME);
+
+        let call = handle_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": LIST_ACCOUNTS_TOOL, "arguments": {} }
+            })
+            .to_string(),
+            &mut client,
+            &backend,
+        )
+        .await
+        .expect("tool response");
+        assert!(
+            call["result"].get("isError").is_some(),
+            "an unavailable backend must still answer with a complete MCP tool result"
+        );
+    }
+
+    #[tokio::test]
     async fn in_process_http_server_uses_the_bound_listener_and_shuts_down() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind test listener");
         let address = listener.local_addr().expect("listener address");
@@ -2994,6 +3563,28 @@ mod tests {
         let response = reqwest::get(format!("http://{address}/healthz")).await.expect("health response");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.json::<Value>().await.expect("health JSON")["transport"], "streamable-http");
+
+        let modern = reqwest::Client::new()
+            .post(format!("http://{address}/mcp"))
+            .bearer_auth("test-token")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL_VERSION
+                    }
+                }
+            }))
+            .send()
+            .await
+            .expect("modern HTTP request");
+        assert_eq!(modern.status(), StatusCode::OK);
+        assert_eq!(
+            modern.headers().get("MCP-Protocol-Version").and_then(|value| value.to_str().ok()),
+            Some(MODERN_PROTOCOL_VERSION)
+        );
 
         stop_tx.send(()).expect("request shutdown");
         task.await.expect("server task").expect("server shutdown");

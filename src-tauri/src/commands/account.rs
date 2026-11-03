@@ -15,6 +15,6 @@ pub async fn account_store_load(state: SharedState<'_>) -> AppResult<AccountStor
 }
 
 #[tauri::command]
-pub async fn account_store_save(state: SharedState<'_>, payload: AccountStoreSnapshot) -> AppResult<()> {
+pub async fn account_store_save(state: SharedState<'_>, payload: AccountStoreSnapshot) -> AppResult<i64> {
     AccountStoreRepository::new(state.data_dir()).save(&payload)
 }
