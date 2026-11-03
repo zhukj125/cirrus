@@ -23,6 +23,7 @@ pub mod setup {
     pub const BASE_CN: &str = "https://setup.icloud.com.cn/setup/ws/1";
     pub const ACCOUNT_LOGIN: &str = "/accountLogin";
     pub const FMIP_WEB_AUTHENTICATE: &str = "/fmipWebAuthenticate";
+    pub const STORAGE_USAGE_INFO: &str = "/storageUsageInfo";
 }
 
 pub mod calendar {

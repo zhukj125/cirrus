@@ -41,6 +41,7 @@ import type {
   RuntimeInfo,
   SavedPhotoResult,
   SavedDriveFile,
+  StorageUsageResult,
   SessionStateResponse,
 } from "@/types";
 
@@ -237,6 +238,9 @@ export function driveList(payload: { sessionId: string; folderId?: string | null
 
 export function driveDownload(payload: { sessionId: string; url: string; name: string; targetPath: string }): Promise<SavedDriveFile> {
   return call<SavedDriveFile>("drive_download", payload);
+}
+export function storageUsage(sessionId: string): Promise<StorageUsageResult> {
+  return call<StorageUsageResult>("storage_usage", { sessionId });
 }
 export function contactPhoto(payload: { sessionId: string; url: string }): Promise<AccountAvatar> {
   return call<AccountAvatar>("contact_photo", payload);

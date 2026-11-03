@@ -23,6 +23,7 @@ import NotesView from "@/views/NotesView.vue";
 import PhotosGalleryView from "@/views/PhotosGalleryView.vue";
 import PhotosLoginView from "@/views/PhotosLoginView.vue";
 import SettingsView from "@/views/SettingsView.vue";
+import StorageView from "@/views/StorageView.vue";
 import { useAppStore } from "@/stores/app";
 import { useDownloadsStore } from "@/stores/downloads";
 import { useInterfaceScaleStore } from "@/stores/interfaceScale";
@@ -58,7 +59,7 @@ const currentDevices = computed<DevicesResponse | null>(() => devices.value);
 
 const signedIn = computed(() => view.value !== "photos-login" && (photosSession.value !== null || devices.value !== null));
 
-const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "drive" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
+const shellView = computed<ShellView>(() => (view.value === "photos-gallery" || view.value === "drive" || view.value === "storage" || view.value === "notes" || view.value === "contacts" || view.value === "calendar" ? view.value : "findmy"));
 function isWorkspaceTab(value: unknown): value is WorkspaceTab {
   return typeof value === "string" && (isShellView(value) || value === "settings");
 }
@@ -104,6 +105,7 @@ watch(
 const headerTitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("nav.photos");
   if (shellView.value === "drive") return i18n.t("nav.drive");
+  if (shellView.value === "storage") return i18n.t("nav.storage");
   if (shellView.value === "notes") return i18n.t("nav.notes");
   if (shellView.value === "contacts") return i18n.t("nav.contacts");
   if (shellView.value === "calendar") return i18n.t("nav.calendar");
@@ -113,6 +115,7 @@ const headerTitle = computed(() => {
 const headerSubtitle = computed(() => {
   if (shellView.value === "photos-gallery") return i18n.t("header.photosLibrary");
   if (shellView.value === "drive") return i18n.t("header.drive");
+  if (shellView.value === "storage") return i18n.t("header.storage");
   if (shellView.value === "notes") return i18n.t("header.notes");
   if (shellView.value === "contacts") return i18n.t("header.contacts");
   if (shellView.value === "calendar") return i18n.t("header.calendar");
@@ -133,6 +136,10 @@ async function activateWorkspaceTab(next: WorkspaceTab): Promise<void> {
   }
   if (next === "photos-gallery") {
     await store.openPhotos();
+    return;
+  }
+  if (next === "storage") {
+    await store.openStorage();
     return;
   }
   if (next === "drive") {
@@ -526,6 +533,10 @@ onUnmounted(() => {
 
           <div v-if="openWorkspaceTabs.includes('drive')" v-show="shellView === 'drive'" class="h-full">
             <DriveView v-if="photosSession" :key="'drive-' + photosSession" :session-id="photosSession" />
+          </div>
+
+          <div v-if="openWorkspaceTabs.includes('storage')" v-show="shellView === 'storage'" class="h-full">
+            <StorageView v-if="photosSession" :key="'storage-' + photosSession" :session-id="photosSession" />
           </div>
 
           <div v-if="openWorkspaceTabs.includes('notes')" v-show="shellView === 'notes'" class="h-full">

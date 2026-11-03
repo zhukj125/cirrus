@@ -82,6 +82,31 @@ export interface DriveListing {
   nextCursor: string | null;
 }
 
+export interface StorageUsageCategory {
+  mediaKey: string;
+  displayLabel: string;
+  displayColor: string;
+  usageInBytes: number;
+}
+
+export interface StorageQuotaStatus {
+  overQuota: boolean;
+  haveMaxQuotaTier: boolean;
+  almostFull: boolean;
+  paidQuota: boolean;
+}
+
+export interface StorageUsageResult {
+  status: "OK" | "ERROR";
+  message: string | null;
+  storageUsageByMedia: StorageUsageCategory[];
+  usedStorageInBytes: number;
+  totalStorageInBytes: number;
+  commerceStorageInBytes: number;
+  compStorageInBytes: number;
+  quotaStatus: StorageQuotaStatus;
+  manageUrl: string | null;
+}
 export interface SavedDriveFile {
   path: string;
   fileName: string;
