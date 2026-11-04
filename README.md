@@ -185,7 +185,7 @@ In development, Cirrus looks for the native executable next to the running appli
 target/debug/cirrus-mcp.exe
 ```
 
-`CIRRUS_DATA_DIR` can override the data directory for portable or development setups, and client configurations written by Cirrus pass the resolved directory through the server environment. Local mode is the default. Set `CIRRUS_MCP_BACKEND=bridge` (or provide `CIRRUS_MCP_URL` and `CIRRUS_MCP_TOKEN`) only when deliberately using the desktop bridge compatibility path. Headless deployments that cannot access the OS credential store can provide the existing vault key through `CIRRUS_SESSION_KEY` or `CIRRUS_SESSION_KEY_FILE`; the standalone server never creates a new vault key. `CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` optionally sets a local download limit in bytes per second.
+`CIRRUS_DATA_DIR` can override the data directory for portable or development setups. Client configurations include that environment variable only when a custom directory is active; default installations omit it and let the native server resolve its standard data directory itself. Local mode is the default. Set `CIRRUS_MCP_BACKEND=bridge` (or provide `CIRRUS_MCP_URL` and `CIRRUS_MCP_TOKEN`) only when deliberately using the desktop bridge compatibility path. Headless deployments that cannot access the OS credential store can provide the existing vault key through `CIRRUS_SESSION_KEY` or `CIRRUS_SESSION_KEY_FILE`; the standalone server never creates a new vault key. `CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` optionally sets a local download limit in bytes per second.
 
 If **Settings → MCP** reports that the MCP executable was not found, build the development executables first:
 

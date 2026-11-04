@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::{AppHandle, State};
@@ -112,21 +113,27 @@ pub async fn mcp_uninstall_server() -> Result<McpServerStatus, String> {
         .map_err(|error| format!("MCP uninstall task failed: {error}"))?
 }
 
+fn mcp_client_data_dir(state: &AppState) -> Option<&Path> {
+    mcp_clients::client_data_dir(state.data_dir())
+}
+
 #[tauri::command]
 pub fn mcp_clients(state: SharedState<'_>) -> Vec<McpClientInfo> {
-    mcp_clients::list_clients(state.inner().mcp.binary_path().as_deref(), state.inner().data_dir())
+    let state = state.inner();
+    mcp_clients::list_clients(state.mcp.binary_path().as_deref(), mcp_client_data_dir(state))
 }
 
 #[tauri::command]
 pub fn mcp_install_client(state: SharedState<'_>, payload: McpClientRequest) -> Result<McpClientInfo, String> {
-    let binary =
-        state.inner().mcp.binary_path().ok_or_else(|| "The Cirrus MCP executable is not available".to_string())?;
-    mcp_clients::install_client(&payload.client_id, &binary, state.inner().data_dir())
+    let state = state.inner();
+    let binary = state.mcp.binary_path().ok_or_else(|| "The Cirrus MCP executable is not available".to_string())?;
+    mcp_clients::install_client(&payload.client_id, &binary, mcp_client_data_dir(state))
 }
 
 #[tauri::command]
 pub fn mcp_remove_client(state: SharedState<'_>, payload: McpClientRequest) -> Result<McpClientInfo, String> {
-    mcp_clients::remove_client(&payload.client_id, state.inner().mcp.binary_path().as_deref(), state.inner().data_dir())
+    let state = state.inner();
+    mcp_clients::remove_client(&payload.client_id, state.mcp.binary_path().as_deref(), mcp_client_data_dir(state))
 }
 
 #[tauri::command]

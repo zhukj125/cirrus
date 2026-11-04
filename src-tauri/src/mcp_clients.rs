@@ -73,6 +73,15 @@ pub fn list_clients(binary: Option<&Path>, data_dir: Option<&Path>) -> Vec<McpCl
     CLIENTS.iter().map(|definition| client_info(definition, binary, data_dir)).collect()
 }
 
+pub(crate) fn client_data_dir(data_dir: Option<&Path>) -> Option<&Path> {
+    let custom_data_dir = std::env::var_os("CIRRUS_DATA_DIR").is_some_and(|value| !value.is_empty());
+    env_data_dir_for_client(data_dir, custom_data_dir)
+}
+
+fn env_data_dir_for_client(data_dir: Option<&Path>, custom_data_dir: bool) -> Option<&Path> {
+    custom_data_dir.then_some(data_dir).flatten()
+}
+
 pub fn install_client(client_id: &str, binary: &Path, data_dir: Option<&Path>) -> Result<McpClientInfo, String> {
     if !binary.is_file() {
         return Err("The Cirrus MCP executable is not available. Build or reinstall Cirrus MCP first.".to_string());
@@ -255,15 +264,21 @@ fn json_has_command(content: &str, kind: ClientKind, binary: &Path, data_dir: Op
 }
 
 fn json_env_matches(server: &Value, data_dir: Option<&Path>) -> bool {
-    let Some(data_dir) = data_dir else {
-        return true;
+    let env = match server.get("env") {
+        Some(env) => env,
+        None => return data_dir.is_none(),
     };
-    server
-        .get("env")
-        .and_then(|env| env.get("CIRRUS_DATA_DIR"))
-        .and_then(Value::as_str)
-        .map(|value| paths_equal(Path::new(value), data_dir))
-        .unwrap_or(false)
+    let Some(env) = env.as_object() else {
+        return false;
+    };
+    match data_dir {
+        None => !env.contains_key("CIRRUS_DATA_DIR"),
+        Some(data_dir) => env
+            .get("CIRRUS_DATA_DIR")
+            .and_then(Value::as_str)
+            .map(|value| paths_equal(Path::new(value), data_dir))
+            .unwrap_or(false),
+    }
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -302,7 +317,30 @@ fn write_json_config(
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .ok_or_else(|| format!("{} must be a JSON object", json_root_key(kind)))?;
-        servers.insert(SERVER_NAME.to_string(), json_server_entry(kind, binary, data_dir));
+        let existing_env =
+            servers.get(SERVER_NAME).and_then(Value::as_object).and_then(|server| server.get("env")).cloned();
+        let mut entry = json_server_entry(kind, binary, data_dir);
+        match existing_env {
+            Some(Value::Object(mut env)) => {
+                if let Some(data_dir) = data_dir {
+                    env.insert("CIRRUS_DATA_DIR".to_string(), json!(data_dir.to_string_lossy()));
+                } else {
+                    env.remove("CIRRUS_DATA_DIR");
+                }
+                if env.is_empty() {
+                    if let Some(entry) = entry.as_object_mut() {
+                        entry.remove("env");
+                    }
+                } else if let Some(entry) = entry.as_object_mut() {
+                    entry.insert("env".to_string(), Value::Object(env));
+                }
+            }
+            Some(_) => {
+                return Err(format!("{}.{SERVER_NAME}.env must be a JSON object", json_root_key(kind)));
+            }
+            None => {}
+        }
+        servers.insert(SERVER_NAME.to_string(), entry);
     } else if let Some(servers) = root.get_mut(json_root_key(kind)).and_then(Value::as_object_mut) {
         servers.remove(SERVER_NAME);
         if servers.is_empty() {
@@ -332,12 +370,29 @@ fn codex_has_command(content: &str, binary: &Path, data_dir: Option<&Path>) -> b
 }
 
 fn codex_env_matches(server: &Table, data_dir: Option<&Path>) -> bool {
-    let Some(data_dir) = data_dir else {
-        return true;
-    };
-    codex_env_value(server, "CIRRUS_DATA_DIR").map(|value| paths_equal(Path::new(value), data_dir)).unwrap_or(false)
+    match server.get("env") {
+        None => data_dir.is_none(),
+        Some(Item::Table(env)) => match data_dir {
+            None => !env.contains_key("CIRRUS_DATA_DIR"),
+            Some(data_dir) => env
+                .get("CIRRUS_DATA_DIR")
+                .and_then(Item::as_str)
+                .map(|value| paths_equal(Path::new(value), data_dir))
+                .unwrap_or(false),
+        },
+        Some(Item::Value(toml_edit::Value::InlineTable(env))) => match data_dir {
+            None => !env.contains_key("CIRRUS_DATA_DIR"),
+            Some(data_dir) => env
+                .get("CIRRUS_DATA_DIR")
+                .and_then(toml_edit::Value::as_str)
+                .map(|value| paths_equal(Path::new(value), data_dir))
+                .unwrap_or(false),
+        },
+        Some(_) => false,
+    }
 }
 
+#[cfg(test)]
 fn codex_env_value<'a>(server: &'a Table, key: &str) -> Option<&'a str> {
     match server.get("env")? {
         Item::Table(env) => env.get(key).and_then(Item::as_str),
@@ -369,7 +424,7 @@ fn set_codex_data_dir(server: &mut Table, data_dir: Option<&Path>) -> Result<(),
                 env.remove("CIRRUS_DATA_DIR");
                 remove_env = env.is_empty();
             }
-            _ => {}
+            _ => return Err("mcp_servers.cirrus.env must be a TOML table".to_string()),
         }
     }
     if remove_env {
@@ -444,18 +499,23 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, path).map_err(|error| format!("Could not save {}: {error}", path.display()))
 }
 
+pub(crate) fn codex_config_snippet(binary: &Path, data_dir: Option<&Path>) -> String {
+    let command = binary.to_string_lossy().to_string();
+    let command_json = serde_json::to_string(&command).unwrap_or_else(|_| "\"cirrus-mcp\"".to_string());
+    let data_dir_json = data_dir.map(|path| serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
+    let env = data_dir_json
+        .as_ref()
+        .map(|data_dir| format!("\nenv = {{ CIRRUS_DATA_DIR = {data_dir} }}"))
+        .unwrap_or_default();
+    format!("[mcp_servers.cirrus]\ncommand = {command_json}{env}\n")
+}
+
 fn config_snippet(kind: ClientKind, binary: &Path, data_dir: Option<&Path>) -> String {
     let command = binary.to_string_lossy().to_string();
     let command_json = serde_json::to_string(&command).unwrap_or_else(|_| "\"cirrus-mcp\"".to_string());
     let data_dir_json = data_dir.map(|path| serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
     match kind {
-        ClientKind::Codex => {
-            let env = data_dir_json
-                .as_ref()
-                .map(|data_dir| format!("\nenv = {{ CIRRUS_DATA_DIR = {data_dir} }}"))
-                .unwrap_or_default();
-            format!("[mcp_servers.cirrus]\ncommand = {command_json}{env}\n")
-        }
+        ClientKind::Codex => codex_config_snippet(binary, data_dir),
         ClientKind::VsCode => serde_json::to_string_pretty(&json!({
             "servers": { SERVER_NAME: json_server_entry(kind, binary, data_dir) }
         }))
@@ -507,13 +567,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn client_env_is_only_emitted_for_custom_data_directories() {
+        let default_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        assert_eq!(env_data_dir_for_client(Some(default_dir), false), None);
+        assert_eq!(env_data_dir_for_client(Some(default_dir), true), Some(default_dir));
+        assert_eq!(env_data_dir_for_client(None, true), None);
+    }
+
+    #[test]
     fn json_config_preserves_other_servers_and_removes_only_cirrus() {
         let dir = std::env::temp_dir().join(format!("cirrus-mcp-client-{}", uuid::Uuid::new_v4()));
         let path = dir.join("mcp.json");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, r#"{"mcpServers":{"other":{"command":"other.exe"}}}"#).expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
 
         write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), true).expect("install");
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
@@ -529,13 +597,41 @@ mod tests {
     }
 
     #[test]
+    fn json_install_preserves_other_env_values() {
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-json-env-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("mcp.json");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"cirrus":{"command":"old","env":{"CIRRUS_DATA_DIR":"old","KEEP":"1","HTTPS_PROXY":"http://proxy"}}}}"#,
+        )
+        .expect("seed");
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
+
+        write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), true).expect("install custom");
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["CIRRUS_DATA_DIR"], data_dir.to_string_lossy().as_ref());
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["KEEP"], "1");
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["HTTPS_PROXY"], "http://proxy");
+
+        write_json_config(&path, ClientKind::Claude, binary, None, true).expect("install default");
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        assert!(value["mcpServers"]["cirrus"]["env"].get("CIRRUS_DATA_DIR").is_none());
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["KEEP"], "1");
+        assert_eq!(value["mcpServers"]["cirrus"]["env"]["HTTPS_PROXY"], "http://proxy");
+        assert!(json_has_command(&value.to_string(), ClientKind::Claude, binary, None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn codex_config_preserves_existing_tables() {
         let dir = std::env::temp_dir().join(format!("cirrus-mcp-codex-{}", uuid::Uuid::new_v4()));
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(&path, "model = \"test\"\n\n[mcp_servers.other]\ncommand = \"other\"\n").expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
 
         write_codex_config(&path, binary, Some(data_dir), true).expect("install");
         let content = std::fs::read_to_string(&path).expect("read");
@@ -573,7 +669,7 @@ Authorization = "Bearer test"
         )
         .expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
 
         assert!(!codex_has_command(&std::fs::read_to_string(&path).expect("read"), binary, Some(data_dir)));
         write_codex_config(&path, binary, Some(data_dir), true).expect("install");
@@ -596,9 +692,70 @@ Authorization = "Bearer test"
     }
 
     #[test]
+    fn default_data_directory_omits_env_in_snippets() {
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let json = config_snippet(ClientKind::Claude, binary, None);
+        let value: Value = serde_json::from_str(&json).expect("JSON snippet");
+        assert!(value["mcpServers"]["cirrus"].get("env").is_none());
+        assert!(json_has_command(&json, ClientKind::Claude, binary, None));
+
+        let codex = config_snippet(ClientKind::Codex, binary, None);
+        assert!(!codex.contains("CIRRUS_DATA_DIR"));
+        assert!(codex_has_command(&codex, binary, None));
+    }
+
+    #[test]
+    fn stale_default_env_is_treated_as_unconfigured() {
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let json = json!({
+            "mcpServers": {
+                "cirrus": {
+                    "command": binary,
+                    "args": [],
+                    "env": { "CIRRUS_DATA_DIR": r"C:\Users\me\AppData\Roaming\com.cirrus" }
+                }
+            }
+        })
+        .to_string();
+        assert!(!json_has_command(&json, ClientKind::Claude, binary, None));
+
+        let codex = format!(
+            "[mcp_servers.cirrus]\ncommand = {:?}\nenv = {{ CIRRUS_DATA_DIR = \"C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\com.cirrus\" }}\n",
+            binary.to_string_lossy()
+        );
+        assert!(!codex_has_command(&codex, binary, None));
+    }
+
+    #[test]
+    fn malformed_env_types_are_unconfigured_and_installation_fails() {
+        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
+        let json = json!({
+            "mcpServers": { "cirrus": { "command": binary, "env": "invalid" } }
+        })
+        .to_string();
+        assert!(!json_has_command(&json, ClientKind::Claude, binary, None));
+
+        let codex = format!("[mcp_servers.cirrus]\ncommand = {:?}\nenv = \"invalid\"\n", binary.to_string_lossy());
+        assert!(!codex_has_command(&codex, binary, None));
+
+        let dir = std::env::temp_dir().join(format!("cirrus-mcp-invalid-env-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let json_path = dir.join("mcp.json");
+        std::fs::write(&json_path, &json).expect("seed json");
+        assert!(write_json_config(&json_path, ClientKind::Claude, binary, None, true).is_err());
+        assert_eq!(std::fs::read_to_string(&json_path).expect("read json"), json);
+
+        let codex_path = dir.join("config.toml");
+        std::fs::write(&codex_path, &codex).expect("seed codex");
+        assert!(write_codex_config(&codex_path, binary, None, true).is_err());
+        assert_eq!(std::fs::read_to_string(&codex_path).expect("read codex"), codex);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn codex_snippet_includes_the_shared_data_directory() {
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
         let snippet = config_snippet(ClientKind::Codex, binary, Some(data_dir));
 
         assert!(snippet.parse::<DocumentMut>().is_ok(), "{snippet}");
@@ -616,7 +773,7 @@ Authorization = "Bearer test"
         )
         .expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"C:\Users\me\AppData\Roaming\com.cirrus");
+        let data_dir = Path::new(r"D:\CirrusPortableData");
 
         write_codex_config(&path, binary, Some(data_dir), true).expect("install");
         let content = std::fs::read_to_string(&path).expect("read");
@@ -631,6 +788,19 @@ Authorization = "Bearer test"
         assert_eq!(codex_env_value(server, "CIRRUS_DATA_DIR"), Some(data_dir.to_string_lossy().as_ref()));
         assert_eq!(codex_env_value(server, "KEEP"), Some("1"));
         assert!(codex_has_command(&content, binary, Some(data_dir)));
+
+        write_codex_config(&path, binary, None, true).expect("install default");
+        let content = std::fs::read_to_string(&path).expect("read");
+        let document = content.parse::<DocumentMut>().expect("toml");
+        let server = document
+            .get("mcp_servers")
+            .and_then(Item::as_table)
+            .and_then(|servers| servers.get(SERVER_NAME))
+            .and_then(Item::as_table)
+            .expect("cirrus server");
+        assert!(codex_env_value(server, "CIRRUS_DATA_DIR").is_none());
+        assert_eq!(codex_env_value(server, "KEEP"), Some("1"));
+        assert!(codex_has_command(&content, binary, None));
         let _ = std::fs::remove_dir_all(dir);
     }
 

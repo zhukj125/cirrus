@@ -185,7 +185,7 @@ Cirrus 支持两种 MCP 传输：
 target/debug/cirrus-mcp.exe
 ```
 
-便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录，Cirrus 自动写入的客户端配置会通过服务环境变量传递解析后的目录。默认使用真正的本地后端；只有显式设置 `CIRRUS_MCP_BACKEND=bridge`（或提供 `CIRRUS_MCP_URL` 与 `CIRRUS_MCP_TOKEN`）时才走桌面 bridge 兼容路径。无法访问系统凭据存储的无头环境可通过 `CIRRUS_SESSION_KEY` 或 `CIRRUS_SESSION_KEY_FILE` 提供已有保险箱密钥；独立服务不会自行生成新密钥。`CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` 可设置本地下载限速，单位为字节/秒。
+便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录。只有启用自定义目录时，Cirrus 自动写入的客户端配置才会包含该环境变量；默认安装不写入，由原生服务自行解析标准数据目录。默认使用真正的本地后端；只有显式设置 `CIRRUS_MCP_BACKEND=bridge`（或提供 `CIRRUS_MCP_URL` 与 `CIRRUS_MCP_TOKEN`）时才走桌面 bridge 兼容路径。无法访问系统凭据存储的无头环境可通过 `CIRRUS_SESSION_KEY` 或 `CIRRUS_SESSION_KEY_FILE` 提供已有保险箱密钥；独立服务不会自行生成新密钥。`CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` 可设置本地下载限速，单位为字节/秒。
 
 如果 **设置 → MCP** 提示未找到 MCP 可执行文件，先构建开发用可执行文件：
 

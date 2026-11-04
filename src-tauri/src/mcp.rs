@@ -258,8 +258,9 @@ impl McpService {
             value => Some(value),
         };
         let command = mcp_binary_path().filter(|path| path.is_file()).map(|path| path.display().to_string());
+        let client_data_dir = crate::mcp_clients::client_data_dir(self.data_dir.as_deref());
         let config_toml =
-            command.as_ref().map(|path| format!("[mcp_servers.cirrus]\ncommand = \"{}\"\n", escape_toml_string(path)));
+            command.as_ref().map(|path| crate::mcp_clients::codex_config_snippet(Path::new(path), client_data_dir));
         let (http_running, http_port) = self.http_status();
         let http_access_token = if http_running {
             self.data_dir.as_ref().and_then(|dir| {
@@ -1119,10 +1120,6 @@ fn mask_apple_id(apple_id: &str) -> String {
     format!("{first}***@{domain}")
 }
 
-fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 fn mcp_sibling_path(file_name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     Some(exe.parent()?.join(if cfg!(windows) { format!("{file_name}.exe") } else { file_name.to_string() }))
@@ -1273,11 +1270,6 @@ mod tests {
     fn apple_id_mask_keeps_only_the_first_local_character() {
         assert_eq!(mask_apple_id("person@example.com"), "p***@example.com");
         assert_eq!(mask_apple_id("x"), "***");
-    }
-
-    #[test]
-    fn toml_escaping_handles_windows_paths() {
-        assert_eq!(escape_toml_string(r#"C:\Users\me\cirrus-mcp.exe"#), r#"C:\\Users\\me\\cirrus-mcp.exe"#);
     }
 
     #[test]
