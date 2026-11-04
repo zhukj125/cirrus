@@ -46,10 +46,22 @@ async fn persist_authenticated_session(state: &AppState, session_id: &str) {
     match state.sessions.get(session_id).await {
         Ok(handle) => {
             if let Err(error) = state.sessions.persist(&handle).await {
-                log::warn!("[PHOTOS] failed to persist session after 2FA; current sign-in remains valid: {error}");
+                log::warn!("[PHOTOS] failed to persist authenticated session; current sign-in remains valid: {error}");
+            } else {
+                log::info!("[PHOTOS] authenticated session persisted");
             }
         }
-        Err(error) => log::warn!("[PHOTOS] failed to read session after 2FA; skipping persistence: {error}"),
+        Err(error) => log::warn!("[PHOTOS] failed to read authenticated session; skipping persistence: {error}"),
+    }
+}
+
+fn completed_session_id(result: &PhotosLoginResult) -> Option<&str> {
+    (result.status == statuses::OK).then_some(result.session_id.as_deref()).flatten()
+}
+
+async fn persist_completed_login(state: &AppState, result: &PhotosLoginResult) {
+    if let Some(session_id) = completed_session_id(result) {
+        persist_authenticated_session(state, session_id).await;
     }
 }
 
@@ -101,15 +113,15 @@ pub struct DownloadProgressEvent {
 
 #[tauri::command]
 pub async fn photos_login(state: SharedState<'_>, payload: CredentialsRequest) -> AppResult<PhotosLoginResult> {
-    Ok(photos::login(sessions(&state), &payload.apple_id, &payload.password).await)
+    let result = photos::login(sessions(&state), &payload.apple_id, &payload.password).await;
+    persist_completed_login(state.inner(), &result).await;
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn photos_verify_2fa(state: SharedState<'_>, payload: PhotosVerifyRequest) -> AppResult<PhotosLoginResult> {
     let result = photos::verify_2fa(sessions(&state), &payload.session_id, &payload.code).await;
-    if result.status == statuses::OK {
-        persist_authenticated_session(state.inner(), &payload.session_id).await;
-    }
+    persist_completed_login(state.inner(), &result).await;
     Ok(result)
 }
 
@@ -129,7 +141,7 @@ pub async fn photos_finish_2fa(
         } else if let Err(error) = sessions(&state).forget_trusted_browser(&payload.session_id).await {
             log::warn!("[PHOTOS] failed to forget trusted-browser token: {error}");
         }
-        persist_authenticated_session(state.inner(), &payload.session_id).await;
+        persist_completed_login(state.inner(), &result).await;
     }
     Ok(result)
 }
@@ -305,6 +317,15 @@ pub async fn save_photo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_successful_logins_are_persisted() {
+        let completed = PhotosLoginResult::ok("session-1".to_string(), None, None);
+        assert_eq!(completed_session_id(&completed), Some("session-1"));
+
+        let needs_2fa = PhotosLoginResult::need_2fa("session-2".to_string(), None);
+        assert_eq!(completed_session_id(&needs_2fa), None);
+    }
 
     #[test]
     fn progress_event_serializes_without_sensitive_fields() {
