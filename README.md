@@ -78,8 +78,9 @@ Cirrus is a local-first desktop client for the iCloud services people use every 
 - Optional stdio and Streamable HTTP MCP access for AI clients and automation.
 - Client configuration tabs for Claude Code, Cursor, CodeBuddy Code, ZCode, TRAE, VS Code, Windsurf, Codex, DeepSeek Harness, OpenCode, Pi, Cherry Studio, and Qoder.
 - Per-account and per-tool MCP switches; accounts and tools are enabled by default and can be individually blocked.
-- 28 MCP tools covering login, account status, devices, Find My sound, photo browsing and deletion, iCloud Drive, note CRUD and images, downloads, contacts, calendar event CRUD, and profile images.
-- Sign-in tool that asks for approval in Cirrus, then opens the native Cirrus sign-in window.
+- 27 MCP tools covering account status, devices, Find My sound, photo browsing and deletion, iCloud Drive, note CRUD and images, downloads, contacts, calendar event CRUD, and profile images.
+- Image-capable results use native MCP image content blocks for direct inline rendering: device artwork is returned by default and photo lists attach up to 20 thumbnails. Signed URLs remain in `structuredContent`; Base64 image payloads are not duplicated there.
+- Stdio and Streamable HTTP use the local database and encrypted session vault directly. Cirrus has no desktop bridge, runtime discovery file, or bridge fallback path.
 - MCP call history is stored in SQLite and available under **Settings → MCP → History**; requests and responses are bounded and redacted, with no tokens or image Base64 stored.
 - Apple ID, password, and two-factor codes stay inside Cirrus and are never returned to the MCP client.
 - Both transports are loopback-only and use a per-run random bearer token.
@@ -125,13 +126,13 @@ For Google Maps, enable both Maps JavaScript API and Geocoding API in Google Clo
 2. Complete two-factor authentication.
 3. Open **Devices**, **Photos**, **Storage**, **iCloud Drive**, **Notes**, **Contacts**, or **Calendar** from the sidebar or workspace tabs.
 
-To use MCP, open **Settings → MCP**, enable the bridge, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 28 account, device, photo browsing and deletion, iCloud Drive, note CRUD and image, download, contact, calendar event CRUD, profile image, login, and logout tools. The `Streamable HTTP` tab shows the current `/mcp` endpoint, bearer token, and a ready-to-copy client configuration.
+To use MCP, open **Settings → MCP**, enable MCP, choose the matching client tab to copy or write its config, and turn off any iCloud account that MCP must not use. MCP exposes 27 account, device, photo browsing and deletion, iCloud Drive, note CRUD and image, download, contact, calendar event CRUD, profile image, and logout tools. The `Streamable HTTP` tab shows the current `/mcp` endpoint, bearer token, and a ready-to-copy client configuration.
 
 The first sign-in requires 2FA. Later launches restore the encrypted session when it is still valid.
 
 ## Privacy and storage
 
-Cirrus runs entirely on your machine and talks directly to Apple. There is no Cirrus account, cloud relay, or telemetry service. The MCP bridge listens only on `127.0.0.1`, is enabled by default, and requires a per-run bearer token.
+Cirrus runs entirely on your machine and talks directly to Apple. There is no Cirrus account, cloud relay, or telemetry service. The MCP service listens only on `127.0.0.1`, is enabled by default, and requires a per-run bearer token.
 
 Local data is stored in:
 
@@ -177,7 +178,7 @@ The repository contains a Cargo workspace (`src-tauri`, `crates/cirrus-core`, an
 Cirrus supports two MCP transports:
 
 - **Streamable HTTP** runs inside the desktop process and listens on `http://127.0.0.1:5226/mcp` when enabled. It does not start a separate console process.
-- **stdio** launches the standalone native `cirrus-mcp` binary directly (`cirrus-mcp.exe` on Windows). It opens the Cirrus database and encrypted session vault itself and executes account-scoped tools locally, so the desktop HTTP bridge does not need to be running. The desktop app is only required for interactive sign-in and legacy bridge mode. The older `cirrus-mcp-server` launcher remains available as a compatibility alias.
+- **stdio** launches the standalone native `cirrus-mcp` binary directly (`cirrus-mcp.exe` on Windows). It opens the Cirrus database and encrypted session vault itself and executes account-scoped tools locally, so the desktop HTTP bridge does not need to be running. The desktop app is only required for interactive sign-in. The older `cirrus-mcp-server` launcher remains available as a compatibility alias.
 
 In development, Cirrus looks for the native executable next to the running application, for example:
 
@@ -185,7 +186,7 @@ In development, Cirrus looks for the native executable next to the running appli
 target/debug/cirrus-mcp.exe
 ```
 
-`CIRRUS_DATA_DIR` can override the data directory for portable or development setups. Client configurations include that environment variable only when a custom directory is active; default installations omit it and let the native server resolve its standard data directory itself. Local mode is the default. Set `CIRRUS_MCP_BACKEND=bridge` (or provide `CIRRUS_MCP_URL` and `CIRRUS_MCP_TOKEN`) only when deliberately using the desktop bridge compatibility path. Headless deployments that cannot access the OS credential store can provide the existing vault key through `CIRRUS_SESSION_KEY` or `CIRRUS_SESSION_KEY_FILE`; the standalone server never creates a new vault key. `CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` optionally sets a local download limit in bytes per second.
+`CIRRUS_DATA_DIR` can override the data directory for portable or development setups. Client configurations include that environment variable only when a custom directory is active; default installations omit it and let the native server resolve its standard data directory itself. All transports use local mode only. Headless deployments that cannot access the OS credential store can provide the existing vault key through `CIRRUS_SESSION_KEY` or `CIRRUS_SESSION_KEY_FILE`; the standalone server never creates a new vault key. `CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` optionally sets a local download limit in bytes per second.
 
 If **Settings → MCP** reports that the MCP executable was not found, build the development executables first:
 

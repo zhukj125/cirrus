@@ -12,7 +12,7 @@ use cirrus_core::{
     McpCallHistoryEntry, McpHistoryRepository, SessionHandle, SessionManager, SessionVault, StoredAccount,
 };
 
-use crate::{LIST_ACCOUNTS_TOOL, LOGIN_TOOL};
+use crate::LIST_ACCOUNTS_TOOL;
 
 struct ResolvedAccount {
     account: StoredAccount,
@@ -86,10 +86,6 @@ impl LocalBackend {
         if tool == LIST_ACCOUNTS_TOOL {
             return self.visible_accounts();
         }
-        if tool == LOGIN_TOOL {
-            return Err("Sign-in requires the Cirrus desktop app. Start Cirrus, then retry cirrus_login.".to_string());
-        }
-
         let account_key = required_str(arguments, "accountKey")?;
         let resolved = self.resolve_account(account_key).await?;
 
@@ -356,7 +352,9 @@ impl LocalBackend {
             .clone()
             .or_else(|| account.devices_session_id.clone())
             .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "This account is not signed in. Use cirrus_login first.".to_string())?;
+            .ok_or_else(|| {
+                "This account is not signed in. Sign in through the Cirrus desktop app first.".to_string()
+            })?;
         let handle = self.sessions.get(&session_id).await.map_err(|error| {
             if !self.sessions.vault_enabled() {
                 "The Cirrus session vault is unavailable. Open Cirrus and ensure the OS credential store is accessible."
@@ -380,11 +378,7 @@ impl LocalBackend {
             .clear_sessions(&resolved.account.key)
             .map_err(|error| error.to_string())?;
         self.sessions.remove(&resolved.session_id).await;
-        crate::notify_bridge_event(
-            "mcp-accounts-changed",
-            json!({ "accountKey": resolved.account.key, "reason": "logout" }),
-        )
-        .await;
+
         Ok(json!({ "accountKey": resolved.account.key, "signedOut": true }))
     }
 
@@ -467,7 +461,7 @@ impl LocalBackend {
             "fileName": file_name,
             "persisted": persisted.is_ok()
         });
-        crate::notify_bridge_event("mcp-download-completed", result.clone()).await;
+
         Ok(result)
     }
 }
@@ -657,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_accounts_without_a_desktop_bridge() {
+    fn lists_accounts_from_the_local_vault() {
         ensure_test_vault_key();
         let dir = temp_dir("accounts");
         AccountStoreRepository::new(Some(&dir))

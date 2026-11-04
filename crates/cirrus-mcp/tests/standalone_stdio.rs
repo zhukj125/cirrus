@@ -40,9 +40,6 @@ fn run_child(mut child: std::process::Child) -> Output {
 fn run_stdio(data_dir: &std::path::Path) -> Output {
     let child = Command::new(env!("CARGO_BIN_EXE_cirrus-mcp"))
         .env("CIRRUS_DATA_DIR", data_dir)
-        .env("CIRRUS_MCP_BACKEND", "local")
-        .env("CIRRUS_MCP_URL", "http://127.0.0.1:1")
-        .env("CIRRUS_MCP_TOKEN", "invalid-token")
         .env("CIRRUS_SESSION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -56,9 +53,6 @@ fn run_stdio_default_backend(data_dir: &std::path::Path) -> Output {
     let child = Command::new(env!("CARGO_BIN_EXE_cirrus-mcp"))
         .env("CIRRUS_DATA_DIR", data_dir)
         .env("CIRRUS_SESSION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-        .env_remove("CIRRUS_MCP_BACKEND")
-        .env_remove("CIRRUS_MCP_URL")
-        .env_remove("CIRRUS_MCP_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -91,7 +85,7 @@ fn authorize_keychain_command_reads_an_existing_key_without_creating_one() {
 }
 
 #[test]
-fn stdio_lists_accounts_without_a_desktop_bridge() {
+fn stdio_lists_accounts_from_the_local_vault() {
     let dir = temp_dir("accounts");
     AccountStoreRepository::new(Some(&dir))
         .save(&AccountStoreSnapshot {
@@ -127,7 +121,7 @@ fn stdio_lists_accounts_without_a_desktop_bridge() {
 }
 
 #[test]
-fn stdio_defaults_to_the_local_backend_without_bridge_settings() {
+fn stdio_uses_the_local_backend_only() {
     let dir = temp_dir("default-local");
     AccountStoreRepository::new(Some(&dir))
         .save(&AccountStoreSnapshot {

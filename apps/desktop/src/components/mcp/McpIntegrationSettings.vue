@@ -26,7 +26,6 @@ const accountSaving = ref<string | null>(null);
 const toolSaving = ref<string | null>(null);
 const managementTab = ref<ManagementTab>("access");
 const toolRows = [
-  { name: "cirrus_login", readOnly: false },
   { name: "cirrus_list_accounts", readOnly: true },
   { name: "cirrus_account_status", readOnly: true },
   { name: "cirrus_logout", readOnly: false },

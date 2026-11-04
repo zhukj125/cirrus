@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use cirrus_core::mcp_access::McpToolAccessSettings;
@@ -9,44 +9,21 @@ use cirrus_core::mcp_access::{
     load_account_access, load_mcp_settings, load_tool_access, save_account_access, save_mcp_settings, save_tool_access,
     McpAccountAccessSettings,
 };
-use cirrus_mcp::{serve_http_on_listener, BridgeTarget, HttpConfig as McpHttpConfig};
-use http_body_util::{BodyExt, Full};
-use hyper::body::{Body, Bytes};
-use hyper::header::{self, HeaderValue};
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use cirrus_mcp::{serve_http_on_listener, HttpConfig as McpHttpConfig};
+use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use crate::account_store::AccountStoreRepository;
-use crate::mcp_history::McpCallHistoryEntry;
 use crate::state::AppState;
 
 pub const LOGIN_TOOL: &str = "cirrus_login";
 pub const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
-const RUNTIME_FILE: &str = "mcp-bridge.json";
-const PORT_FILE: &str = "mcp-bridge-port";
-const TOKEN_FILE: &str = "mcp-bridge-token";
 const HTTP_PORT: u16 = 5226;
 const HTTP_PATH: &str = "/mcp";
-const BRIDGE_FILE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_HISTORY_BODY: usize = 8 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
-const APP_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const MAX_HTTP_BODY: usize = 64 * 1024;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct BridgeRuntimeFile {
-    version: u8,
-    port: u16,
-    token: String,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,12 +93,6 @@ pub struct McpAuthorizationEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct McpAuthorizationFinishedEvent {
-    request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct McpLoginRequestEvent {
     request_id: String,
     client_name: String,
@@ -140,39 +111,6 @@ struct LoginOutcome {
     approved: bool,
     message: Option<String>,
     account: Option<McpAccountSummary>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McpHistoryReport {
-    tool: String,
-    #[serde(default)]
-    arguments: Value,
-    client_name: Option<String>,
-    client_version: Option<String>,
-    started_at: i64,
-    duration_ms: i64,
-    success: bool,
-    error: Option<String>,
-    response: Value,
-}
-
-impl McpHistoryReport {
-    fn into_entry(self) -> McpCallHistoryEntry {
-        McpCallHistoryEntry {
-            id: Uuid::new_v4().to_string(),
-            account_key: self.arguments.get("accountKey").and_then(Value::as_str).map(ToOwned::to_owned),
-            tool_name: self.tool,
-            client_name: self.client_name,
-            client_version: self.client_version,
-            started_at: self.started_at,
-            duration_ms: self.duration_ms,
-            success: self.success,
-            error: self.error,
-            request_json: Some(self.arguments.to_string()),
-            response_json: Some(self.response.to_string()),
-        }
-    }
 }
 
 impl LoginOutcome {
@@ -202,20 +140,13 @@ struct ActiveLogin {
     login_tx: oneshot::Sender<LoginOutcome>,
 }
 
-struct ServerRuntime {
-    task: JoinHandle<()>,
-    refresh_task: JoinHandle<()>,
-}
-
 struct HttpRuntime {
     port: u16,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
-
 #[derive(Default)]
 struct Inner {
-    runtime: Option<ServerRuntime>,
     pending_authorization: Option<PendingAuthorization>,
     active_login: Option<ActiveLogin>,
 }
@@ -227,6 +158,7 @@ pub struct McpService {
     starting: AtomicBool,
     inner: Mutex<Inner>,
     http: std::sync::Mutex<Option<HttpRuntime>>,
+    http_token: std::sync::Mutex<Option<String>>,
     http_error: std::sync::Mutex<Option<String>>,
 }
 
@@ -244,6 +176,7 @@ impl McpService {
             starting: AtomicBool::new(false),
             inner: Mutex::new(Inner::default()),
             http: std::sync::Mutex::new(None),
+            http_token: std::sync::Mutex::new(None),
             http_error: std::sync::Mutex::new(None),
         }
     }
@@ -262,15 +195,8 @@ impl McpService {
         let config_toml =
             command.as_ref().map(|path| crate::mcp_clients::codex_config_snippet(Path::new(path), client_data_dir));
         let (http_running, http_port) = self.http_status();
-        let http_access_token = if http_running {
-            self.data_dir.as_ref().and_then(|dir| {
-                read_bridge_runtime_file(dir).map(|runtime| runtime.token).or_else(|| {
-                    std::fs::read_to_string(dir.join(TOKEN_FILE)).ok().map(|value| value.trim().to_string())
-                })
-            })
-        } else {
-            None
-        };
+        let http_access_token =
+            if http_running { self.http_token.lock().unwrap_or_else(|error| error.into_inner()).clone() } else { None };
         let http_error = self.http_error.lock().unwrap_or_else(|error| error.into_inner()).clone();
         McpInfo {
             enabled: self.enabled(),
@@ -315,21 +241,19 @@ impl McpService {
         result
     }
 
-    async fn start_http(&self, bridge_port: u16, token: &str) -> Result<(), String> {
+    async fn start_http(&self, data_dir: PathBuf) -> Result<(), String> {
         self.stop_http().await;
         let bind_addr = std::net::SocketAddr::from(([127, 0, 0, 1], HTTP_PORT));
         let listener = tokio::net::TcpListener::bind(bind_addr)
             .await
             .map_err(|error| format!("Could not bind the MCP HTTP service at {bind_addr}: {error}"))?;
+        let token = Uuid::new_v4().simple().to_string();
         let config = McpHttpConfig {
             bind_addr,
             path: HTTP_PATH.to_string(),
-            token: token.to_string(),
+            token: token.clone(),
             allow_remote: false,
-            bridge: Some(BridgeTarget {
-                base_url: format!("http://127.0.0.1:{bridge_port}"),
-                token: token.to_string(),
-            }),
+            data_dir: Some(data_dir),
         };
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         let task = tauri::async_runtime::spawn(async move {
@@ -344,6 +268,7 @@ impl McpService {
 
         *self.http.lock().unwrap_or_else(|error| error.into_inner()) =
             Some(HttpRuntime { port: HTTP_PORT, stop: Some(stop_tx), task });
+        *self.http_token.lock().unwrap_or_else(|error| error.into_inner()) = Some(token);
         *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
         log::info!("[MCP] Streamable HTTP listening on http://127.0.0.1:{HTTP_PORT}{HTTP_PATH}");
         Ok(())
@@ -358,6 +283,7 @@ impl McpService {
             let _ = runtime.task.await;
             log::info!("[MCP] Streamable HTTP stopped");
         }
+        *self.http_token.lock().unwrap_or_else(|error| error.into_inner()) = None;
         *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
     }
 
@@ -462,7 +388,7 @@ impl McpService {
         let service = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             if let Err(error) = service.start(app, state).await {
-                log::warn!("[MCP] could not start the local bridge: {error}");
+                log::warn!("[MCP] could not start the direct MCP service: {error}");
             }
         });
     }
@@ -472,78 +398,33 @@ impl McpService {
             return Ok(());
         }
         if self.starting.swap(true, Ordering::AcqRel) {
-            return Err("The MCP bridge is already starting".to_string());
+            return Err("The MCP service is already starting".to_string());
         }
         let result = self.start_locked(app, state).await;
         self.starting.store(false, Ordering::Release);
         result
     }
 
-    async fn start_locked(self: &Arc<Self>, app: AppHandle, state: Arc<AppState>) -> Result<(), String> {
+    async fn start_locked(self: &Arc<Self>, _app: AppHandle, _state: Arc<AppState>) -> Result<(), String> {
         let data_dir =
             self.data_dir.as_ref().ok_or_else(|| "App data directory is unavailable; MCP cannot start".to_string())?;
-        let listener = TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .map_err(|error| format!("Could not bind the Cirrus MCP bridge: {error}"))?;
-        let port =
-            listener.local_addr().map_err(|error| format!("Could not read the MCP bridge address: {error}"))?.port();
-        let token = Uuid::new_v4().simple().to_string();
-
-        if let Err(error) = ensure_bridge_files(data_dir, port, &token) {
-            remove_bridge_files_if_owned(data_dir, port, &token);
-            return Err(error);
-        }
-
-        let service = Arc::downgrade(self);
-        let weak_state = Arc::downgrade(&state);
-        let task_app = app.clone();
-        let task_token = token.clone();
-        let task = tauri::async_runtime::spawn(async move {
-            accept_loop(listener, service, weak_state, task_app, task_token).await;
-        });
-        let refresh_service = Arc::downgrade(self);
-        let refresh_data_dir = data_dir.clone();
-        let refresh_token = token.clone();
-        let refresh_task = tauri::async_runtime::spawn(async move {
-            let mut interval = tokio::time::interval(BRIDGE_FILE_REFRESH_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                interval.tick().await;
-                if refresh_service.upgrade().is_none() {
-                    break;
-                }
-                let owns_runtime = read_bridge_runtime_file(&refresh_data_dir)
-                    .map(|runtime| runtime.port == port && runtime.token == refresh_token)
-                    .unwrap_or(true);
-                if !owns_runtime {
-                    break;
-                }
-                if let Err(error) = ensure_bridge_files(&refresh_data_dir, port, &refresh_token) {
-                    log::warn!("[MCP] could not refresh the bridge runtime files: {error}");
-                }
-            }
-        });
-
-        {
-            let mut inner = self.inner.lock().await;
-            if inner.runtime.is_some() {
-                task.abort();
-                refresh_task.abort();
-                return Ok(());
-            }
-            inner.runtime = Some(ServerRuntime { task, refresh_task });
-        }
         self.enabled.store(true, Ordering::Relaxed);
-        self.running_port.store(port, Ordering::Release);
         save_enabled_setting(self.data_dir.as_deref(), true);
-        log::info!("[MCP] local bridge listening on http://127.0.0.1:{port}");
-        if let Err(error) = self.start_http(port, &token).await {
-            log::warn!("[MCP] {error}");
-            *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = Some(error);
+        match self.start_http(data_dir.clone()).await {
+            Ok(()) => {
+                self.running_port.store(HTTP_PORT, Ordering::Release);
+                log::info!("[MCP] direct Streamable HTTP listening on http://127.0.0.1:{HTTP_PORT}{HTTP_PATH}");
+                Ok(())
+            }
+            Err(error) => {
+                self.enabled.store(false, Ordering::Relaxed);
+                self.running_port.store(0, Ordering::Release);
+                save_enabled_setting(self.data_dir.as_deref(), false);
+                *self.http_error.lock().unwrap_or_else(|error| error.into_inner()) = Some(error.clone());
+                Err(error)
+            }
         }
-        Ok(())
     }
-
     pub async fn pending_authorization(&self) -> Option<McpAuthorizationEvent> {
         let inner = self.inner.lock().await;
         inner.pending_authorization.as_ref().map(|pending| McpAuthorizationEvent {
@@ -556,16 +437,10 @@ impl McpService {
     }
 
     pub async fn stop(&self) {
-        let running_port = self.running_port.load(Ordering::Acquire);
-        let (runtime, pending, active) = {
+        let (pending, active) = {
             let mut inner = self.inner.lock().await;
-            (inner.runtime.take(), inner.pending_authorization.take(), inner.active_login.take())
+            (inner.pending_authorization.take(), inner.active_login.take())
         };
-        if let Some(runtime) = runtime {
-            runtime.task.abort();
-            runtime.refresh_task.abort();
-            log::info!("[MCP] local bridge stopped");
-        }
         if let Some(pending) = pending {
             let _ = pending.approval_tx.send(false);
         }
@@ -576,13 +451,6 @@ impl McpService {
         self.running_port.store(0, Ordering::Release);
         self.enabled.store(false, Ordering::Relaxed);
         self.starting.store(false, Ordering::Release);
-        if let Some(data_dir) = &self.data_dir {
-            let owns_runtime =
-                read_bridge_runtime_file(data_dir).map(|runtime| runtime.port == running_port).unwrap_or(false);
-            if owns_runtime {
-                remove_bridge_files(data_dir);
-            }
-        }
         save_enabled_setting(self.data_dir.as_deref(), false);
     }
 
@@ -700,13 +568,6 @@ impl McpService {
             let _ = active.login_tx.send(LoginOutcome::error(message));
         }
     }
-
-    async fn cancel_pending(&self, request_id: &str) {
-        let mut inner = self.inner.lock().await;
-        if inner.pending_authorization.as_ref().map(|pending| pending.id == request_id).unwrap_or(false) {
-            inner.pending_authorization = None;
-        }
-    }
 }
 
 impl Drop for McpService {
@@ -722,314 +583,6 @@ impl Drop for McpService {
     }
 }
 
-async fn accept_loop(
-    listener: TcpListener,
-    service: Weak<McpService>,
-    app_state: Weak<AppState>,
-    app: AppHandle,
-    bridge_token: String,
-) {
-    loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(value) => value,
-            Err(error) => {
-                log::warn!("[MCP] bridge accept failed: {error}");
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
-            }
-        };
-        let service = service.clone();
-        let app_state = app_state.clone();
-        let app = app.clone();
-        let bridge_token = bridge_token.clone();
-        tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            let service = service_fn(move |request| {
-                let service = service.clone();
-                let app_state = app_state.clone();
-                let app = app.clone();
-                let bridge_token = bridge_token.clone();
-                async move {
-                    Ok::<_, std::convert::Infallible>(
-                        handle_request(request, service, app_state, app, bridge_token).await,
-                    )
-                }
-            });
-            if let Err(error) = hyper::server::conn::http1::Builder::new().serve_connection(io, service).await {
-                log::debug!("[MCP] bridge connection ended: {error}");
-            }
-        });
-    }
-}
-
-async fn handle_request(
-    request: Request<hyper::body::Incoming>,
-    service: Weak<McpService>,
-    app_state: Weak<AppState>,
-    app: AppHandle,
-    bridge_token: String,
-) -> Response<Full<Bytes>> {
-    let path = request.uri().path();
-    if request.method() == Method::GET && path == "/healthz" {
-        return json_response(
-            StatusCode::OK,
-            json!({ "ok": true, "app": "cirrus", "version": env!("CARGO_PKG_VERSION") }),
-        );
-    }
-    if request.method() == Method::POST && path == "/v1/history" {
-        if !authorized_bearer(&request, &bridge_token) {
-            return json_response(StatusCode::UNAUTHORIZED, json!({ "ok": false, "error": "Unauthorized" }));
-        }
-        let Some(app_state) = app_state.upgrade() else {
-            return json_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                json!({ "ok": false, "error": "Cirrus is shutting down" }),
-            );
-        };
-        return handle_history(request, &app_state).await;
-    }
-    if request.method() == Method::POST && path == "/v1/events" {
-        if !authorized_bearer(&request, &bridge_token) {
-            return json_response(StatusCode::UNAUTHORIZED, json!({ "ok": false, "error": "Unauthorized" }));
-        }
-        return handle_bridge_event(request, &app).await;
-    }
-    if request.method() != Method::POST || path != "/v1/call" {
-        return json_response(StatusCode::NOT_FOUND, json!({ "ok": false, "error": "Not found" }));
-    }
-    if !authorized_bearer(&request, &bridge_token) {
-        return json_response(StatusCode::UNAUTHORIZED, json!({ "ok": false, "error": "Unauthorized" }));
-    }
-    let Some(service) = service.upgrade() else {
-        return json_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({ "ok": false, "error": "Cirrus is shutting down" }),
-        );
-    };
-    let Some(app_state) = app_state.upgrade() else {
-        return json_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({ "ok": false, "error": "Cirrus is shutting down" }),
-        );
-    };
-    handle_call(request, service, app_state, app).await
-}
-
-#[derive(serde::Deserialize)]
-struct McpBridgeEvent {
-    event: String,
-    payload: Value,
-}
-
-async fn handle_bridge_event(request: Request<hyper::body::Incoming>, app: &AppHandle) -> Response<Full<Bytes>> {
-    let body = match read_body_with_limit(request, MAX_HTTP_BODY).await {
-        Ok(body) => body,
-        Err(error) => return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
-    };
-    let event: McpBridgeEvent = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return json_response(
-                StatusCode::BAD_REQUEST,
-                json!({ "ok": false, "error": format!("Invalid bridge event: {error}") }),
-            )
-        }
-    };
-    if !matches!(event.event.as_str(), "mcp-accounts-changed" | "mcp-download-completed") {
-        return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": "Unsupported bridge event" }));
-    }
-    match app.emit(&event.event, event.payload) {
-        Ok(()) => json_response(StatusCode::OK, json!({ "ok": true })),
-        Err(error) => json_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "ok": false, "error": format!("Could not emit bridge event: {error}") }),
-        ),
-    }
-}
-
-async fn handle_history(request: Request<hyper::body::Incoming>, app_state: &AppState) -> Response<Full<Bytes>> {
-    let body = match read_body_with_limit(request, MAX_HISTORY_BODY).await {
-        Ok(body) => body,
-        Err(error) => return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
-    };
-    let report: McpHistoryReport = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return json_response(
-                StatusCode::BAD_REQUEST,
-                json!({ "ok": false, "error": format!("Invalid history report: {error}") }),
-            )
-        }
-    };
-    if !report.tool.starts_with("cirrus_") {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "ok": false, "error": format!("Unknown Cirrus tool: {}", report.tool) }),
-        );
-    }
-    match app_state.mcp_history.record(report.into_entry()) {
-        Ok(()) => json_response(StatusCode::OK, json!({ "ok": true })),
-        Err(error) => {
-            json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error.to_string() }))
-        }
-    }
-}
-
-async fn handle_call(
-    request: Request<hyper::body::Incoming>,
-    service: Arc<McpService>,
-    app_state: Arc<AppState>,
-    app: AppHandle,
-) -> Response<Full<Bytes>> {
-    let body = match read_body(request).await {
-        Ok(body) => body,
-        Err(error) => return json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
-    };
-    let payload: Value = match serde_json::from_slice(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return json_response(
-                StatusCode::BAD_REQUEST,
-                json!({ "ok": false, "error": format!("Invalid JSON: {error}") }),
-            )
-        }
-    };
-    let tool = payload.get("tool").and_then(Value::as_str).unwrap_or_default();
-    if !tool.starts_with("cirrus_") {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "ok": false, "error": format!("Unknown Cirrus tool: {tool}") }),
-        );
-    }
-    if !service.tool_enabled(tool) {
-        return json_response(
-            StatusCode::FORBIDDEN,
-            json!({ "ok": false, "error": format!("MCP tool is disabled in Cirrus: {tool}") }),
-        );
-    }
-    let arguments = payload.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    let client_name = payload
-        .get("client")
-        .and_then(|value| value.get("name"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("MCP client")
-        .to_string();
-    let client_version =
-        payload.get("client").and_then(|value| value.get("version")).and_then(Value::as_str).map(ToOwned::to_owned);
-    if (tool == LOGIN_TOOL || tool == LIST_ACCOUNTS_TOOL)
-        && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
-    {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "ok": false, "error": format!("{tool} does not accept arguments") }),
-        );
-    }
-    if tool == LIST_ACCOUNTS_TOOL {
-        let result =
-            service.visible_accounts().and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()));
-        return match result {
-            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
-            Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
-        };
-    }
-    if tool != LOGIN_TOOL {
-        let result = crate::mcp_operations::call_tool(tool, &arguments, &app_state, &service, &app).await;
-        return match result {
-            Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
-            Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": error })),
-        };
-    }
-
-    let request_id = Uuid::new_v4().to_string();
-    let (approval_tx, approval_rx) = oneshot::channel();
-    let (login_tx, login_rx) = oneshot::channel();
-    {
-        let mut inner = service.inner.lock().await;
-        if inner.pending_authorization.is_some() || inner.active_login.is_some() {
-            return json_response(
-                StatusCode::CONFLICT,
-                json!({ "ok": false, "error": "Another Cirrus authorization or sign-in is already in progress" }),
-            );
-        }
-        inner.pending_authorization = Some(PendingAuthorization {
-            id: request_id.clone(),
-            client_name: client_name.clone(),
-            client_version: client_version.clone(),
-            approval_tx,
-            login_tx,
-        });
-    }
-
-    show_main_window(&app);
-    if let Err(error) = app.emit(
-        "mcp-authorization-request",
-        McpAuthorizationEvent {
-            request_id: request_id.clone(),
-            client_name: client_name.clone(),
-            client_version: client_version.clone(),
-            tool: LOGIN_TOOL.to_string(),
-            expires_in_seconds: AUTHORIZATION_TIMEOUT.as_secs(),
-        },
-    ) {
-        service.cancel_pending(&request_id).await;
-        return json_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({ "ok": false, "error": format!("Could not ask the Cirrus window for authorization: {error}") }),
-        );
-    }
-    log::info!("[MCP] sign-in authorization requested by {client_name}");
-
-    let approval = match tokio::time::timeout(AUTHORIZATION_TIMEOUT, approval_rx).await {
-        Ok(Ok(value)) => value,
-        Ok(Err(_)) => {
-            service.cancel_pending(&request_id).await;
-            let _ = app
-                .emit("mcp-authorization-finished", McpAuthorizationFinishedEvent { request_id: request_id.clone() });
-            return json_response(
-                StatusCode::CONFLICT,
-                json!({ "ok": false, "error": "The Cirrus authorization request was cancelled" }),
-            );
-        }
-        Err(_) => {
-            service.cancel_pending(&request_id).await;
-            let _ = app
-                .emit("mcp-authorization-finished", McpAuthorizationFinishedEvent { request_id: request_id.clone() });
-            return json_response(
-                StatusCode::REQUEST_TIMEOUT,
-                json!({ "ok": false, "error": "Cirrus authorization timed out" }),
-            );
-        }
-    };
-
-    if !approval {
-        return json_response(
-            StatusCode::OK,
-            json!({ "ok": true, "result": LoginOutcome::denied("The user denied the Cirrus sign-in request") }),
-        );
-    }
-
-    let outcome = match tokio::time::timeout(APP_LOGIN_TIMEOUT, login_rx).await {
-        Ok(Ok(value)) => value,
-        Ok(Err(_)) => LoginOutcome::error("The Cirrus sign-in request ended unexpectedly"),
-        Err(_) => {
-            service.cancel_active(&request_id, "Cirrus sign-in timed out").await;
-            let _ = app.emit("mcp-login-finished", McpLoginFinishedEvent { request_id: request_id.clone() });
-            LoginOutcome::error("Cirrus sign-in timed out")
-        }
-    };
-    if let Some(message) = &outcome.message {
-        log::info!("[MCP] sign-in request finished: {message}");
-    } else {
-        log::info!("[MCP] sign-in request completed successfully");
-    }
-    let result = serde_json::to_value(&outcome).map_err(|error| error.to_string());
-    match result {
-        Ok(result) => json_response(StatusCode::OK, json!({ "ok": true, "result": result })),
-        Err(error) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "ok": false, "error": error })),
-    }
-}
-
 fn show_main_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -1037,47 +590,6 @@ fn show_main_window(app: &AppHandle) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
-}
-
-fn authorized_bearer(request: &Request<hyper::body::Incoming>, expected: &str) -> bool {
-    let Some(value) = request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()) else {
-        return false;
-    };
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return false;
-    };
-    token == expected
-}
-
-async fn read_body(request: Request<hyper::body::Incoming>) -> Result<Vec<u8>, String> {
-    read_body_with_limit(request, MAX_HTTP_BODY).await
-}
-
-async fn read_body_with_limit(request: Request<hyper::body::Incoming>, max_bytes: usize) -> Result<Vec<u8>, String> {
-    let size_hint = request.body().size_hint().upper().unwrap_or(0);
-    if size_hint > max_bytes as u64 {
-        return Err("Request body is too large".to_string());
-    }
-    let body = request
-        .into_body()
-        .collect()
-        .await
-        .map_err(|error| format!("Could not read request body: {error}"))?
-        .to_bytes();
-    if body.len() > max_bytes {
-        return Err("Request body is too large".to_string());
-    }
-    Ok(body.to_vec())
-}
-
-fn json_response(status: StatusCode, body: Value) -> Response<Full<Bytes>> {
-    let bytes = serde_json::to_vec(&body)
-        .unwrap_or_else(|_| b"{\"ok\":false,\"error\":\"Could not encode response\"}".to_vec());
-    let mut response = Response::new(Full::new(Bytes::from(bytes)));
-    *response.status_mut() = status;
-    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
 }
 
 fn account_summary(session: &cirrus_core::SrpSession) -> Result<McpAccountSummary, String> {
@@ -1156,112 +668,6 @@ fn save_enabled_setting(data_dir: Option<&Path>, enabled: bool) {
     }
 }
 
-fn write_private_file(path: &Path, value: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new().create(true).truncate(true).write(true).mode(0o600).open(path)?;
-        file.write_all(value)?;
-        file.flush()?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, value)
-    }
-}
-
-fn ensure_bridge_files(data_dir: &Path, port: u16, token: &str) -> Result<(), String> {
-    let runtime_path = data_dir.join(RUNTIME_FILE);
-    let port_path = data_dir.join(PORT_FILE);
-    let token_path = data_dir.join(TOKEN_FILE);
-    let port_value = port.to_string();
-    let runtime_matches = bridge_runtime_file_matches(&runtime_path, port, token);
-    let port_matches = runtime_file_matches(&port_path, &port_value);
-    let token_matches = runtime_file_matches(&token_path, token);
-    if runtime_matches && port_matches && token_matches {
-        return Ok(());
-    }
-
-    // Keep the pre-JSON files in sync so older clients can still discover the bridge.
-    write_private_file(&token_path, token.as_bytes())
-        .map_err(|error| format!("Could not write the MCP token file: {error}"))?;
-    write_private_file(&port_path, port_value.as_bytes())
-        .map_err(|error| format!("Could not write the MCP port file: {error}"))?;
-
-    // Publish the JSON document last: it is the commit marker for new clients.
-    let runtime = BridgeRuntimeFile { version: 1, port, token: token.to_string() };
-    let encoded =
-        serde_json::to_vec(&runtime).map_err(|error| format!("Could not encode the MCP runtime file: {error}"))?;
-    write_bridge_runtime_file(&runtime_path, &encoded)?;
-    Ok(())
-}
-
-fn read_bridge_runtime_file(data_dir: &Path) -> Option<BridgeRuntimeFile> {
-    let content = std::fs::read_to_string(data_dir.join(RUNTIME_FILE)).ok()?;
-    let runtime = serde_json::from_str::<BridgeRuntimeFile>(&content).ok()?;
-    if runtime.version != 1 || runtime.port == 0 || runtime.token.len() < 24 {
-        return None;
-    }
-    Some(runtime)
-}
-
-fn bridge_runtime_file_matches(path: &Path, port: u16, token: &str) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(runtime) = serde_json::from_str::<BridgeRuntimeFile>(&content) else {
-        return false;
-    };
-    runtime.version == 1 && runtime.port == port && runtime.token == token
-}
-
-fn runtime_file_matches(path: &Path, expected: &str) -> bool {
-    std::fs::read_to_string(path).map(|value| value.trim() == expected).unwrap_or(false)
-}
-
-fn write_bridge_runtime_file(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let temporary = path.with_file_name(format!(".{}.{}.tmp", RUNTIME_FILE, std::process::id()));
-    write_private_file(&temporary, contents)
-        .map_err(|error| format!("Could not write the MCP runtime file: {error}"))?;
-    match std::fs::rename(&temporary, path) {
-        Ok(()) => Ok(()),
-        #[cfg(windows)]
-        Err(error) if error.raw_os_error() == Some(17) => {
-            // Some encrypted/profile directories reject rename with
-            // ERROR_NOT_SAME_DEVICE even when both paths share a directory.
-            let result = std::fs::write(path, contents);
-            let _ = std::fs::remove_file(&temporary);
-            result.map_err(|error| format!("Could not publish the MCP runtime file: {error}"))
-        }
-        Err(error) => {
-            let _ = std::fs::remove_file(&temporary);
-            Err(format!("Could not publish the MCP runtime file: {error}"))
-        }
-    }
-}
-
-fn remove_bridge_files(data_dir: &Path) {
-    let _ = std::fs::remove_file(data_dir.join(RUNTIME_FILE));
-    let _ = std::fs::remove_file(data_dir.join(PORT_FILE));
-    let _ = std::fs::remove_file(data_dir.join(TOKEN_FILE));
-}
-
-fn remove_bridge_files_if_owned(data_dir: &Path, port: u16, token: &str) {
-    let runtime_owned = read_bridge_runtime_file(data_dir)
-        .map(|runtime| runtime.port == port && runtime.token == token)
-        .unwrap_or(false);
-    let legacy_owned = runtime_file_matches(&data_dir.join(PORT_FILE), &port.to_string())
-        && runtime_file_matches(&data_dir.join(TOKEN_FILE), token);
-    if runtime_owned || legacy_owned {
-        remove_bridge_files(data_dir);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1291,48 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn bridge_is_enabled_by_default_for_new_installs() {
+    fn mcp_is_enabled_by_default_for_new_installs() {
         let dir = std::env::temp_dir().join(format!("cirrus-mcp-default-enabled-{}", Uuid::new_v4()));
         let service = McpService::new(Some(&dir));
         assert!(service.enabled());
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn bridge_runtime_files_are_refreshed_when_stale() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-files-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        std::fs::write(dir.join(PORT_FILE), "51997").expect("seed port");
-        std::fs::write(dir.join(TOKEN_FILE), "stale-token").expect("seed token");
-        std::fs::write(dir.join(RUNTIME_FILE), r#"{"version":1,"port":51997,"token":"stale-token"}"#)
-            .expect("seed runtime");
-
-        ensure_bridge_files(&dir, 60241, "c8ef2f10b25f483cae6ca03e855e2629").expect("refresh files");
-
-        let runtime = read_bridge_runtime_file(&dir).expect("runtime file");
-        assert_eq!(runtime.version, 1);
-        assert_eq!(runtime.port, 60241);
-        assert_eq!(runtime.token, "c8ef2f10b25f483cae6ca03e855e2629");
-        assert_eq!(std::fs::read_to_string(dir.join(PORT_FILE)).expect("port"), "60241");
-        assert_eq!(std::fs::read_to_string(dir.join(TOKEN_FILE)).expect("token"), "c8ef2f10b25f483cae6ca03e855e2629");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn failed_startup_only_removes_its_own_runtime_files() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-owner-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        ensure_bridge_files(&dir, 51997, "f2eefde5cd7b4f14933d261236dfd9c2").expect("seed owner");
-
-        remove_bridge_files_if_owned(&dir, 60241, "c8ef2f10b25f483cae6ca03e855e2629");
-        assert!(dir.join(RUNTIME_FILE).is_file());
-        assert!(dir.join(PORT_FILE).is_file());
-        assert!(dir.join(TOKEN_FILE).is_file());
-
-        remove_bridge_files_if_owned(&dir, 51997, "f2eefde5cd7b4f14933d261236dfd9c2");
-        assert!(!dir.join(RUNTIME_FILE).exists());
-        assert!(!dir.join(PORT_FILE).exists());
-        assert!(!dir.join(TOKEN_FILE).exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1351,33 +719,5 @@ mod tests {
         let path = bundled_mcp_native_binary_path().expect("native binary path");
         let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
         assert_eq!(name, if cfg!(windows) { "cirrus-mcp.exe" } else { "cirrus-mcp" });
-    }
-
-    #[test]
-    fn history_report_preserves_the_complete_mcp_response() {
-        let report: McpHistoryReport = serde_json::from_value(json!({
-            "tool": "cirrus_list_devices",
-            "arguments": { "accountKey": "dsid:123" },
-            "clientName": "Codex",
-            "clientVersion": "1.0",
-            "startedAt": 100,
-            "durationMs": 25,
-            "success": true,
-            "error": null,
-            "response": {
-                "content": [{ "type": "text", "text": "# Find My devices" }],
-                "structuredContent": { "deviceCount": 0, "devices": [] },
-                "isError": false
-            }
-        }))
-        .expect("history report");
-        let entry = report.into_entry();
-        assert_eq!(entry.tool_name, "cirrus_list_devices");
-        assert_eq!(entry.account_key.as_deref(), Some("dsid:123"));
-        assert_eq!(entry.client_name.as_deref(), Some("Codex"));
-        let response = entry.response_json.expect("response");
-        assert!(response.contains("\"structuredContent\""));
-        assert!(response.contains("\"content\""));
-        assert!(response.contains("\"isError\":false"));
     }
 }

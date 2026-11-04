@@ -20,6 +20,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Url;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 
 mod local_backend;
 
@@ -28,15 +29,16 @@ use local_backend::LocalBackend;
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-const LOGIN_TOOL: &str = "cirrus_login";
+
 const LIST_ACCOUNTS_TOOL: &str = "cirrus_list_accounts";
 const CLIENT_NAME: &str = "cirrus-mcp";
-const SERVER_INSTRUCTIONS: &str = "Cirrus exposes iCloud sign-in and authorized-account listing. Account-scoped tools use the shared local database and encrypted session vault directly; the desktop app is only required for cirrus_login. Never ask the user to put an Apple ID password in chat or tool arguments. Call cirrus_login, ask the user to approve the request in Cirrus, and let them enter credentials directly in the Cirrus sign-in window that opens. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts after sign-in to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed. Preserve the first Markdown summary, including artwork URLs when provided. Render native MCP image content blocks when present, and include each device's last location update timestamp when presenting device lists.";
-const MAX_DEVICE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+const SERVER_INSTRUCTIONS: &str = "Cirrus exposes authorized iCloud accounts and direct local tools. Every account-scoped tool reads the shared local database and encrypted session vault directly; no desktop bridge is used. Sign in through the Cirrus desktop app before requesting account-scoped tools. If the result reports mcpEnabled=false, tell the user to enable that account in Cirrus Settings > MCP before requesting further iCloud operations. Use cirrus_list_accounts to discover the accounts currently allowed for MCP. Tool results include a concise Markdown summary and structuredContent; use structuredContent when exact field values or identifiers are needed. When a tool returns native MCP image content blocks, display those images inline immediately instead of only describing them. Photo lists attach thumbnail image blocks by default, and device lists attach native artwork by default. Markdown image URLs are retained as a fallback, so keep them when present. Include each device's last location update timestamp when presenting device lists.";
+const MAX_INLINE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_INLINE_PHOTO_THUMBNAILS: usize = 20;
+const MAX_INLINE_PHOTO_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_HTTP_PORT: u16 = 5226;
 const DEFAULT_HTTP_PATH: &str = "/mcp";
-const BRIDGE_RUNTIME_FILE: &str = "mcp-bridge.json";
 
 #[derive(Debug, Clone, Default)]
 struct ClientIdentity {
@@ -54,7 +56,7 @@ pub struct HttpConfig {
     pub path: String,
     pub token: String,
     pub allow_remote: bool,
-    pub bridge: Option<BridgeTarget>,
+    pub data_dir: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -66,7 +68,6 @@ struct HttpState {
 
 #[derive(Clone)]
 enum ToolBackend {
-    Bridge(BridgeTarget),
     Local(Arc<LocalBackend>),
     Unavailable(Arc<str>),
 }
@@ -86,8 +87,7 @@ pub async fn run_cli() {
         println!("  cirrus-mcp --authorize-keychain  Authorize and verify OS credential access once");
         println!();
         println!("CIRRUS_DATA_DIR selects the Cirrus data directory.");
-        println!("CIRRUS_MCP_BACKEND=local uses the shared database and session vault directly (default).");
-        println!("CIRRUS_MCP_BACKEND=bridge uses the running Cirrus desktop bridge.");
+        println!("Cirrus MCP always uses the shared database and encrypted session vault directly.");
         println!("CIRRUS_SESSION_KEY or CIRRUS_SESSION_KEY_FILE supplies the vault key for headless MCP.");
         println!("CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT sets the local download limit in bytes per second.");
         println!("HTTP authentication uses CIRRUS_MCP_HTTP_TOKEN or CIRRUS_MCP_HTTP_TOKEN_FILE.");
@@ -350,7 +350,7 @@ fn runtime_mode(args: Vec<String>) -> Result<RuntimeMode, String> {
                 path,
                 token,
                 allow_remote: !ip.is_loopback(),
-                bridge: None,
+                data_dir: None,
             }))
         }
         _ => Err("CIRRUS_MCP_TRANSPORT must be stdio or streamable-http".into()),
@@ -391,11 +391,7 @@ fn http_token(token: Option<String>, token_file: Option<PathBuf>) -> Result<Stri
     if let Some(path) = token_file {
         return read_token_file(&path);
     }
-    let data_dir = app_data_dir().ok_or_else(|| "HTTP token is not configured".to_string())?;
-    if let Some(target) = read_bridge_runtime_file(&data_dir.join(BRIDGE_RUNTIME_FILE)) {
-        return Ok(target.token);
-    }
-    read_token_file(&data_dir.join("mcp-bridge-token"))
+    Err("HTTP token is not configured. Pass --http-token or --http-token-file.".to_string())
 }
 
 fn read_token_file(path: &Path) -> Result<String, String> {
@@ -431,7 +427,7 @@ pub async fn serve_http_on_listener(
     let state = HttpState {
         token: Arc::from(config.token),
         allow_remote: config.allow_remote,
-        backend: ToolBackend::from_http(config.bridge),
+        backend: ToolBackend::from_http(config.data_dir.clone()),
     };
     let router = Router::new()
         .route("/healthz", get(http_health))
@@ -711,14 +707,7 @@ fn annotate_modern_list(result: &mut Value, params: &Value) {
 fn tools_list() -> Value {
     json!({
         "tools": [
-            {
-                "name": LOGIN_TOOL,
-                "title": "Sign in to iCloud with Cirrus",
-                "description": "Ask the user to approve an iCloud sign-in in the Cirrus desktop app, then open the Cirrus sign-in window so the user can enter their Apple ID, password, and two-factor code privately. This tool does not accept credentials and waits for the Cirrus sign-in flow to finish.",
-                "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-                "outputSchema": tool_output_schema(LOGIN_TOOL),
-                "annotations": { "title": "Sign in to iCloud with Cirrus", "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true }
-            },
+
             {
                 "name": LIST_ACCOUNTS_TOOL,
                 "title": "List MCP-enabled iCloud accounts",
@@ -746,13 +735,13 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_list_devices",
                 "title": "List Find My devices",
-                "description": "List Apple devices for an MCP-enabled account. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Returns retrievedAt, deviceCount, and devices[] with name, model, online status, activation lock state, battery, location, artwork, and deviceId. Each device includes lastLocationUpdatedAt and an artwork object. includeArtwork defaults to url, which returns stable Apple-hosted artwork URLs without fetching image bytes. dataUri additionally returns native MCP image content blocks with inline base64 data and structuredContent.artwork.dataUri; none omits artwork. The first text block is a device summary, followed by a detailed table. Include the last location update in user-facing output. Use the exact returned deviceId with cirrus_play_sound.",
+                "description": "List Apple devices for an MCP-enabled account. Call cirrus_list_accounts first and pass accounts[].accountKey verbatim. Returns retrievedAt, deviceCount, and devices[] with name, model, online status, activation lock state, battery, location, artwork, and deviceId. Each device includes lastLocationUpdatedAt and an artwork object. includeArtwork defaults to dataUri, which returns native MCP image content blocks for direct inline rendering plus stable Apple-hosted artwork URLs. Use url for URL-only metadata or none to omit artwork. The first text block is a device summary, followed by a detailed table. Include the last location update in user-facing output. Use the exact returned deviceId with cirrus_play_sound.",
                 "inputSchema": account_schema(json!({
                     "includeArtwork": {
                         "type": "string",
                         "enum": ["url", "dataUri", "none"],
-                        "default": "url",
-                        "description": "Artwork payload mode. url returns stable Apple-hosted artwork URLs, dataUri additionally returns native MCP image content blocks with inline base64 data, and none omits artwork."
+                        "default": "dataUri",
+                        "description": "Artwork payload mode. dataUri returns native MCP image content blocks for direct rendering and retains artwork URLs, url returns URL metadata only, and none omits artwork."
                     }
                 })),
                 "outputSchema": tool_output_schema("cirrus_list_devices"),
@@ -771,11 +760,12 @@ fn tools_list() -> Value {
             {
                 "name": "cirrus_list_photos",
                 "title": "List iCloud Photos",
-                "description": "List iCloud Photos assets with metadata, thumbnail URLs, and original media URLs.",
+                "description": "List iCloud Photos assets with metadata, thumbnail URLs, and original media URLs. By default, up to 20 thumbnails are returned as native MCP image content blocks for direct inline rendering; signed thumbnail URLs remain in structuredContent.",
                 "inputSchema": account_schema(json!({
                     "cursor": { "type": "string", "description": "Optional opaque pagination cursor from a previous nextCursor value." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20, "description": "Maximum number of assets to return, from 1 to 200." },
-                    "startRank": { "type": "integer", "minimum": 0, "description": "Optional zero-based rank into the timeline. Prefer cursor for normal pagination." }
+                    "startRank": { "type": "integer", "minimum": 0, "description": "Optional zero-based rank into the timeline. Prefer cursor for normal pagination." },
+                    "includeThumbnails": { "type": "boolean", "default": true, "description": "Attach native MCP thumbnail image content blocks for direct rendering. Set false for metadata-only output." }
                 })),
                 "outputSchema": tool_output_schema("cirrus_list_photos"),
                 "annotations": { "title": "List iCloud Photos", "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
@@ -1056,10 +1046,14 @@ enum ArtworkMode {
 
 fn artwork_mode(arguments: &Value) -> ArtworkMode {
     match arguments.get("includeArtwork").and_then(Value::as_str) {
-        Some(value) if value.eq_ignore_ascii_case("dataUri") => ArtworkMode::DataUri,
+        Some(value) if value.eq_ignore_ascii_case("url") => ArtworkMode::Url,
         Some(value) if value.eq_ignore_ascii_case("none") => ArtworkMode::None,
-        _ => ArtworkMode::Url,
+        _ => ArtworkMode::DataUri,
     }
+}
+
+fn include_photo_thumbnails(arguments: &Value) -> bool {
+    arguments.get("includeThumbnails").and_then(Value::as_bool).unwrap_or(true)
 }
 
 async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, backend: &ToolBackend) -> Value {
@@ -1069,7 +1063,7 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bac
     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
     let started_at = now_millis();
     let started = Instant::now();
-    if (name == LOGIN_TOOL || name == LIST_ACCOUNTS_TOOL)
+    if name == LIST_ACCOUNTS_TOOL
         && arguments.as_object().map(|object| !object.is_empty()).unwrap_or(!arguments.is_null())
     {
         let result = json!({
@@ -1081,19 +1075,23 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bac
     }
 
     let artwork_mode = artwork_mode(&arguments);
-    let mut bridge_arguments = arguments.clone();
-    if name == "cirrus_list_devices" {
-        if let Some(object) = bridge_arguments.as_object_mut() {
+    let include_photo_thumbnails = include_photo_thumbnails(&arguments);
+    let mut tool_arguments = arguments.clone();
+    if let Some(object) = tool_arguments.as_object_mut() {
+        if name == "cirrus_list_devices" {
             object.remove("includeArtwork");
         }
+        if name == "cirrus_list_photos" {
+            object.remove("includeThumbnails");
+        }
     }
-    match backend.call_tool(name, &bridge_arguments, client).await {
+    match backend.call_tool(name, &tool_arguments, client).await {
         Ok(mut result) => {
             if name == "cirrus_list_devices" {
                 annotate_device_list_timestamps(&mut result, now_millis());
             }
             let inline_note = name == "cirrus_get_note" && result.get("contentSegments").is_some();
-            let mut content = result_image_content(name, &mut result, artwork_mode).await;
+            let mut content = result_image_content(name, &mut result, artwork_mode, include_photo_thumbnails).await;
             let mut text_result = result_without_inline_artwork(&result);
             if inline_note {
                 if let Some(object) = text_result.as_object_mut() {
@@ -1109,12 +1107,17 @@ async fn handle_tool_call(id: Value, params: Value, client: &ClientIdentity, bac
                     }),
                 );
             }
-            let structured_result = result_for_structured_content(name, &result, &text_result, artwork_mode);
+            let structured_result = result_for_structured_content(&text_result);
             if !inline_note {
-                content.push(json!({
+                let text = json!({
                     "type": "text",
-                    "text": tool_result_text(name, &text_result)
-                }));
+                    "text": tool_result_text_with_options(name, &text_result, include_photo_thumbnails)
+                });
+                if name == "cirrus_list_photos" && !content.is_empty() {
+                    content.insert(0, text);
+                } else {
+                    content.push(text);
+                }
             }
             let result = json!({
                 "content": content,
@@ -1165,24 +1168,6 @@ fn now_millis() -> i64 {
 
 fn tool_output_schema(tool: &str) -> Value {
     match tool {
-        LOGIN_TOOL => object_schema(
-            json!({
-                "authenticated": { "type": "boolean", "description": "Whether sign-in completed successfully." },
-                "approved": { "type": "boolean", "description": "Whether the user approved the Cirrus sign-in request." },
-                "message": { "type": ["string", "null"], "description": "Optional status or error message." },
-                "account": {
-                    "type": ["object", "null"],
-                    "description": "Signed-in account summary when authentication succeeds.",
-                    "properties": {
-                        "accountKey": { "type": "string" },
-                        "appleId": { "type": "string" },
-                        "displayName": { "type": "string" },
-                        "mcpEnabled": { "type": "boolean" }
-                    }
-                }
-            }),
-            &["authenticated", "approved"],
-        ),
         LIST_ACCOUNTS_TOOL => object_schema(
             json!({
                 "accounts": {
@@ -1248,6 +1233,21 @@ fn tool_output_schema(tool: &str) -> Value {
                             "originalUrl": { "type": ["string", "null"] },
                             "videoUrl": { "type": ["string", "null"] }
                         }
+                    }
+                },
+                "thumbnailImageCount": { "type": "integer", "description": "Number of native thumbnail image content blocks attached to this result." },
+                "thumbnailImagesTruncated": { "type": "boolean", "description": "Whether some photos did not receive a thumbnail image block because of the inline thumbnail limit." },
+                "thumbnailImageErrors": {
+                    "type": "array",
+                    "description": "Thumbnails that could not be attached as image content blocks.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "photoId": { "type": ["string", "null"] },
+                            "fileName": { "type": ["string", "null"] },
+                            "message": { "type": "string" }
+                        },
+                        "required": ["message"]
                     }
                 },
                 "nextCursor": { "type": ["string", "null"], "description": "Pass this value as cursor to fetch the next page." }
@@ -1577,11 +1577,10 @@ fn device_output_schema() -> Value {
                         "deviceImageError": { "type": ["string", "null"], "description": "Why artwork could not be included, when applicable." },
                         "artwork": {
                             "type": ["object", "null"],
-                            "description": "Normalized artwork metadata. dataUri is present only when includeArtwork=dataUri.",
+                            "description": "Normalized artwork metadata. Image bytes are returned only as native MCP image content blocks.",
                             "properties": {
                                 "mimeType": { "type": ["string", "null"], "description": "Image MIME type." },
                                 "url": { "type": ["string", "null"], "description": "Stable Apple-hosted artwork URL for Markdown rendering." },
-                                "dataUri": { "type": ["string", "null"], "description": "Inline base64 data URI when includeArtwork=dataUri." },
                                 "alt": { "type": "string", "description": "Accessible image label." }
                             }
                         }
@@ -1594,15 +1593,19 @@ fn device_output_schema() -> Value {
     })
 }
 
+#[cfg(test)]
 fn tool_result_text(tool: &str, result: &Value) -> String {
+    tool_result_text_with_options(tool, result, true)
+}
+
+fn tool_result_text_with_options(tool: &str, result: &Value, include_photo_thumbnails: bool) -> String {
     match tool {
-        LOGIN_TOOL => login_markdown(result),
         LIST_ACCOUNTS_TOOL => accounts_markdown(result),
         "cirrus_account_status" => account_status_markdown(result),
         "cirrus_logout" => logout_markdown(result),
         "cirrus_list_devices" => devices_markdown(result),
         "cirrus_play_sound" => play_sound_markdown(result),
-        "cirrus_list_photos" => photos_markdown(result),
+        "cirrus_list_photos" => photos_markdown(result, include_photo_thumbnails),
         "cirrus_photos_total" => photos_total_markdown(result),
         "cirrus_photos_timeline" => photos_timeline_markdown(result),
         "cirrus_photos_month_exact" => month_exact_markdown(result),
@@ -1622,23 +1625,6 @@ fn tool_result_text(tool: &str, result: &Value) -> String {
         "cirrus_delete_calendar_event" => calendar_delete_markdown(result),
         _ => serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string()),
     }
-}
-
-fn login_markdown(result: &Value) -> String {
-    let mut rows = vec![
-        ("Authenticated", yes_no(result.get("authenticated")).to_string()),
-        ("Approved", yes_no(result.get("approved")).to_string()),
-    ];
-    if let Some(account) = result.get("account").filter(|value| !value.is_null()) {
-        rows.push(("Account", string_field(account, "displayName")));
-        rows.push(("Apple ID", string_field(account, "appleId")));
-        rows.push(("Account key", code_field(account, "accountKey")));
-        rows.push(("MCP enabled", yes_no(account.get("mcpEnabled")).to_string()));
-    }
-    if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
-        rows.push(("Message", message.to_string()));
-    }
-    key_value_markdown("Cirrus sign-in", &rows)
 }
 
 fn account_status_markdown(result: &Value) -> String {
@@ -1670,7 +1656,7 @@ fn play_sound_markdown(result: &Value) -> String {
     key_value_markdown("Play sound", &rows)
 }
 
-fn photos_markdown(result: &Value) -> String {
+fn photos_markdown(result: &Value, include_thumbnails: bool) -> String {
     let photos = result.get("photos").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut output = format!("# iCloud Photos ({})\n\n", photos.len());
     if let Some(message) = result.get("message").and_then(Value::as_str).filter(|value| !value.is_empty()) {
@@ -1679,8 +1665,13 @@ fn photos_markdown(result: &Value) -> String {
     if photos.is_empty() {
         output.push_str("No photos were returned for this page.");
     } else {
-        output.push_str("| # | ID | File | Taken at | Type | Dimensions | Size | Favorite |\n");
-        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        if include_thumbnails {
+            output.push_str("| # | Preview | ID | File | Taken at | Type | Dimensions | Size | Favorite |\n");
+            output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        } else {
+            output.push_str("| # | ID | File | Taken at | Type | Dimensions | Size | Favorite |\n");
+            output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        }
         for (index, photo) in photos.iter().enumerate() {
             let kind = if photo.get("isVideo").and_then(Value::as_bool).unwrap_or(false) { "Video" } else { "Photo" };
             let dimensions =
@@ -1688,17 +1679,38 @@ fn photos_markdown(result: &Value) -> String {
                     (Some(width), Some(height)) => format!("{width}×{height}"),
                     _ => "Unknown".to_string(),
                 };
-            output.push_str(&format!(
-                "| {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
-                index + 1,
-                markdown_cell(string_field(photo, "id")),
-                markdown_cell(string_field(photo, "fileName")),
-                number_field(photo, "takenAt"),
-                kind,
-                dimensions,
-                byte_size_field(photo, "sizeBytes"),
-                yes_no(photo.get("isFavorite")),
-            ));
+            if include_thumbnails {
+                let preview = photo
+                    .get("thumbUrl")
+                    .and_then(Value::as_str)
+                    .filter(|url| !url.is_empty())
+                    .map(|url| format!("![Thumbnail {}]({url})", index + 1))
+                    .unwrap_or_else(|| "Unavailable".to_string());
+                output.push_str(&format!(
+                    "| {} | {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
+                    index + 1,
+                    markdown_cell(&preview),
+                    markdown_cell(string_field(photo, "id")),
+                    markdown_cell(string_field(photo, "fileName")),
+                    number_field(photo, "takenAt"),
+                    kind,
+                    dimensions,
+                    byte_size_field(photo, "sizeBytes"),
+                    yes_no(photo.get("isFavorite")),
+                ));
+            } else {
+                output.push_str(&format!(
+                    "| {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
+                    index + 1,
+                    markdown_cell(string_field(photo, "id")),
+                    markdown_cell(string_field(photo, "fileName")),
+                    number_field(photo, "takenAt"),
+                    kind,
+                    dimensions,
+                    byte_size_field(photo, "sizeBytes"),
+                    yes_no(photo.get("isFavorite")),
+                ));
+            }
         }
         output.push_str("\nUse `structuredContent.photos` for exact thumbnail and original media URLs.");
     }
@@ -2146,12 +2158,11 @@ fn devices_summary_markdown(result: &Value, mode: ArtworkMode) -> String {
             device_activation_lock_text(&device),
             device_last_location_updated_text(&device),
         ));
-        if mode == ArtworkMode::Url {
-            if let Some(url) = device_artwork_url(&device) {
-                output.push_str(&format!("\n  ![Device artwork]({url})"));
-            }
-        } else if mode == ArtworkMode::DataUri {
-            output.push_str("\n  Artwork embedded as native image content.");
+        if let Some(url) = device_artwork_url(&device) {
+            output.push_str(&format!("\n  ![Device artwork]({url})"));
+        }
+        if mode == ArtworkMode::DataUri {
+            output.push_str("\n  Artwork also attached as a native MCP image content block.");
         }
     }
     output
@@ -2340,14 +2351,14 @@ fn remove_device_artwork(device: &mut Value) {
 }
 
 fn device_artwork_text(device: &Value) -> &'static str {
-    if device.pointer("/artwork/dataUri").and_then(Value::as_str).is_some() {
+    if device.get("deviceImageMimeType").and_then(Value::as_str).is_some() {
+        "Included"
+    } else if device.pointer("/artwork/dataUri").and_then(Value::as_str).is_some() {
         "Embedded"
     } else if device.pointer("/artwork/url").and_then(Value::as_str).is_some()
         || device.get("deviceImageUrl").and_then(Value::as_str).is_some()
     {
         "URL"
-    } else if device.get("deviceImageMimeType").and_then(Value::as_str).is_some() {
-        "Included"
     } else if device.get("deviceImageError").and_then(Value::as_str).is_some() {
         "Unavailable"
     } else {
@@ -2355,7 +2366,7 @@ fn device_artwork_text(device: &Value) -> &'static str {
     }
 }
 
-fn is_apple_device_image_url(value: &str) -> bool {
+fn is_apple_image_url(value: &str) -> bool {
     let Ok(url) = Url::parse(value) else {
         return false;
     };
@@ -2365,7 +2376,23 @@ fn is_apple_device_image_url(value: &str) -> bool {
                 || host.ends_with(".icloud.com")
                 || host == "icloud.com.cn"
                 || host.ends_with(".icloud.com.cn")
+                || host == "icloud-content.com"
+                || host.ends_with(".icloud-content.com")
+                || host == "icloud-content.com.cn"
+                || host.ends_with(".icloud-content.com.cn")
         })
+}
+
+fn is_apple_device_image_url(value: &str) -> bool {
+    is_apple_image_url(value)
+}
+
+fn native_image_content(bytes: &[u8], mime_type: &str) -> Value {
+    json!({
+        "type": "image",
+        "data": BASE64.encode(bytes),
+        "mimeType": mime_type
+    })
 }
 
 fn device_label(device: &Value) -> String {
@@ -2438,9 +2465,14 @@ fn preferred_device_image_url(url: &str) -> String {
     }
 }
 
-async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, String), String> {
-    if !is_apple_device_image_url(url) {
-        return Err("device artwork URL was rejected".to_string());
+async fn fetch_apple_image(
+    client: &reqwest::Client,
+    url: &str,
+    label: &str,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, String), String> {
+    if !is_apple_image_url(url) {
+        return Err(format!("{label} URL was rejected"));
     }
     let response = client
         .get(url)
@@ -2448,12 +2480,12 @@ async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<
         .timeout(std::time::Duration::from_secs(12))
         .send()
         .await
-        .map_err(|error| format!("could not load device artwork: {error}"))?;
+        .map_err(|error| format!("could not load {label}: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!("device artwork returned HTTP {}", response.status()));
+        return Err(format!("{label} returned HTTP {}", response.status()));
     }
-    if response.content_length().is_some_and(|length| length as usize > MAX_DEVICE_IMAGE_BYTES) {
-        return Err("device artwork is too large".to_string());
+    if response.content_length().is_some_and(|length| length as usize > max_bytes) {
+        return Err(format!("{label} is too large"));
     }
     let mime_type = response
         .headers()
@@ -2464,19 +2496,44 @@ async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<
         .filter(|value| value.starts_with("image/"))
         .unwrap_or("image/png")
         .to_string();
-    let bytes = response.bytes().await.map_err(|error| format!("could not read device artwork: {error}"))?;
-    if bytes.len() > MAX_DEVICE_IMAGE_BYTES {
-        return Err("device artwork is too large".to_string());
+    let bytes = response.bytes().await.map_err(|error| format!("could not read {label}: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!("{label} is too large"));
     }
     Ok((bytes.to_vec(), mime_type))
+}
+
+async fn fetch_device_image(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, String), String> {
+    fetch_apple_image(client, url, "device artwork", MAX_INLINE_IMAGE_BYTES).await
+}
+
+fn device_image_payload(
+    summary: String,
+    image: Result<(Vec<u8>, String), String>,
+) -> (Vec<Value>, Option<String>, Option<String>) {
+    let (bytes, mime_type) = match image {
+        Ok(image) => image,
+        Err(error) => {
+            return (
+                vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: {error}") })],
+                None,
+                Some(error),
+            );
+        }
+    };
+    (vec![json!({ "type": "text", "text": summary }), native_image_content(&bytes, &mime_type)], Some(mime_type), None)
 }
 
 async fn device_image_content(
     client: &reqwest::Client,
     device: &Value,
-) -> (Vec<Value>, Option<(String, String)>, Option<String>) {
+) -> (Vec<Value>, Option<String>, Option<String>) {
     let summary = device_summary_text(device);
-    let Some(url) = device.get("deviceImageUrl").and_then(Value::as_str) else {
+    let Some(url) = device
+        .get("deviceImageUrl")
+        .and_then(Value::as_str)
+        .or_else(|| device.pointer("/artwork/url").and_then(Value::as_str))
+    else {
         return (
             vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: unavailable") })],
             None,
@@ -2491,29 +2548,112 @@ async fn device_image_content(
             .map_err(|fallback_error| format!("{preferred_error}; fallback failed: {fallback_error}")),
         Err(error) => Err(error),
     };
-    let (bytes, mime_type) = match image {
-        Ok(image) => image,
-        Err(error) => {
-            return (
-                vec![json!({ "type": "text", "text": format!("{summary}\nDevice artwork: {error}") })],
-                None,
-                Some(error),
-            );
-        }
-    };
-    let encoded = BASE64.encode(bytes);
-    let data_url = format!("data:{mime_type};base64,{encoded}");
-    (
-        vec![
-            json!({ "type": "text", "text": summary }),
-            json!({ "type": "image", "data": encoded, "mimeType": mime_type }),
-        ],
-        Some((mime_type, data_url)),
-        None,
-    )
+    device_image_payload(summary, image)
 }
 
-async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode) -> Vec<Value> {
+fn photo_thumbnail_label(index: usize, photo: &Value) -> String {
+    let file_name = string_field(photo, "fileName");
+    let dimensions = match (photo.get("width").and_then(Value::as_i64), photo.get("height").and_then(Value::as_i64)) {
+        (Some(width), Some(height)) => format!(" · {width}×{height}"),
+        _ => String::new(),
+    };
+    if file_name.is_empty() {
+        format!("Photo {}{dimensions}", index + 1)
+    } else {
+        format!("Photo {} · {file_name}{dimensions}", index + 1)
+    }
+}
+
+fn photo_thumbnail_error(photo: &Value, message: String) -> Value {
+    json!({
+        "photoId": photo.get("id").and_then(Value::as_str),
+        "fileName": photo.get("fileName").and_then(Value::as_str),
+        "message": message
+    })
+}
+
+type FetchedImage = (usize, Result<(Vec<u8>, String), String>);
+
+fn assemble_photo_thumbnail_content(
+    result: &mut Value,
+    photos: &[Value],
+    mut fetched: Vec<FetchedImage>,
+    mut errors: Vec<Value>,
+    mut truncated: bool,
+) -> Vec<Value> {
+    fetched.sort_by_key(|(index, _)| *index);
+    let mut content = Vec::new();
+    let mut total_bytes = 0_usize;
+    let mut image_count = 0_u64;
+    for (index, image) in fetched {
+        let Some(photo) = photos.get(index) else { continue };
+        match image {
+            Ok((bytes, mime_type)) => {
+                if total_bytes.saturating_add(bytes.len()) > MAX_INLINE_PHOTO_BYTES {
+                    truncated = true;
+                    errors.push(photo_thumbnail_error(photo, "inline thumbnail byte budget was exceeded".to_string()));
+                    continue;
+                }
+                total_bytes += bytes.len();
+                image_count += 1;
+                content.push(json!({ "type": "text", "text": photo_thumbnail_label(index, photo) }));
+                content.push(native_image_content(&bytes, &mime_type));
+            }
+            Err(message) => errors.push(photo_thumbnail_error(photo, message)),
+        }
+    }
+
+    if let Some(result) = result.as_object_mut() {
+        result.insert("thumbnailImageCount".to_string(), json!(image_count));
+        result.insert("thumbnailImagesTruncated".to_string(), json!(truncated));
+        if !errors.is_empty() {
+            result.insert("thumbnailImageErrors".to_string(), Value::Array(errors));
+        }
+    }
+    content
+}
+
+async fn photo_thumbnail_content(result: &mut Value, include: bool) -> Vec<Value> {
+    let photos = result.get("photos").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut errors = Vec::new();
+    let mut fetched: Vec<FetchedImage> = Vec::new();
+    let truncated = include && photos.len() > MAX_INLINE_PHOTO_THUMBNAILS;
+
+    if include && !photos.is_empty() {
+        match reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() {
+            Ok(client) => {
+                let mut tasks = JoinSet::new();
+                for (index, photo) in photos.iter().take(MAX_INLINE_PHOTO_THUMBNAILS).enumerate() {
+                    let Some(url) = photo.get("thumbUrl").and_then(Value::as_str).filter(|url| !url.is_empty()) else {
+                        errors.push(photo_thumbnail_error(photo, "thumbnail URL is unavailable".to_string()));
+                        continue;
+                    };
+                    let client = client.clone();
+                    let url = url.to_string();
+                    tasks.spawn(async move {
+                        (index, fetch_apple_image(&client, &url, "photo thumbnail", MAX_INLINE_IMAGE_BYTES).await)
+                    });
+                }
+                while let Some(joined) = tasks.join_next().await {
+                    match joined {
+                        Ok(value) => fetched.push(value),
+                        Err(error) => errors.push(json!({ "message": format!("thumbnail task failed: {error}") })),
+                    }
+                }
+            }
+            Err(error) => errors.push(json!({ "message": format!("could not create image client: {error}") })),
+        }
+    }
+
+    assemble_photo_thumbnail_content(result, &photos, fetched, errors, truncated)
+}
+
+async fn result_image_content(
+    tool: &str,
+    result: &mut Value,
+    mode: ArtworkMode,
+    include_photo_thumbnails: bool,
+) -> Vec<Value> {
     if tool == "cirrus_get_note" {
         if let Some(segments) = result.get("contentSegments").and_then(Value::as_array) {
             let note = result.get("note").unwrap_or(&Value::Null);
@@ -2548,6 +2688,9 @@ async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode)
             }
             return content;
         }
+    }
+    if tool == "cirrus_list_photos" {
+        return photo_thumbnail_content(result, include_photo_thumbnails).await;
     }
     if tool == "cirrus_get_account_avatar" || tool == "cirrus_get_contact_photo" || tool == "cirrus_get_note_image" {
         let data_url = result.get("dataUrl").and_then(Value::as_str).unwrap_or_default();
@@ -2589,13 +2732,11 @@ async fn result_image_content(tool: &str, result: &mut Value, mode: ArtworkMode)
         let (items, artwork, error) = device_image_content(&client, device).await;
         content.extend(items);
         if let Some(device) = device.as_object_mut() {
-            if let Some((mime_type, data_url)) = artwork {
+            if let Some(mime_type) = artwork {
                 device.insert("deviceImageMimeType".to_string(), json!(mime_type));
-                device.insert("deviceImageDataUrl".to_string(), json!(data_url.clone()));
                 let artwork = device.entry("artwork").or_insert_with(|| json!({ "alt": alt }));
                 if let Some(artwork) = artwork.as_object_mut() {
                     artwork.insert("mimeType".to_string(), json!(mime_type));
-                    artwork.insert("dataUri".to_string(), json!(data_url));
                 }
             }
             if let Some(error) = error {
@@ -2629,31 +2770,10 @@ fn annotate_device_list_timestamps(result: &mut Value, retrieved_at: i64) {
     }
 }
 
-fn result_for_structured_content(tool: &str, result: &Value, text_result: &Value, mode: ArtworkMode) -> Value {
-    if tool == "cirrus_list_devices" && mode == ArtworkMode::DataUri {
-        let mut structured = result.clone();
-        strip_flat_device_image_data_urls(&mut structured);
-        structured
-    } else {
-        text_result.clone()
-    }
-}
-
-fn strip_flat_device_image_data_urls(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            fields.remove("deviceImageDataUrl");
-            for value in fields.values_mut() {
-                strip_flat_device_image_data_urls(value);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                strip_flat_device_image_data_urls(value);
-            }
-        }
-        _ => {}
-    }
+fn result_for_structured_content(text_result: &Value) -> Value {
+    let mut structured = text_result.clone();
+    strip_inline_artwork(&mut structured);
+    structured
 }
 
 fn result_without_inline_artwork(result: &Value) -> Value {
@@ -2681,37 +2801,15 @@ fn strip_inline_artwork(value: &mut Value) {
     }
 }
 
-#[derive(Clone)]
-pub struct BridgeTarget {
-    pub base_url: String,
-    pub token: String,
-}
-
 impl ToolBackend {
     fn from_stdio() -> Self {
-        let requested = std::env::var("CIRRUS_MCP_BACKEND").unwrap_or_default().trim().to_ascii_lowercase();
-        match requested.as_str() {
-            "bridge" => Self::bridge_or_unavailable(),
-            "local" => Self::local_or_unavailable(),
-            _ if std::env::var_os("CIRRUS_MCP_URL").is_some() => Self::bridge_or_unavailable(),
-            _ => Self::local_or_unavailable(),
-        }
+        Self::local_or_unavailable()
     }
 
-    fn from_http(bridge: Option<BridgeTarget>) -> Self {
-        match bridge {
-            Some(target) => Self::Bridge(target),
+    fn from_http(data_dir: Option<PathBuf>) -> Self {
+        match data_dir {
+            Some(data_dir) => Self::local_or_unavailable_at(data_dir),
             None => Self::local_or_unavailable(),
-        }
-    }
-
-    fn bridge_or_unavailable() -> Self {
-        match discover_bridge() {
-            Ok(target) => Self::Bridge(target),
-            Err(error) => Self::Unavailable(
-                format!("Cirrus desktop bridge is unavailable: {error}. Start Cirrus or use CIRRUS_MCP_BACKEND=local.")
-                    .into(),
-            ),
         }
     }
 
@@ -2722,6 +2820,10 @@ impl ToolBackend {
                     .into(),
             );
         };
+        Self::local_or_unavailable_at(data_dir)
+    }
+
+    fn local_or_unavailable_at(data_dir: PathBuf) -> Self {
         match LocalBackend::open(data_dir.clone()) {
             Ok(local) => {
                 eprintln!("cirrus-mcp local backend ready at {}", data_dir.display());
@@ -2735,40 +2837,14 @@ impl ToolBackend {
         }
     }
 
-    async fn call_tool(&self, tool: &str, arguments: &Value, client: &ClientIdentity) -> Result<Value, String> {
+    async fn call_tool(&self, tool: &str, arguments: &Value, _client: &ClientIdentity) -> Result<Value, String> {
         match self {
-            Self::Bridge(target) => call_bridge(tool, arguments, client, Some(target)).await,
-            Self::Local(local) if tool == LOGIN_TOOL => {
-                let target = discover_bridge().map_err(|_| {
-                    "Sign-in requires the Cirrus desktop app. Start Cirrus, then retry cirrus_login.".to_string()
-                })?;
-                call_bridge(tool, arguments, client, Some(&target)).await
-            }
             Self::Local(local) => local.call_tool(tool, arguments).await,
             Self::Unavailable(reason) => {
-                if tool == LOGIN_TOOL {
-                    let target = discover_bridge().map_err(|_| {
-                        "Sign-in requires the Cirrus desktop app. Start Cirrus, then retry cirrus_login.".to_string()
-                    })?;
-                    return call_bridge(tool, arguments, client, Some(&target)).await;
-                }
-                // Transfers have process-local cancellation state. In degraded
-                // mode route both start and cancel consistently to the bridge.
-                if tool == "cirrus_download_photo" || tool == "cirrus_cancel_download" {
-                    let target = discover_bridge()
-                        .map_err(|error| format!("{reason} The desktop bridge is also unavailable: {error}"))?;
-                    return call_bridge(tool, arguments, client, Some(&target)).await;
-                }
                 if let Some(data_dir) = app_data_dir() {
                     if let Ok(local) = LocalBackend::open(data_dir) {
                         return local.call_tool(tool, arguments).await;
                     }
-                }
-                // Try the desktop bridge only after local recovery fails. Do
-                // not fall back again after a bridge request is sent: the
-                // operation may already have run and could be non-idempotent.
-                if let Ok(target) = discover_bridge() {
-                    return call_bridge(tool, arguments, client, Some(&target)).await;
                 }
                 Err(reason.to_string())
             }
@@ -2787,29 +2863,6 @@ impl ToolBackend {
     ) {
         let success = response.get("isError").and_then(Value::as_bool) != Some(true);
         match self {
-            Self::Bridge(target) => {
-                let body = json!({
-                    "tool": tool,
-                    "arguments": arguments,
-                    "clientName": client.name.as_deref().unwrap_or("MCP client"),
-                    "clientVersion": client.version,
-                    "startedAt": started_at,
-                    "durationMs": duration_ms,
-                    "success": success,
-                    "error": error,
-                    "response": response
-                });
-                let Ok(http) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).no_proxy().build()
-                else {
-                    return;
-                };
-                let _ = http
-                    .post(format!("{}/v1/history", target.base_url))
-                    .bearer_auth(&target.token)
-                    .json(&body)
-                    .send()
-                    .await;
-            }
             Self::Local(local) => {
                 let entry = history_entry(tool, arguments, client, started_at, duration_ms, success, error, response);
                 if let Err(error) = local.record_history(entry) {
@@ -2828,7 +2881,6 @@ impl ToolBackend {
         }
     }
 }
-
 fn history_entry(
     tool: &str,
     arguments: &Value,
@@ -2852,138 +2904,6 @@ fn history_entry(
         request_json: serde_json::to_string(arguments).ok(),
         response_json: serde_json::to_string(response).ok(),
     }
-}
-
-pub(crate) async fn notify_bridge_event(event: &str, payload: Value) {
-    let Ok(target) = discover_bridge() else {
-        return;
-    };
-    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).no_proxy().build() else {
-        return;
-    };
-    let _ = client
-        .post(format!("{}/v1/events", target.base_url))
-        .bearer_auth(&target.token)
-        .json(&json!({ "event": event, "payload": payload }))
-        .send()
-        .await;
-}
-
-async fn call_bridge(
-    tool: &str,
-    arguments: &Value,
-    client: &ClientIdentity,
-    bridge: Option<&BridgeTarget>,
-) -> Result<Value, String> {
-    let target = match bridge {
-        Some(target) => target.clone(),
-        None => discover_bridge()?,
-    };
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(13 * 60))
-        // MCP clients can inherit a system proxy; the Cirrus bridge is loopback-only.
-        .no_proxy()
-        .build()
-        .map_err(|error| format!("Could not create the Cirrus MCP client: {error}"))?
-        .post(format!("{}/v1/call", target.base_url))
-        .bearer_auth(&target.token)
-        .json(&json!({
-            "tool": tool,
-            "arguments": arguments,
-            "client": {
-                "name": client.name.clone().unwrap_or_else(|| "MCP client".to_string()),
-                "version": client.version
-            }
-        }))
-        .send()
-        .await
-        .map_err(|error| {
-            if error.is_connect() {
-                "Cirrus is not running or the MCP bridge is disabled. Open Cirrus and enable MCP in Settings."
-                    .to_string()
-            } else {
-                format!("Could not reach Cirrus: {error}")
-            }
-        })?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(|error| format!("Could not read the Cirrus response: {error}"))?;
-    let value: Value =
-        serde_json::from_str(&body).map_err(|error| format!("Cirrus returned an invalid response: {error}"))?;
-    if !status.is_success() {
-        let message = value
-            .get("error")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("Cirrus returned HTTP {}", status.as_u16()));
-        return Err(message);
-    }
-    if value.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("Cirrus did not return a login result")
-            .to_string());
-    }
-    Ok(value.get("result").cloned().unwrap_or(Value::Null))
-}
-
-fn discover_bridge() -> Result<BridgeTarget, String> {
-    if let Ok(url) = std::env::var("CIRRUS_MCP_URL") {
-        let token =
-            std::env::var("CIRRUS_MCP_TOKEN").map_err(|_| "CIRRUS_MCP_TOKEN is required when CIRRUS_MCP_URL is set")?;
-        return Ok(BridgeTarget { base_url: url.trim_end_matches('/').to_string(), token });
-    }
-
-    let data_dir =
-        app_data_dir().ok_or_else(|| "Could not resolve the Cirrus application data directory".to_string())?;
-    let port_file =
-        std::env::var_os("CIRRUS_MCP_PORT_FILE").map(PathBuf::from).unwrap_or_else(|| data_dir.join("mcp-bridge-port"));
-    let runtime_file = std::env::var_os("CIRRUS_MCP_RUNTIME_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| port_file.with_file_name(BRIDGE_RUNTIME_FILE));
-    let token_file = std::env::var_os("CIRRUS_MCP_TOKEN_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("mcp-bridge-token"));
-    discover_bridge_from_paths(&runtime_file, &port_file, &token_file)
-}
-
-fn discover_bridge_from_paths(
-    runtime_file: &Path,
-    port_file: &Path,
-    token_file: &Path,
-) -> Result<BridgeTarget, String> {
-    if let Some(target) = read_bridge_runtime_file(runtime_file) {
-        return Ok(target);
-    }
-    let port = read_trimmed(port_file)
-        .ok_or_else(|| "Cirrus MCP bridge is not running. Open Cirrus and enable MCP in Settings.".to_string())?;
-    let port: u16 = port.parse().map_err(|_| "Cirrus MCP bridge port file is invalid".to_string())?;
-    let token = read_trimmed(token_file)
-        .ok_or_else(|| "Cirrus MCP bridge token is unavailable. Re-enable MCP in Cirrus Settings.".to_string())?;
-    if token.len() < 24 {
-        return Err("Cirrus MCP bridge token is invalid. Re-enable MCP in Cirrus Settings.".to_string());
-    }
-    Ok(BridgeTarget { base_url: format!("http://127.0.0.1:{port}"), token })
-}
-
-fn read_bridge_runtime_file(path: &Path) -> Option<BridgeTarget> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let value = serde_json::from_str::<Value>(&content).ok()?;
-    if value.get("version").and_then(Value::as_u64) != Some(1) {
-        return None;
-    }
-    let port = value.get("port").and_then(Value::as_u64)?;
-    let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
-    let token = value.get("token").and_then(Value::as_str)?.trim();
-    if token.len() < 24 {
-        return None;
-    }
-    Some(BridgeTarget { base_url: format!("http://127.0.0.1:{port}"), token: token.to_string() })
-}
-
-fn read_trimmed(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 }
 
 fn app_data_dir() -> Option<PathBuf> {
@@ -3145,71 +3065,11 @@ mod tests {
     }
 
     #[test]
-    fn bridge_runtime_file_is_a_single_discovery_document() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let path = dir.join(BRIDGE_RUNTIME_FILE);
-        std::fs::write(&path, r#"{"version":1,"port":60241,"token":"c8ef2f10b25f483cae6ca03e855e2629"}"#)
-            .expect("write runtime");
-
-        let target = read_bridge_runtime_file(&path).expect("runtime target");
-        assert_eq!(target.base_url, "http://127.0.0.1:60241");
-        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn bridge_runtime_file_rejects_short_tokens() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let path = dir.join(BRIDGE_RUNTIME_FILE);
-        std::fs::write(&path, r#"{"version":1,"port":60241,"token":"short"}"#).expect("write runtime");
-
-        assert!(read_bridge_runtime_file(&path).is_none());
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn bridge_runtime_file_takes_precedence_over_legacy_files() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let runtime = dir.join(BRIDGE_RUNTIME_FILE);
-        let port = dir.join("mcp-bridge-port");
-        let token = dir.join("mcp-bridge-token");
-        std::fs::write(&runtime, r#"{"version":1,"port":60241,"token":"c8ef2f10b25f483cae6ca03e855e2629"}"#)
-            .expect("runtime");
-        std::fs::write(&port, "51997").expect("legacy port");
-        std::fs::write(&token, "f2eefde5cd7b4f14933d261236dfd9c2").expect("legacy token");
-
-        let target = discover_bridge_from_paths(&runtime, &port, &token).expect("preferred target");
-        assert_eq!(target.base_url, "http://127.0.0.1:60241");
-        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn bridge_discovery_falls_back_to_legacy_files() {
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-runtime-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let runtime = dir.join(BRIDGE_RUNTIME_FILE);
-        let port = dir.join("mcp-bridge-port");
-        let token = dir.join("mcp-bridge-token");
-        std::fs::write(&runtime, "not json").expect("runtime");
-        std::fs::write(&port, "60241").expect("legacy port");
-        std::fs::write(&token, "c8ef2f10b25f483cae6ca03e855e2629").expect("legacy token");
-
-        let target = discover_bridge_from_paths(&runtime, &port, &token).expect("legacy target");
-        assert_eq!(target.base_url, "http://127.0.0.1:60241");
-        assert_eq!(target.token, "c8ef2f10b25f483cae6ca03e855e2629");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn tools_list_exposes_login_and_account_list_without_arguments() {
+    fn tools_list_exposes_accounts_and_direct_tools_without_arguments() {
         let tools = tools_list();
         let tools = tools.get("tools").and_then(Value::as_array).expect("tools");
-        assert_eq!(tools.len(), 28);
-        assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LOGIN_TOOL));
+        assert_eq!(tools.len(), 27);
+        assert_eq!(tools[0].get("name").and_then(Value::as_str), Some(LIST_ACCOUNTS_TOOL));
         assert_eq!(
             tools[0].get("inputSchema").and_then(|value| value.get("additionalProperties")).and_then(Value::as_bool),
             Some(false)
@@ -3256,6 +3116,7 @@ mod tests {
         assert!(is_apple_device_image_url(
             "https://statici.icloud.com.cn/fmipmobile/deviceImages-9.0/iPad/iPad13,1/offline-sourcelist.png"
         ));
+        assert!(is_apple_image_url("https://cvws.icloud-content.com.cn/B/example/unknown.jpeg?o=test&v=1"));
         assert!(!is_apple_device_image_url("http://statici.icloud.com/image.png"));
         assert!(!is_apple_device_image_url("https://example.com/image.png"));
     }
@@ -3350,7 +3211,7 @@ mod tests {
         });
         let text = tool_result_text("cirrus_list_devices", &result);
         assert!(!text.contains("![Device artwork](https://"));
-        assert!(text.contains("| URL |"));
+        assert!(text.contains("| Included |"));
         assert!(text.contains("2023-11-14T22:13:20Z"));
         assert!(text.contains("Data retrieved: 2023-11-14T22:13:20Z"));
     }
@@ -3395,7 +3256,7 @@ mod tests {
             }]
         });
         let text_result = result_without_inline_artwork(&result);
-        let structured = result_for_structured_content("cirrus_list_devices", &result, &text_result, ArtworkMode::Url);
+        let structured = result_for_structured_content(&text_result);
         assert!(structured["devices"][0].get("deviceImageDataUrl").is_none());
         assert_eq!(structured["devices"][0]["deviceImageMimeType"], "image/png");
         assert!(text_result["devices"][0].get("deviceImageDataUrl").is_none());
@@ -3404,7 +3265,7 @@ mod tests {
     #[tokio::test]
     async fn image_tools_return_native_base64_image_content() {
         let mut result = json!({ "dataUrl": "data:image/png;base64,YWJj" });
-        let content = result_image_content("cirrus_get_account_avatar", &mut result, ArtworkMode::Url).await;
+        let content = result_image_content("cirrus_get_account_avatar", &mut result, ArtworkMode::Url, false).await;
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["type"], "image");
         assert_eq!(content[0]["data"], "YWJj");
@@ -3418,7 +3279,8 @@ mod tests {
             "name": "photo.png",
             "source": "preview"
         });
-        let note_content = result_image_content("cirrus_get_note_image", &mut note_image, ArtworkMode::Url).await;
+        let note_content =
+            result_image_content("cirrus_get_note_image", &mut note_image, ArtworkMode::Url, false).await;
         assert_eq!(note_content.len(), 1);
         assert_eq!(note_content[0]["type"], "image");
         assert_eq!(note_content[0]["data"], "YWJj");
@@ -3446,7 +3308,7 @@ mod tests {
                 { "type": "text", "text": "after" }
             ]
         });
-        let content = result_image_content("cirrus_get_note", &mut result, ArtworkMode::Url).await;
+        let content = result_image_content("cirrus_get_note", &mut result, ArtworkMode::Url, false).await;
         assert_eq!(content.len(), 4);
         assert_eq!(content[0]["type"], "text");
         assert!(content[0]["text"].as_str().expect("header").contains("Photo note"));
@@ -3458,11 +3320,13 @@ mod tests {
     }
 
     #[test]
-    fn artwork_mode_defaults_to_url_and_supports_explicit_modes() {
-        assert_eq!(artwork_mode(&json!({})), ArtworkMode::Url);
+    fn artwork_and_photo_thumbnail_modes_default_to_direct_rendering() {
+        assert_eq!(artwork_mode(&json!({})), ArtworkMode::DataUri);
         assert_eq!(artwork_mode(&json!({ "includeArtwork": "url" })), ArtworkMode::Url);
         assert_eq!(artwork_mode(&json!({ "includeArtwork": "dataUri" })), ArtworkMode::DataUri);
         assert_eq!(artwork_mode(&json!({ "includeArtwork": "none" })), ArtworkMode::None);
+        assert!(include_photo_thumbnails(&json!({})));
+        assert!(!include_photo_thumbnails(&json!({ "includeThumbnails": false })));
     }
 
     #[tokio::test]
@@ -3475,7 +3339,7 @@ mod tests {
                 "deviceImageUrl": url
             }]
         });
-        let content = result_image_content("cirrus_list_devices", &mut result, ArtworkMode::Url).await;
+        let content = result_image_content("cirrus_list_devices", &mut result, ArtworkMode::Url, false).await;
         assert!(content.is_empty());
         assert_eq!(result["devices"][0]["artwork"]["url"], url);
         assert!(result["devices"][0]["artwork"].get("dataUri").is_none());
@@ -3484,7 +3348,7 @@ mod tests {
     }
 
     #[test]
-    fn data_uri_structured_content_keeps_nested_data_uri_only() {
+    fn structured_content_never_duplicates_inline_image_payloads() {
         let result = json!({
             "devices": [{
                 "artwork": {
@@ -3495,11 +3359,93 @@ mod tests {
             }]
         });
         let text_result = result_without_inline_artwork(&result);
-        let structured =
-            result_for_structured_content("cirrus_list_devices", &result, &text_result, ArtworkMode::DataUri);
+        let structured = result_for_structured_content(&text_result);
         assert!(structured["devices"][0].get("deviceImageDataUrl").is_none());
-        assert_eq!(structured["devices"][0]["artwork"]["dataUri"], "data:image/png;base64,YWJj");
+        assert!(structured["devices"][0]["artwork"].get("dataUri").is_none());
+        assert_eq!(structured["devices"][0]["artwork"]["url"], "https://statici.icloud.com/example.png");
         assert!(text_result["devices"][0]["artwork"].get("dataUri").is_none());
+    }
+
+    #[test]
+    fn photo_thumbnails_are_native_images_and_renderable_markdown() {
+        let url = "https://cvws.icloud-content.com.cn/B/example/unknown.jpeg?o=test&v=1";
+        let photo = json!({
+            "id": "photo-1",
+            "fileName": "IMG_0001.JPG",
+            "width": 1170,
+            "height": 2532,
+            "thumbUrl": url
+        });
+        let image = native_image_content(b"abc", "image/jpeg");
+        assert_eq!(image["type"], "image");
+        assert_eq!(image["data"], "YWJj");
+        assert_eq!(image["mimeType"], "image/jpeg");
+        assert_eq!(photo_thumbnail_label(0, &photo), "Photo 1 · IMG_0001.JPG · 1170×2532");
+
+        let text = photos_markdown(&json!({ "photos": [photo] }), true);
+        assert!(text.contains(&format!("![Thumbnail 1]({url})")));
+    }
+
+    #[tokio::test]
+    async fn disabled_photo_thumbnails_return_metadata_without_images() {
+        let photos = (0..21)
+            .map(|index| {
+                json!({
+                    "id": format!("photo-{index}"),
+                    "fileName": format!("IMG_{index:04}.JPG"),
+                    "thumbUrl": "https://example.com/must-not-be-fetched.jpg"
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut result = json!({ "photos": photos });
+        let content = result_image_content("cirrus_list_photos", &mut result, ArtworkMode::DataUri, false).await;
+        assert!(content.is_empty());
+        assert_eq!(result["thumbnailImageCount"], 0);
+        assert_eq!(result["thumbnailImagesTruncated"], false);
+        assert!(result.get("thumbnailImageErrors").is_none());
+        let text = tool_result_text_with_options("cirrus_list_photos", &result, false);
+        assert!(!text.contains("![Thumbnail"));
+    }
+
+    #[test]
+    fn assembled_photo_thumbnails_are_native_images_without_duplicate_base64() {
+        let photo = json!({
+            "id": "photo-1",
+            "fileName": "IMG_0001.JPG",
+            "width": 1170,
+            "height": 2532,
+            "thumbUrl": "https://cvws.icloud-content.com.cn/B/example/unknown.jpeg?o=test"
+        });
+        let mut result = json!({ "photos": [photo.clone()] });
+        let content = assemble_photo_thumbnail_content(
+            &mut result,
+            &[photo],
+            vec![(0, Ok((b"abc".to_vec(), "image/jpeg".to_string())))],
+            Vec::new(),
+            false,
+        );
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["data"], "YWJj");
+        assert_eq!(content[1]["mimeType"], "image/jpeg");
+        assert_eq!(result["thumbnailImageCount"], 1);
+        assert_eq!(result["thumbnailImagesTruncated"], false);
+        let structured = result_for_structured_content(&result);
+        assert!(!structured.to_string().contains("YWJj"));
+    }
+
+    #[test]
+    fn device_image_payload_returns_native_image_and_metadata() {
+        let (content, artwork, error) =
+            device_image_payload("Test Phone".to_string(), Ok((b"abc".to_vec(), "image/png".to_string())));
+        assert!(error.is_none());
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["data"], "YWJj");
+        assert_eq!(content[1]["mimeType"], "image/png");
+        assert_eq!(artwork.expect("artwork MIME type"), "image/png");
     }
 
     #[tokio::test]
@@ -3553,7 +3499,7 @@ mod tests {
             path: "/mcp".to_string(),
             token: "test-token".to_string(),
             allow_remote: false,
-            bridge: None,
+            data_dir: None,
         };
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(serve_http_on_listener(listener, config, async move {

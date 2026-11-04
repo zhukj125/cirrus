@@ -80,23 +80,25 @@ jobs:
 
             ### 更新内容
 
-            自 1.5.0 起的更新：
+            自 1.5.1 起的更新：
 
-            - 修复 Codex stdio 配置残留 HTTP 字段导致 MCP 无法启动的问题
-            - MCP 桥接改用单一 `mcp-bridge.json` 发现文件，并兼容旧版端口/令牌文件
-            - 自动写入的客户端配置会传递 `CIRRUS_DATA_DIR`，支持便携和自定义数据目录
-            - 修复地图初始化时无效坐标导致 `Invalid Object: Pixel(NaN, NaN)` 的问题
-            - 地图初始化会等待容器尺寸就绪，并新增坐标校验、错误分类和重试按钮
+            - MCP 已完全改为 direct-only，移除桌面 bridge、`mcp-bridge*.json` 运行时发现文件和自动回退
+            - stdio 与 Streamable HTTP 都直接使用本地数据库与加密会话保险库
+            - 移除 MCP 登录工具，工具集调整为 27 个；请先在 Cirrus 桌面端重新登录一次以写入完整会话
+            - 设备 artwork 与照片缩略图默认使用原生 MCP 图片内容块直接渲染
+            - `structuredContent` 不再重复携带图片 Base64
+            - 清理旧 bridge 文件并移除相关环境变量和兼容路径
 
             ### Highlights
 
-            Changes since 1.5.0:
+            Changes since 1.5.1:
 
-            - Fixed Codex stdio startup failures caused by stale HTTP fields in the MCP configuration
-            - Moved MCP bridge discovery to a single `mcp-bridge.json` while retaining legacy port/token compatibility
-            - Client configurations written by Cirrus now pass `CIRRUS_DATA_DIR` for portable and custom data directories
-            - Fixed map initialization failures reported as `Invalid Object: Pixel(NaN, NaN)`
-            - Map startup now waits for a visible container and adds coordinate validation, clearer errors, and retry controls
+            - MCP is now direct-only: the desktop bridge, `mcp-bridge*.json` runtime discovery files, and fallback paths were removed
+            - Both stdio and Streamable HTTP read the local database and encrypted session vault directly
+            - Removed the MCP login tool for a 27-tool surface; sign in through the Cirrus desktop app once to persist a complete session
+            - Device artwork and photo thumbnails now render through native MCP image content blocks by default
+            - `structuredContent` no longer duplicates image Base64 payloads
+            - Legacy bridge files are cleaned up and bridge-specific environment variables and compatibility paths are removed
 
             Native iCloud desktop client for Windows, macOS, and Linux.
             These builds are not notarized. macOS may show a Gatekeeper warning.

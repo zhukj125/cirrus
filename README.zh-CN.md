@@ -78,8 +78,9 @@ Cirrus 是一个本地优先的 iCloud 桌面客户端，把日常会用到的�
 - 可选的 stdio 和 Streamable HTTP MCP 接入，供 AI 客户端和自动化工具使用。
 - 提供 Claude Code、Cursor、CodeBuddy Code、ZCode、TRAE、VS Code、Windsurf、Codex、DeepSeek Harness、OpenCode、Pi、Cherry Studio 和 Qoder 配置页签。
 - iCloud 账户和 MCP 工具默认允许，可按账户、按工具单独关闭；关闭后服务端会拒绝调用。
-- 28 个 MCP 工具覆盖登录、账户状态、设备、Find My 声音、照片浏览与删除、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历事件增删改和头像图片。
-- 登录工具会先在 Cirrus 中请求授权，然后打开原生 Cirrus 登录窗口。
+- 27 个 MCP 工具覆盖账户状态、设备、Find My 声音、照片浏览与删除、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历事件增删改和头像图片。
+- 可返回图片的工具默认使用原生 MCP 图片内容块直接内嵌渲染：设备列表默认返回 artwork，照片列表最多附带 20 张缩略图。`structuredContent` 保留签名 URL，不重复保存 Base64 图片数据。
+- stdio 和 Streamable HTTP 都直接使用本地数据库与加密会话保险库。Cirrus 不再提供桌面 bridge、运行时发现文件或 bridge 回退路径。
 - MCP 调用历史保存在 SQLite，可在 **设置 → MCP → 历史** 查看；请求和响应会截断并脱敏，不保存令牌或图片 Base64。
 - Apple ID、密码和双重认证验证码始终留在 Cirrus 内，不会返回给 MCP 客户端。
 - 两种传输都只监听本机回环地址，并使用每次启动随机生成的 Bearer Token。
@@ -125,7 +126,7 @@ VITE_GOOGLE_MAPS_API_KEY=
 2. 完成双重认证。
 3. 从侧栏或工作区页签打开 **设备**、**照片**、**存储空间**、**iCloud 云盘**、**备忘录**、**联系人** 或 **日历**。
 
-如需使用 MCP，打开 **设置 → MCP**，启用桥接，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 28 个账户、设备、照片浏览与删除、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历事件增删改、头像、登录和退出工具。`Streamable HTTP` 页签会显示本次运行的 `/mcp` 地址、Bearer Token 和可直接复制的客户端配置。
+如需使用 MCP，打开 **设置 → MCP**，启用 MCP，按客户端页签复制或写入配置，并关闭不允许 MCP 使用的 iCloud 账户。MCP 提供 27 个账户、设备、照片浏览与删除、iCloud 云盘、备忘录增删改与图片、下载、联系人、日历事件增删改、头像和退出工具。`Streamable HTTP` 页签会显示本次运行的 `/mcp` 地址、Bearer Token 和可直接复制的客户端配置。
 
 首次登录必须完成双重认证；之后只要会话仍有效，就会从本地加密记录中恢复。
 
@@ -177,7 +178,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 Cirrus 支持两种 MCP 传输：
 
 - **Streamable HTTP** 在桌面主进程内运行，启用后监听 `http://127.0.0.1:5226/mcp`，不会再启动独立的控制台进程。
-- **stdio** 直接启动独立的原生 `cirrus-mcp`（Windows 为 `cirrus-mcp.exe`）。它自己打开 Cirrus 数据库和加密会话保险箱，并在本地执行账号相关工具，因此不依赖桌面 HTTP bridge 是否运行。桌面应用只用于交互式登录以及旧版 bridge 兼容模式。原来的 `cirrus-mcp-server` launcher 仍保留为兼容入口。
+- **stdio** 直接启动独立的原生 `cirrus-mcp`（Windows 为 `cirrus-mcp.exe`）。它自己打开 Cirrus 数据库和加密会话保险箱，并在本地执行账号相关工具，因此不依赖桌面 HTTP bridge 是否运行。桌面应用只用于交互式登录。原来的 `cirrus-mcp-server` launcher 仍保留为兼容入口。
 
 开发模式下，Cirrus 会查找与当前程序同目录的原生可执行文件，例如：
 
@@ -185,7 +186,7 @@ Cirrus 支持两种 MCP 传输：
 target/debug/cirrus-mcp.exe
 ```
 
-便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录。只有启用自定义目录时，Cirrus 自动写入的客户端配置才会包含该环境变量；默认安装不写入，由原生服务自行解析标准数据目录。默认使用真正的本地后端；只有显式设置 `CIRRUS_MCP_BACKEND=bridge`（或提供 `CIRRUS_MCP_URL` 与 `CIRRUS_MCP_TOKEN`）时才走桌面 bridge 兼容路径。无法访问系统凭据存储的无头环境可通过 `CIRRUS_SESSION_KEY` 或 `CIRRUS_SESSION_KEY_FILE` 提供已有保险箱密钥；独立服务不会自行生成新密钥。`CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` 可设置本地下载限速，单位为字节/秒。
+便携或开发场景可用 `CIRRUS_DATA_DIR` 覆盖数据目录。只有启用自定义目录时，Cirrus 自动写入的客户端配置才会包含该环境变量；默认安装不写入，由原生服务自行解析标准数据目录。所有传输方式只使用本地后端。无法访问系统凭据存储的无头环境可通过 `CIRRUS_SESSION_KEY` 或 `CIRRUS_SESSION_KEY_FILE` 提供已有保险箱密钥；独立服务不会自行生成新密钥。`CIRRUS_MCP_DOWNLOAD_SPEED_LIMIT` 可设置本地下载限速，单位为字节/秒。
 
 如果 **设置 → MCP** 提示未找到 MCP 可执行文件，先构建开发用可执行文件：
 
