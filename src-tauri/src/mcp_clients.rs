@@ -264,21 +264,15 @@ fn json_has_command(content: &str, kind: ClientKind, binary: &Path, data_dir: Op
 }
 
 fn json_env_matches(server: &Value, data_dir: Option<&Path>) -> bool {
-    let env = match server.get("env") {
-        Some(env) => env,
-        None => return data_dir.is_none(),
+    let Some(data_dir) = data_dir else {
+        return true;
     };
-    let Some(env) = env.as_object() else {
-        return false;
-    };
-    match data_dir {
-        None => !env.contains_key("CIRRUS_DATA_DIR"),
-        Some(data_dir) => env
-            .get("CIRRUS_DATA_DIR")
-            .and_then(Value::as_str)
-            .map(|value| paths_equal(Path::new(value), data_dir))
-            .unwrap_or(false),
-    }
+    server
+        .get("env")
+        .and_then(|env| env.get("CIRRUS_DATA_DIR"))
+        .and_then(Value::as_str)
+        .map(|value| paths_equal(Path::new(value), data_dir))
+        .unwrap_or(false)
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -317,30 +311,7 @@ fn write_json_config(
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .ok_or_else(|| format!("{} must be a JSON object", json_root_key(kind)))?;
-        let existing_env =
-            servers.get(SERVER_NAME).and_then(Value::as_object).and_then(|server| server.get("env")).cloned();
-        let mut entry = json_server_entry(kind, binary, data_dir);
-        match existing_env {
-            Some(Value::Object(mut env)) => {
-                if let Some(data_dir) = data_dir {
-                    env.insert("CIRRUS_DATA_DIR".to_string(), json!(data_dir.to_string_lossy()));
-                } else {
-                    env.remove("CIRRUS_DATA_DIR");
-                }
-                if env.is_empty() {
-                    if let Some(entry) = entry.as_object_mut() {
-                        entry.remove("env");
-                    }
-                } else if let Some(entry) = entry.as_object_mut() {
-                    entry.insert("env".to_string(), Value::Object(env));
-                }
-            }
-            Some(_) => {
-                return Err(format!("{}.{SERVER_NAME}.env must be a JSON object", json_root_key(kind)));
-            }
-            None => {}
-        }
-        servers.insert(SERVER_NAME.to_string(), entry);
+        servers.insert(SERVER_NAME.to_string(), json_server_entry(kind, binary, data_dir));
     } else if let Some(servers) = root.get_mut(json_root_key(kind)).and_then(Value::as_object_mut) {
         servers.remove(SERVER_NAME);
         if servers.is_empty() {
@@ -370,29 +341,12 @@ fn codex_has_command(content: &str, binary: &Path, data_dir: Option<&Path>) -> b
 }
 
 fn codex_env_matches(server: &Table, data_dir: Option<&Path>) -> bool {
-    match server.get("env") {
-        None => data_dir.is_none(),
-        Some(Item::Table(env)) => match data_dir {
-            None => !env.contains_key("CIRRUS_DATA_DIR"),
-            Some(data_dir) => env
-                .get("CIRRUS_DATA_DIR")
-                .and_then(Item::as_str)
-                .map(|value| paths_equal(Path::new(value), data_dir))
-                .unwrap_or(false),
-        },
-        Some(Item::Value(toml_edit::Value::InlineTable(env))) => match data_dir {
-            None => !env.contains_key("CIRRUS_DATA_DIR"),
-            Some(data_dir) => env
-                .get("CIRRUS_DATA_DIR")
-                .and_then(toml_edit::Value::as_str)
-                .map(|value| paths_equal(Path::new(value), data_dir))
-                .unwrap_or(false),
-        },
-        Some(_) => false,
-    }
+    let Some(data_dir) = data_dir else {
+        return true;
+    };
+    codex_env_value(server, "CIRRUS_DATA_DIR").map(|value| paths_equal(Path::new(value), data_dir)).unwrap_or(false)
 }
 
-#[cfg(test)]
 fn codex_env_value<'a>(server: &'a Table, key: &str) -> Option<&'a str> {
     match server.get("env")? {
         Item::Table(env) => env.get(key).and_then(Item::as_str),
@@ -408,7 +362,7 @@ fn set_codex_data_dir(server: &mut Table, data_dir: Option<&Path>) -> Result<(),
             Item::Value(toml_edit::Value::InlineTable(env)) => {
                 env.insert("CIRRUS_DATA_DIR", toml_edit::Value::from(data_dir.to_string_lossy().to_string()));
             }
-            _ => return Err("mcp_servers.cirrus.env must be a TOML table".to_string()),
+            _ => {}
         }
         return Ok(());
     }
@@ -597,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn json_install_preserves_other_env_values() {
+    fn json_default_install_replaces_existing_env() {
         let dir = std::env::temp_dir().join(format!("cirrus-mcp-json-env-{}", uuid::Uuid::new_v4()));
         let path = dir.join("mcp.json");
         std::fs::create_dir_all(&dir).expect("create dir");
@@ -607,19 +561,10 @@ mod tests {
         )
         .expect("seed");
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let data_dir = Path::new(r"D:\CirrusPortableData");
-
-        write_json_config(&path, ClientKind::Claude, binary, Some(data_dir), true).expect("install custom");
-        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
-        assert_eq!(value["mcpServers"]["cirrus"]["env"]["CIRRUS_DATA_DIR"], data_dir.to_string_lossy().as_ref());
-        assert_eq!(value["mcpServers"]["cirrus"]["env"]["KEEP"], "1");
-        assert_eq!(value["mcpServers"]["cirrus"]["env"]["HTTPS_PROXY"], "http://proxy");
 
         write_json_config(&path, ClientKind::Claude, binary, None, true).expect("install default");
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
-        assert!(value["mcpServers"]["cirrus"]["env"].get("CIRRUS_DATA_DIR").is_none());
-        assert_eq!(value["mcpServers"]["cirrus"]["env"]["KEEP"], "1");
-        assert_eq!(value["mcpServers"]["cirrus"]["env"]["HTTPS_PROXY"], "http://proxy");
+        assert!(value["mcpServers"]["cirrus"].get("env").is_none());
         assert!(json_has_command(&value.to_string(), ClientKind::Claude, binary, None));
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -705,7 +650,7 @@ Authorization = "Bearer test"
     }
 
     #[test]
-    fn stale_default_env_is_treated_as_unconfigured() {
+    fn default_data_directory_ignores_existing_env_when_detecting_config() {
         let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
         let json = json!({
             "mcpServers": {
@@ -717,39 +662,13 @@ Authorization = "Bearer test"
             }
         })
         .to_string();
-        assert!(!json_has_command(&json, ClientKind::Claude, binary, None));
+        assert!(json_has_command(&json, ClientKind::Claude, binary, None));
 
         let codex = format!(
             "[mcp_servers.cirrus]\ncommand = {:?}\nenv = {{ CIRRUS_DATA_DIR = \"C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\com.cirrus\" }}\n",
             binary.to_string_lossy()
         );
-        assert!(!codex_has_command(&codex, binary, None));
-    }
-
-    #[test]
-    fn malformed_env_types_are_unconfigured_and_installation_fails() {
-        let binary = Path::new(r"C:\Program Files\Cirrus\cirrus-mcp.exe");
-        let json = json!({
-            "mcpServers": { "cirrus": { "command": binary, "env": "invalid" } }
-        })
-        .to_string();
-        assert!(!json_has_command(&json, ClientKind::Claude, binary, None));
-
-        let codex = format!("[mcp_servers.cirrus]\ncommand = {:?}\nenv = \"invalid\"\n", binary.to_string_lossy());
-        assert!(!codex_has_command(&codex, binary, None));
-
-        let dir = std::env::temp_dir().join(format!("cirrus-mcp-invalid-env-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let json_path = dir.join("mcp.json");
-        std::fs::write(&json_path, &json).expect("seed json");
-        assert!(write_json_config(&json_path, ClientKind::Claude, binary, None, true).is_err());
-        assert_eq!(std::fs::read_to_string(&json_path).expect("read json"), json);
-
-        let codex_path = dir.join("config.toml");
-        std::fs::write(&codex_path, &codex).expect("seed codex");
-        assert!(write_codex_config(&codex_path, binary, None, true).is_err());
-        assert_eq!(std::fs::read_to_string(&codex_path).expect("read codex"), codex);
-        let _ = std::fs::remove_dir_all(dir);
+        assert!(codex_has_command(&codex, binary, None));
     }
 
     #[test]
